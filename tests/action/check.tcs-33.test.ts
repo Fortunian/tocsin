@@ -48,7 +48,8 @@ describe("tocsin GitHub Action", () => {
 
     const summary = await w.summary();
     expect(summary).toContain("| high | lodash | 4.17.20 | 4.17.21 |");
-    expect(summary).toContain("[tcs_01JA0000000000000000000033](https://example.com/fixture/lodash)");
+    // The id is Markdown-escaped (`_` -> `\_`); it renders as tcs_01JA...
+    expect(summary).toContain("[tcs\\_01JA0000000000000000000033](https://example.com/fixture/lodash)");
     expect(summary).toContain("`npm i lodash@4.17.21`");
     expect(await w.outputs()).toContain("affected=1");
 
@@ -160,7 +161,7 @@ describe("tocsin GitHub Action", () => {
 
     w.check = () => json({ ...CLEAN, affected: [low, unknown] });
     expect(await exec(w)).toBe(1);
-    expect(await w.summary()).toContain("tcs_01JA00000000000000000000A2");
+    expect(await w.summary()).toContain("tcs\\_01JA00000000000000000000A2");
   });
 
   it("fail-on: exploited fails only on an exploited advisory; never always passes", async () => {

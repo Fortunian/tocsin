@@ -34,6 +34,10 @@ inputs:
     description: The directory to scan for lockfiles, relative to the workspace.
     required: false
     default: .
+  max-body-bytes:
+    description: The most lockfile bytes sent in one check (the hosted API accepts 2 MB). A file that does not fit is skipped with a warning.
+    required: false
+    default: "2097152"
   github-token:
     description: The token that posts the PR comment. It needs pull-requests write.
     required: false
@@ -58,4 +62,5 @@ runs:
         TOCSIN_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
         TOCSIN_COMMENT: ${{ inputs.comment }}
         TOCSIN_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        TOCSIN_MAX_BODY_BYTES: ${{ inputs.max-body-bytes }}
         TOCSIN_GITHUB_TOKEN: ${{ inputs.github-token }}

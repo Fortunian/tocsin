@@ -40,7 +40,9 @@ jobs:
     steps: [{ uses: actions/checkout@v4 }, { uses: Fortunian/tocsin/action@v1 }]
 ```
 
-Inputs (all optional): `min-severity` (default `low`), `fail-on` (`affected`, `exploited` or `never`; default `affected`), `fail-on-error` (default `false`: a network or API error is a warning, never a pass), `comment` (default `true`), `working-directory` (default `.`), `base-url` (default `https://tocsin.sh`), `api-key` and `github-token`. The output `affected` holds the count. The Action finds the same lockfiles as `tocsin check` and needs no npm install.
+Inputs (all optional): `min-severity` (default `low`), `fail-on` (`affected`, `exploited` or `never`; default `affected`), `fail-on-error` (default `false`: a network or API error is a warning, never a pass), `comment` (default `true`), `working-directory` (default `.`), `base-url` (default `https://tocsin.sh`), `max-body-bytes` (default `2097152`, the 2 MB body limit of the hosted API), `api-key` and `github-token`. The output `affected` holds the count. The Action finds the same lockfiles as `tocsin check` and needs no npm install. It needs Node 20 or later on the runner (GitHub-hosted runners have it).
+
+The Action sends at most 2 MB of lockfiles in one check. It skips a file that does not fit, writes a warning that names the file, and lists the file as not checked. The PR comment comes from the token's own account, and the Action updates only its own comment.
 
 Badge for your README (the standard Actions badge):
 

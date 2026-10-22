@@ -23,6 +23,7 @@ const INPUTS: Record<string, [defaultValue: string, env: string]> = {
   "fail-on-error": ["false", "TOCSIN_FAIL_ON_ERROR"],
   comment: ["true", "TOCSIN_COMMENT"],
   "working-directory": [".", "TOCSIN_WORKING_DIRECTORY"],
+  "max-body-bytes": ["2097152", "TOCSIN_MAX_BODY_BYTES"],
   "github-token": ["${{ github.token }}", "TOCSIN_GITHUB_TOKEN"],
 };
 
@@ -112,7 +113,14 @@ describe("the script as a real process", () => {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     try {
       const { port } = server.address() as AddressInfo;
-      const env = { PATH: process.env.PATH ?? "", ...w.env, TOCSIN_BASE_URL: `http://127.0.0.1:${port}` };
+      // A push event and comment off: the process makes no GitHub call and no DNS query.
+      const env = {
+        PATH: process.env.PATH ?? "",
+        ...w.env,
+        GITHUB_EVENT_NAME: "push",
+        TOCSIN_COMMENT: "false",
+        TOCSIN_BASE_URL: `http://127.0.0.1:${port}`,
+      };
       const child = spawn(process.execPath, [SCRIPT], { env });
       let out = "";
       child.stdout.on("data", (c) => (out += c));

@@ -13,10 +13,19 @@ export interface Call {
   body: RequestInit["body"];
 }
 
+export interface User {
+  login: string;
+  type: string;
+}
+
 export interface Comment {
   id: number;
   body: string;
+  /** The author. Unset means the default token's bot. */
+  user?: User;
 }
+
+export const BOT: User = { login: "github-actions[bot]", type: "Bot" };
 
 export interface World {
   dir: string;
@@ -24,6 +33,8 @@ export interface World {
   stdout: string[];
   calls: Call[];
   comments: Comment[];
+  /** What GET /user answers. null: 403, like the default GITHUB_TOKEN. */
+  viewer: User | null;
   /** The fake Tocsin answer for POST /v1/check. */
   check: () => Response;
   fetch(url: string, init?: RequestInit): Promise<Response>;
@@ -67,6 +78,7 @@ export async function world(opts: { event?: string; inputs?: Record<string, stri
     stdout: [],
     calls: [],
     comments: [],
+    viewer: null,
     check: () => json({ checked: 0, affected: [], skipped: [], feed_cursor: 1 }),
     out(line) {
       w.stdout.push(line);
@@ -81,10 +93,14 @@ export async function world(opts: { event?: string; inputs?: Record<string, stri
       if (call.url.origin === GH) {
         if (call.method === "GET" && p === "/repos/acme/widget/issues/42/comments") {
           const page = Number(call.url.searchParams.get("page") ?? "1");
-          return json(page === 1 ? w.comments.map((c) => ({ ...c, user: { login: "github-actions[bot]" } })) : []);
+          return json(page === 1 ? w.comments.map((c) => ({ ...c, user: c.user ?? BOT })) : []);
+        }
+        // The default GITHUB_TOKEN is an installation token: GET /user answers 403.
+        if (call.method === "GET" && p === "/user") {
+          return w.viewer ? json(w.viewer) : json({ message: "Resource not accessible by integration" }, 403);
         }
         if (call.method === "POST" && p === "/repos/acme/widget/issues/42/comments") {
-          const c = { id: nextId++, body: JSON.parse(String(call.body)).body as string };
+          const c: Comment = { id: nextId++, body: JSON.parse(String(call.body)).body as string, user: w.viewer ?? BOT };
           w.comments.push(c);
           return json(c, 201);
         }
