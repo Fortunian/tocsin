@@ -24,7 +24,9 @@ events.get("/", async (c) => {
 
   const has_more = results.length > f.limit;
   const page = has_more ? results.slice(0, f.limit) : results;
-  const next_cursor = page.length ? page[page.length - 1].cursor : f.since;
+  // The newest cursor on the page: the last row asc, the first row desc.
+  const newest = f.order === "desc" ? page[0] : page[page.length - 1];
+  const next_cursor = newest ? newest.cursor : f.since;
 
   const etag = await eventsEtag(f, next_cursor, has_more);
   const headers = { ETag: etag, "Cache-Control": CACHE_CONTROL };

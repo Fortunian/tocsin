@@ -2,6 +2,7 @@ import type { EventsFilters } from "./query";
 
 // Strong ETag over the page's identity: the last cursor in the page, whether
 // more rows follow, and every filter. Two different pages never share a tag.
+// order joins the hash only when desc, so every asc tag stays what it was.
 export async function eventsEtag(f: EventsFilters, nextCursor: number, hasMore: boolean): Promise<string> {
   const canonical = JSON.stringify({
     max: nextCursor,
@@ -12,6 +13,7 @@ export async function eventsEtag(f: EventsFilters, nextCursor: number, hasMore: 
     component: [...f.component].sort(),
     min_severity: f.min_severity,
     exploited: f.exploited,
+    ...(f.order === "desc" ? { order: "desc" } : {}),
   });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
   const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");

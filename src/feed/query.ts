@@ -14,6 +14,8 @@ export interface EventsFilters {
   component: string[];
   min_severity: Exclude<SeverityLabel, "unknown"> | null;
   exploited: boolean;
+  // asc (default): oldest first from since. desc: newest first, still cursor > since.
+  order: "asc" | "desc";
 }
 
 export type ParseResult = { ok: true; filters: EventsFilters } | { ok: false; error: string };
@@ -62,7 +64,13 @@ export function parseEventsFilters(url: URL): ParseResult {
     return { ok: false, error: "exploited accepts only true" };
   }
 
-  return { ok: true, filters: { since, limit, ecosystem, component, min_severity, exploited: exploitedRaw === "true" } };
+  const orderRaw = q.get("order");
+  if (orderRaw !== null && orderRaw !== "asc" && orderRaw !== "desc") {
+    return { ok: false, error: "order must be asc or desc" };
+  }
+  const order = orderRaw ?? "asc";
+
+  return { ok: true, filters: { since, limit, ecosystem, component, min_severity, exploited: exploitedRaw === "true", order } };
 }
 
 // One statement, 2 columns. Fetches limit + 1 rows so the route can tell
@@ -78,6 +86,6 @@ export function buildEventsQuery(f: EventsFilters): { sql: string; params: unkno
   if (f.component.length) inList("component", f.component);
   if (f.min_severity) inList("severity_label", SEVERITY_ORDER.slice(0, SEVERITY_ORDER.indexOf(f.min_severity) + 1));
   if (f.exploited) where.push("exploited = 1");
-  const sql = `SELECT cursor, doc_json FROM advisories WHERE ${where.join(" AND ")} ORDER BY cursor LIMIT ${f.limit + 1}`;
+  const sql = `SELECT cursor, doc_json FROM advisories WHERE ${where.join(" AND ")} ORDER BY cursor${f.order === "desc" ? " DESC" : ""} LIMIT ${f.limit + 1}`;
   return { sql, params };
 }

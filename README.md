@@ -39,5 +39,21 @@ CI deploys on a push to `main` only when the repo variable `DEPLOY_ENABLED` is `
 5. Set the repo variable `DEPLOY_ENABLED=1`.
 
 The deploy job applies D1 migrations (`wrangler d1 migrations apply DB --remote`) before `wrangler deploy`.
+It then deploys the MCP worker (`wrangler deploy -c workers/mcp/wrangler.toml`).
+
+## MCP server
+
+`workers/mcp/` is a second worker: a remote MCP server (streamable HTTP) at https://mcp.tocsin.sh/mcp.
+It reads the public Tocsin API over HTTP and has no D1 binding. `TOCSIN_BASE_URL` (a `[vars]` entry in
+`workers/mcp/wrangler.toml`, default `https://tocsin.sh`) points it at any Tocsin host.
+
+Tools: `tocsin_latest`, `tocsin_check`, `tocsin_get`, `tocsin_watchlist_events`. Each result is
+`{ "human": <one line>, "data": <the API answer> }`. `tocsin_watchlist_events` sends the
+`Authorization: Bearer <key>` header of the MCP session's initialize request to the API.
+
+Run it locally: `npx wrangler dev -c workers/mcp/wrangler.toml`.
+
+Before the first deploy, an operator adds a proxied DNS record for `mcp.tocsin.sh` in the `tocsin.sh`
+zone (for example `AAAA mcp 100::`), so the route `mcp.tocsin.sh/*` receives traffic.
 
 Apache-2.0. The hosted service runs at https://tocsin.sh.
