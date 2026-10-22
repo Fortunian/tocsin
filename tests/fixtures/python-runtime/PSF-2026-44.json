@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.5.0",
+  "id": "PSF-2026-44",
+  "published": "2026-09-30T16:17:39.368Z",
+  "modified": "2026-10-01T00:44:45.229Z",
+  "aliases": [
+    "CVE-2026-19553"
+  ],
+  "details": "ssl.SSLContext.wrap_bio() didn't require the server_hostname argument\nto not be None if ssl.SSLContext.check_hostname was set. Due to a\nmissing parameter check in SSLObject, if the server_hostname argument\nisn't supplied then hostname verification would be silently skipped.\n\n\nThis defect could lead to programs where certificate hostname verification\n*appeared* to be succeeding with SSLContext.check_hostname = True and no\nValueError being raised due to misconfiguration.\n\n\nIf the program passes a server_hostname value that isn't an empty string\nor None to any of these APIs then certificate hostname verification\nproceeds as expected and the program is not affected by this vulnerability.\n\n\nMitigating this vulnerability doesn't require updating Python or applying\nthe patch. To mitigate, pass a valid non-None and non-empty\nserver_hostname value to SSLContext.wrap_bio(),\nasyncio.create_connection(), or asyncio.loop.start_tls() and\ncertificate hostname verification will proceed as expected. Upgrading to\nthe latest version of Python or applying the patch only changes the\nbehavior from silently skipping hostname verification to raising a\nValueError, similar to SSLContext.wrap_socket(), when server_hostname\nisn't supplied.",
+  "affected": [
+    {
+      "ranges": [
+        {
+          "type": "GIT",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "1697ea386c707142555d98a1263176bbbc014a96"
+            },
+            {
+              "fixed": "641390146a16a38e6701923f4ee4f1940ae77082"
+            },
+            {
+              "fixed": "966bf426d0b6c31c1b0a255ff14a17143a466ced"
+            },
+            {
+              "fixed": "f4e43ba525187282f2011da0e6ffc0d2b08d8062"
+            },
+            {
+              "fixed": "869069d52ce0efab2f8c38197e92cdaaa312f1ed"
+            },
+            {
+              "fixed": "5867d4e4ae6d1062352baf6b497a4026e8578ccf"
+            },
+            {
+              "fixed": "bdebbf9b366ec91e9cd9daa0b3510c9e84b60b80"
+            }
+          ],
+          "repo": "https://github.com/python/cpython"
+        }
+      ]
+    }
+  ],
+  "references": [
+    {
+      "type": "WEB",
+      "url": "https://github.com/python/cpython/pull/158503"
+    },
+    {
+      "type": "REPORT",
+      "url": "https://github.com/python/cpython/issues/156793"
+    },
+    {
+      "type": "ADVISORY",
+      "url": "https://mail.python.org/archives/list/security-announce@python.org/thread/QNZRG3YOAMTHDCMVCICXGY6YEFPY2VDL/"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/1697ea386c707142555d98a1263176bbbc014a96"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/641390146a16a38e6701923f4ee4f1940ae77082"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/966bf426d0b6c31c1b0a255ff14a17143a466ced"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/f4e43ba525187282f2011da0e6ffc0d2b08d8062"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/869069d52ce0efab2f8c38197e92cdaaa312f1ed"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/5867d4e4ae6d1062352baf6b497a4026e8578ccf"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/bdebbf9b366ec91e9cd9daa0b3510c9e84b60b80"
+    }
+  ],
+  "database_specific": {
+    "cwe_ids": []
+  }
+}
