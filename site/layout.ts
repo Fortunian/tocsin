@@ -63,7 +63,7 @@ export function page(title: string, body: string, opts: { script?: boolean } = {
 <body>
 <main>
 ${body}
-<footer><a href="/docs">docs</a> · <a href="/status">status</a> · <a href="/llms.txt">llms.txt</a></footer>
+<footer><a href="/docs">docs</a> · <a href="/status">status</a> · <a href="/llms.txt">llms.txt</a><br>Created with ❤️ by <a href="https://www.linkedin.com/in/liorweinstein">Lior Weinstein</a>.</footer>
 </main>
 ${opts.script ? `<script>${COPY_JS}</script>\n` : ""}</body>
 </html>
