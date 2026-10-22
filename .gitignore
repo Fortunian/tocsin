@@ -7,3 +7,4 @@ dist
 !.env.example
 .codegraph
 coverage
+packages/cli/skills
