@@ -7,6 +7,7 @@ import { nodeRuntime } from "./node-runtime";
 import { nvd } from "./nvd";
 import { osv } from "./osv";
 import { phpRuntime } from "./php-runtime";
+import { pythonRuntime } from "./python-runtime";
 import type { Ingester, RunResult } from "./types";
 
 export const defaultRegistry: Record<string, Ingester> = {
@@ -16,6 +17,7 @@ export const defaultRegistry: Record<string, Ingester> = {
   epss,
   "node-runtime": nodeRuntime,
   "php-runtime": phpRuntime,
+  "python-runtime": pythonRuntime,
 };
 
 // sources is a fixed set of rows (docs/RETENTION.md); this scan is bounded.

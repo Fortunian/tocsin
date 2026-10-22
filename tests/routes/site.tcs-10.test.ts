@@ -245,7 +245,7 @@ describe("status", () => {
     expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
     const body = (await res.json()) as { sources: Record<string, unknown>[]; cursor: unknown };
     expect(Array.isArray(body.sources)).toBe(true);
-    expect(body.sources.map((s) => s.id).sort()).toEqual(["epss", "kev", "node-runtime", "nvd", "osv", "php-runtime"]);
+    expect(body.sources.map((s) => s.id).sort()).toEqual(["epss", "kev", "node-runtime", "nvd", "osv", "php-runtime", "python-runtime"]);
     for (const s of body.sources) {
       expect(s).toHaveProperty("last_ok_at");
       expect(s).toHaveProperty("last_error");

@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.5.0",
+  "id": "PSF-2026-41",
+  "published": "2026-09-14T19:14:03.873Z",
+  "modified": "2026-10-11T00:39:42.376Z",
+  "aliases": [
+    "CVE-2026-82049"
+  ],
+  "details": "In CPython 3.13 and earlier, the tarfile\u00a0module's data\u00a0and tar extraction filters are vulnerable to crafted archives containing a hard link to a symbolic link. Such archives may cause extraction to modify the permissions or modification time of a file outside the destination directory, or expose the contents of that file within the extracted tree.",
+  "affected": [
+    {
+      "ranges": [
+        {
+          "type": "GIT",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "5a57248b22ad3b9aafcaaadae2c304a1923daeca"
+            },
+            {
+              "fixed": "b38be2e6cf9d989075ab73412c63e003ebad4ff3"
+            },
+            {
+              "fixed": "b8f23e307097552eaea2604383a12ab280520d0d"
+            },
+            {
+              "fixed": "197663d63afed27f66e10e23c194e8a634e60913"
+            },
+            {
+              "fixed": "28f315486b3da0352b9a1de1c3c97f4127ba4771"
+            },
+            {
+              "fixed": "c66df4e70435d257fd488b35ea129c6f317433a8"
+            },
+            {
+              "fixed": "cc1689830c6b9aaddded2fb9f2fe8116867e2c0e"
+            },
+            {
+              "fixed": "cccc7ec30212dba2abef53ce4a2bed112ddb690c"
+            }
+          ],
+          "repo": "https://github.com/python/cpython"
+        }
+      ]
+    }
+  ],
+  "references": [
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/5a57248b22ad3b9aafcaaadae2c304a1923daeca"
+    },
+    {
+      "type": "REPORT",
+      "url": "https://github.com/python/cpython/issues/157190"
+    },
+    {
+      "type": "WEB",
+      "url": "https://github.com/python/cpython/pull/157191"
+    },
+    {
+      "type": "ADVISORY",
+      "url": "https://mail.python.org/archives/list/security-announce@python.org/thread/EFJWGAZJA56AKSBR2WHMHQZO7RRLZPRH/"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/b38be2e6cf9d989075ab73412c63e003ebad4ff3"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/b8f23e307097552eaea2604383a12ab280520d0d"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/197663d63afed27f66e10e23c194e8a634e60913"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/28f315486b3da0352b9a1de1c3c97f4127ba4771"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/c66df4e70435d257fd488b35ea129c6f317433a8"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/cc1689830c6b9aaddded2fb9f2fe8116867e2c0e"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/cccc7ec30212dba2abef53ce4a2bed112ddb690c"
+    }
+  ],
+  "database_specific": {
+    "cwe_ids": []
+  }
+}
