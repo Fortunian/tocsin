@@ -32,8 +32,6 @@ export const RECORD_SQL = {
   known: "SELECT psf_id FROM python_runtime_records WHERE psf_id IN (SELECT value FROM json_each(?))",
   // idx_python_runtime_records_state_next.
   due: `SELECT ${COLS} FROM python_runtime_records WHERE state = ? AND next_check_at <= ? ORDER BY next_check_at LIMIT ?`,
-  terminalFailed: "SELECT psf_id FROM python_runtime_records WHERE state = 'failed' AND next_check_at IS NULL ORDER BY psf_id LIMIT 20",
-  terminalFailedCount: "SELECT COUNT(*) AS n FROM python_runtime_records WHERE state = 'failed' AND next_check_at IS NULL",
   attempts: "SELECT attempts FROM python_runtime_records WHERE psf_id = ?",
   write:
     "INSERT INTO python_runtime_records (psf_id, state, attempts, last_error, cve, unreleased, next_check_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
@@ -81,14 +79,6 @@ export async function dueRows(db: D1Database, state: "pending" | "failed", now: 
 export async function attemptsOf(db: D1Database, psfId: string): Promise<number> {
   const row = await db.prepare(RECORD_SQL.attempts).bind(psfId).first<{ attempts: number }>();
   return row?.attempts ?? 0;
-}
-
-// "N records failed terminally: PSF-…", or undefined when there are none.
-export async function terminalFailedNote(db: D1Database): Promise<string | undefined> {
-  const [count, ids] = await db.batch<{ n?: number; psf_id?: string }>([db.prepare(RECORD_SQL.terminalFailedCount), db.prepare(RECORD_SQL.terminalFailed)]);
-  const n = Number(count.results[0]?.n ?? 0);
-  if (n === 0) return undefined;
-  return `${n} records failed terminally: ${ids.results.map((r) => r.psf_id).join(", ")}`;
 }
 
 export function readPendingState(text: string | null): PendingState | undefined {

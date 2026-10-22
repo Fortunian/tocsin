@@ -334,28 +334,65 @@ describe("failed and empty records (ledger)", () => {
     expect(res.upserted).toBe(2);
     expect(res.errors).toEqual([]);
     const row = await ledger("PSF-2026-43");
-    expect(row).toMatchObject({ state: "failed", attempts: 1, next_check_at: later(30 * 60_000).toISOString() });
+    expect(row).toMatchObject({ state: "failed", attempts: 1, next_check_at: later(HOUR).toISOString() });
     expect(row!.last_error).toContain("404");
     expect((await pyRows()).map((r) => r.source_id)).toEqual(["PSF-2026-42", "PSF-2026-44"]);
   });
 
-  it("the third 404 makes the record terminal; a fourth run makes no read for it and last_error names it", async () => {
-    await runAt(createPyFake(routes(cve404)), NOW);
-    const second = createPyFake(routes(cve404));
-    await runAt(second, later(HOUR));
-    expect(readsOf(second, "PSF-2026-43", "CVE-2026-19445")).toBe(2);
-    expect(await ledger("PSF-2026-43")).toMatchObject({ state: "failed", attempts: 2 });
-    const third = createPyFake(routes(cve404));
-    const res3 = await runAt(third, later(3 * HOUR));
-    expect(readsOf(third, "PSF-2026-43", "CVE-2026-19445")).toBe(2);
-    expect(await ledger("PSF-2026-43")).toMatchObject({ state: "failed", attempts: 3, next_check_at: null });
-    expect(res3.errors).toEqual(["1 records failed terminally: PSF-2026-43"]);
+  it("the retry schedule is 1 hour, 6 hours, 24 hours, then weekly", async () => {
+    const steps: [Date, number][] = [
+      [NOW, HOUR],
+      [later(HOUR), 6 * HOUR],
+      [later(7 * HOUR), DAY],
+      [later(31 * HOUR), 7 * DAY],
+      [later(31 * HOUR + 7 * DAY), 7 * DAY],
+    ];
+    for (const [i, [at, wait]] of steps.entries()) {
+      const fake = createPyFake(routes(cve404));
+      const res = await runAt(fake, at);
+      expect(readsOf(fake, "PSF-2026-43", "CVE-2026-19445")).toBe(2);
+      expect(res.errors).toEqual([]);
+      expect(await ledger("PSF-2026-43")).toMatchObject({ state: "failed", attempts: i + 1, next_check_at: new Date(at.getTime() + wait).toISOString() });
+    }
+    // Before the next due time: no read.
+    const early = createPyFake(routes(cve404));
+    await runAt(early, later(31 * HOUR + 8 * DAY));
+    expect(readsOf(early, "PSF-2026-43", "CVE-2026-19445")).toBe(0);
+  });
+
+  it("the tenth failed attempt makes the record terminal, reported once; later runs make no read and report no error", async () => {
+    await env.DB.prepare("INSERT INTO python_runtime_records (psf_id, state, attempts, last_error, next_check_at, updated_at) VALUES ('PSF-2026-43', 'failed', 9, 'PythonHttpError: 404', ?, ?)")
+      .bind(NOW.toISOString(), NOW.toISOString())
+      .run();
+    const tenth = createPyFake(routes(cve404));
+    const res = await runAt(tenth, NOW);
+    expect(readsOf(tenth, "PSF-2026-43", "CVE-2026-19445")).toBe(2);
+    expect(await ledger("PSF-2026-43")).toMatchObject({ state: "failed", attempts: 10, next_check_at: null });
+    expect(res.errors).toHaveLength(1);
+    expect(res.errors[0]).toMatch(/^PSF-2026-43: failed terminally after 10 attempts: PythonHttpError: Python source HTTP 404/);
     await env.CURSORS.delete(PY_ETAG_KEY);
-    const fourth = createPyFake(routes(cve404));
-    const res4 = await runAt(fourth, later(30 * DAY));
-    expect(readsOf(fourth, "PSF-2026-43", "CVE-2026-19445")).toBe(0);
-    expect(recordCalls(fourth)).toEqual([]);
-    expect(res4.errors).toEqual(["1 records failed terminally: PSF-2026-43"]);
+    const after = createPyFake(routes(cve404));
+    const res2 = await runAt(after, later(365 * DAY));
+    expect(readsOf(after, "PSF-2026-43", "CVE-2026-19445")).toBe(0);
+    expect(recordCalls(after)).toEqual([]);
+    expect(res2.errors).toEqual([]);
+  });
+
+  it("through runIngesters, a run after a record turned terminal marks python-runtime ok", async () => {
+    await env.DB.prepare("INSERT INTO python_runtime_records (psf_id, state, attempts, last_error, next_check_at, updated_at) VALUES ('PSF-2026-43', 'failed', 10, 'PythonHttpError: 404', NULL, ?)")
+      .bind(NOW.toISOString())
+      .run();
+    await env.DB.prepare("UPDATE sources SET enabled = 0 WHERE id != 'python-runtime'").run();
+    fetchSpy.mockImplementation(createPyFake(routes(cve404)).fetch as never);
+    try {
+      const outcomes = await runIngesters(env, defaultRegistry, () => NOW);
+      expect(outcomes).toEqual([expect.objectContaining({ source: "python-runtime", status: "ok" })]);
+      const row = await env.DB.prepare("SELECT last_ok_at, last_error FROM sources WHERE id = 'python-runtime'").first<{ last_ok_at: string; last_error: string | null }>();
+      expect(row).toEqual({ last_ok_at: NOW.toISOString(), last_error: null });
+    } finally {
+      fetchSpy.mockImplementation(throwing as never);
+      await env.DB.prepare("UPDATE sources SET enabled = 1").run();
+    }
   });
 
   it("a record with no release line is terminal empty and never read again (source: assumed, in-test edit)", async () => {
@@ -379,7 +416,7 @@ describe("failed and empty records (ledger)", () => {
     expect(await ledger("PSF-2026-44")).toMatchObject({ state: "empty" });
   });
 
-  it("the ledger reads use the primary key and idx_python_runtime_records_state_next at 2000 rows (EXPLAIN QUERY PLAN)", async () => {
+  it("the ledger reads use the primary key and idx_python_runtime_records_state_next for the due read at 2000 rows (EXPLAIN QUERY PLAN)", async () => {
     const stmts = [];
     for (let i = 0; i < 2000; i++) {
       const state = ["ok", "empty", "pending", "failed"][i % 4];
@@ -400,9 +437,7 @@ describe("failed and empty records (ledger)", () => {
     expect(known).not.toMatch(/SCAN python_runtime_records/);
     const due = await plan(RECORD_SQL.due, "failed", NOW.toISOString(), 51);
     expect(due).toMatch(/SEARCH python_runtime_records USING INDEX idx_python_runtime_records_state_next \(state=\? AND next_check_at<\?\)/);
-    const terminal = await plan(RECORD_SQL.terminalFailed);
-    expect(terminal).toMatch(/SEARCH python_runtime_records USING (COVERING )?INDEX idx_python_runtime_records_state_next \(state=\? AND next_check_at=\?\)/);
-    expect(due + terminal).not.toMatch(/SCAN/);
+    expect(due).not.toMatch(/SCAN/);
   });
 });
 

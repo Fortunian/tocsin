@@ -9,11 +9,13 @@
 // listed id is checked against python_runtime_records in one batched read;
 // ids with no row, and failed rows that are due, are read (newest first, at
 // most max_records). Each record ends in a persisted state: ok, empty
-// (terminal), pending (a fix not on python.org yet) or failed (retried up to
-// max_attempts, then terminal). One record never stops the run.
+// (terminal), pending (a fix not on python.org yet) or failed (retried on
+// retry_schedule_minutes up to max_attempts reads, then terminal). One record
+// never stops the run; a terminal record is reported once, by the run that
+// makes it terminal, and is then visible only in the ledger.
 import { fetchCveRecord, fetchListing, fetchPsfRecord, fetchReleases } from "./python-runtime-client";
 import { comparePsfIds, normalizePythonAdvisory, parsePsfListing, parsePythonReleases, publishedDoc, readPsf } from "./python-runtime-normalize";
-import { attemptsOf, dueRows, knownIds, readPendingState, terminalFailedNote, writeRecord, type PendingState, type RecordRow } from "./python-runtime-records";
+import { attemptsOf, dueRows, knownIds, readPendingState, writeRecord, type PendingState, type RecordRow } from "./python-runtime-records";
 import { readRuntimeConfig } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
 import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
@@ -35,8 +37,9 @@ export const PY_DEFAULTS = {
   releases_url: "https://www.python.org/api/v2/downloads/release/?is_published=true",
   min_line: "3.9",
   max_records: 50,
-  max_attempts: 3,
-  retry_minutes: 30,
+  max_attempts: 10,
+  // Wait after attempt 1, 2, 3, ...; the last value repeats (1 hour, 6 hours, 24 hours, then weekly).
+  retry_schedule_minutes: "60,360,1440,10080",
   pending_recheck_minutes: 60,
   pending_max_days: 90,
 };
@@ -57,7 +60,14 @@ const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.
 function readConfig(raw: Record<string, unknown>): PyConfig {
   const cfg = readRuntimeConfig(SOURCE, raw, PY_DEFAULTS);
   if (!/^\d+\.\d+$/.test(cfg.min_line)) throw new Error(`${SOURCE} config: min_line must look like "3.9"`);
+  if (!/^[1-9]\d*(,[1-9]\d*)*$/.test(cfg.retry_schedule_minutes)) throw new Error(`${SOURCE} config: retry_schedule_minutes must be a comma list of positive integers`);
   return cfg;
+}
+
+// The wait after failed attempt n (1-based) on the retry schedule; the last value repeats.
+export function retryWaitMinutes(schedule: string, attempt: number): number {
+  const waits = schedule.split(",").map(Number);
+  return waits[Math.min(attempt, waits.length) - 1];
 }
 
 async function store(state: RunState, doc: AdvisoryInput): Promise<boolean> {
@@ -110,7 +120,9 @@ async function handleRecord(state: RunState, psfId: string): Promise<void> {
   } catch (err) {
     const attempts = (await attemptsOf(db, psfId)) + 1;
     const terminal = attempts >= cfg.max_attempts;
-    const next_check_at = terminal ? undefined : minutesFrom(now, cfg.retry_minutes * attempts);
+    // The one report of a terminal record: this run's errors. Later runs stay ok.
+    if (terminal) result.errors.push(`${psfId}: failed terminally after ${attempts} attempts: ${errorText(err)}`);
+    const next_check_at = terminal ? undefined : minutesFrom(now, retryWaitMinutes(cfg.retry_schedule_minutes, attempts));
     return writeRecord(db, { psf_id: psfId, state: "failed", attempts, last_error: errorText(err), next_check_at }, now);
   }
   if (!norm.ok) {
@@ -174,8 +186,6 @@ async function finish(state: RunState, listing: Awaited<ReturnType<typeof fetchL
     if (capped || listing.etag === undefined) await kv.delete(PY_ETAG_KEY);
     else await kv.put(PY_ETAG_KEY, listing.etag);
   }
-  const note = await terminalFailedNote(state.ctx.env.DB);
-  if (note !== undefined) state.result.errors.push(note);
   if (state.pending > 0) state.result.deferred = state.pending;
   if (capped || state.pending > 0) state.result.incomplete = true;
 }
