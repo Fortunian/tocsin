@@ -4,7 +4,7 @@ Security advisories, built for agents. One normalized feed of runtime and packag
 advisories that an agent can subscribe to in one call and act on without a human.
 
 Domains: tocsin.sh (hosted service and site), tocsin.so (alias, redirects to tocsin.sh).
-Cloudflare account: liorwn@gmail.com (account id 11b818a4b2a98b4b5012359edb39cae8).
+Cloudflare account: the owner's account (set CLOUDFLARE_ACCOUNT_ID for wrangler; CI reads the repo variable).
 Repo: Fortunian/tocsin. License: Apache-2.0. The engine, the schema, the ingesters,
 the MCP server, the CLI and the skill are open source. The hosted service is the business.
 

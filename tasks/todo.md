@@ -4,7 +4,7 @@ Plan: docs/PLAN_2026-10-21.html. Tickets: docs/tickets/*.md.
 
 ## Setup (Mac)
 - [x] Register tocsin.sh and tocsin.so (Namecheap, 2026-10-21)
-- [x] Add both zones to Cloudflare (liorwn@gmail.com account), nameservers aleena + matias .ns.cloudflare.com
+- [x] Add both zones to Cloudflare, nameservers aleena + matias .ns.cloudflare.com
 - [x] Namecheap nameservers changed (Lior, 2026-10-21)
 - [ ] Nameservers live at the registry (re-check with `dig NS tocsin.sh @a0.nic.sh`)
 - [ ] Lior approves plan + tickets
@@ -27,4 +27,4 @@ Plan: docs/PLAN_2026-10-21.html. Tickets: docs/tickets/*.md.
 
 ## Filed 2026-10-22 (Fortunian/tocsin issues, ai-build)
 #1 scaffold · #2 OSV ingest · #3 feed API · #4 parsers · #5 matcher · #6 node+php runtime · #7 NVD/KEV/EPSS · #8 watch lists · #9 check endpoint · #10 site · #11 webhooks · #12 MCP · #13 CLI connect/check · #14 launch gate · #15 Stripe
-Blocked until the box can read the repo: install the board-harness GitHub Apps on the liorwn account (or make the repo public and rely on the PAT rung), then re-run load-project.
+Blocked until the box can read the repo: install the board-harness GitHub Apps on the owner account (or make the repo public and rely on the PAT rung), then re-run load-project.
