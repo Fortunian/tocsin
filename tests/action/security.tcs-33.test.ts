@@ -74,6 +74,18 @@ describe("Markdown injection", () => {
   });
 });
 
+describe("advisory url", () => {
+  it("a pipe in the advisory url is encoded, so the table row keeps its 7 cells in the comment and the summary", async () => {
+    const w = await setup({ ...DIRTY, affected: [{ ...AFFECTED, url: "https://e.example/a|b" }] });
+    expect(await exec(w)).toBe(1);
+    for (const md of [w.comments[0].body, await w.summary()]) {
+      const row = md.split("\n").find((l) => l.includes("lodash") && l.startsWith("|"))!;
+      expect(row).toContain("(https://e.example/a%7Cb)");
+      expect(row.split(/(?<!\\)\|/)).toHaveLength(9);
+    }
+  });
+});
+
 describe("marker ownership", () => {
   it("a marker comment by another user is ignored: the Action posts its own and leaves the other alone", async () => {
     const w = await setup(DIRTY);

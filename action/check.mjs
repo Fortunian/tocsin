@@ -270,7 +270,7 @@ const safeForCommand = (name, fixed) => SAFE_NAME.test(name) && (fixed == null |
 /** @param {string | undefined} url */
 function advisoryHref(url) {
   if (!url || !/^https?:\/\/[^\s]+$/.test(url)) return null;
-  return url.replace(/[()<>\[\]`"'\\]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+  return url.replace(/[()<>\[\]`"'\\|]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
 }
 
 /** @param {Affected} a */
