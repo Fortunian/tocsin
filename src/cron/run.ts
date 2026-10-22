@@ -1,6 +1,13 @@
 import type { Env } from "../env";
+import { defaultRegistry, runIngesters } from "../ingest/registry";
+import type { Ingester } from "../ingest/types";
 
-// Stub. The ingest ticket replaces this body.
-export async function runCron(event: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {
+export async function runCron(
+  event: ScheduledController,
+  env: Env,
+  _ctx: ExecutionContext,
+  registry: Record<string, Ingester> = defaultRegistry,
+): Promise<void> {
   console.log(JSON.stringify({ lane: "cron", cron: event.cron, scheduledTime: event.scheduledTime }));
+  await runIngesters(env, registry, () => new Date());
 }
