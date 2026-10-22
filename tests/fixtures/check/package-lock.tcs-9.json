@@ -1,0 +1,26 @@
+{
+  "name": "check-fixture",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "check-fixture",
+      "version": "1.0.0",
+      "dependencies": {
+        "tcs9-vuln-fixture": "^1.2.0",
+        "tcs9-safe-fixture": "^2.0.0"
+      }
+    },
+    "node_modules/tcs9-vuln-fixture": {
+      "version": "1.2.3",
+      "resolved": "https://registry.example.com/tcs9-vuln-fixture/-/tcs9-vuln-fixture-1.2.3.tgz",
+      "license": "MIT"
+    },
+    "node_modules/tcs9-safe-fixture": {
+      "version": "2.0.0",
+      "resolved": "https://registry.example.com/tcs9-safe-fixture/-/tcs9-safe-fixture-2.0.0.tgz",
+      "license": "MIT"
+    }
+  }
+}

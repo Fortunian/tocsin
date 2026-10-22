@@ -42,6 +42,9 @@ const BY_NAME: Record<string, ParserId> = {
   "gemfile.lock": "gemfile-lock",
 };
 
+/** Lockfile names the check endpoint accepts, for its 400 answer. */
+export const SUPPORTED_FILENAMES: readonly string[] = [...Object.keys(BY_NAME), "requirements-*.txt"];
+
 /** Picks the parser from the file's basename (case-insensitive) and runs it. Unknown filename: null. */
 export function detectParser(filename: string): ParserId | null {
   const base = filename.split(/[\\/]/).pop()!.toLowerCase();

@@ -16,8 +16,8 @@ A fixed set of rows (6 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-
 
 ## settings
 
-A small key/value table of run-time limits and knobs (today one row: `feed.anon_rate_per_minute`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (today three rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`). Rows change in place by key; the table does not grow with traffic. No delete job.
 
 ## KV `rl:` keys (CURSORS namespace)
 
-The `/v1/events` rate-limit counters, one key per client IP per minute (`rl:v1:<ip>:<minute>`). Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
+The rate-limit counters, one key per client IP per minute: `rl:v1:<ip>:<minute>` for `/v1/events` and `rl:v1:check:<ip>:<minute>` for `/v1/check`. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
