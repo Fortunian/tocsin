@@ -66,9 +66,16 @@ function union<T>(a: T[], b: T[], key: (x: T) => string): T[] {
 
 const sourceKey = (s: AdvisorySource) => `${s.source}\u0000${s.source_id}`;
 
+// The doc's sources with `entry` appended, unless that (source, source_id) is
+// already listed. An enrichment source never takes the creator slot sources[0].
+export function appendSource(sources: AdvisorySource[], entry: AdvisorySource): AdvisorySource[] {
+  return union(sources, [entry], sourceKey);
+}
+
 // The creator of an advisory (doc.sources[0]) owns its base fields; any other
 // source only adds cve_ids, references and sources. exploited and epss are
-// kept from the stored doc unless the incoming doc sets them.
+// kept from the stored doc unless the incoming doc sets them, and a stored
+// score (an NVD enrichment) is kept when the incoming doc has none.
 function merge(stored: Advisory, incoming: AdvisoryInput, key: SourceKey): Advisory {
   const creator = stored.sources[0];
   const fromCreator = creator !== undefined && creator.source === key.source && creator.source_id === key.source_id;
@@ -80,12 +87,13 @@ function merge(stored: Advisory, incoming: AdvisoryInput, key: SourceKey): Advis
     cve_ids: union(stored.cve_ids, incoming.cve_ids, (c) => c).sort(),
     references: union(stored.references, incoming.references, (r) => r),
     sources: union(stored.sources, incoming.sources, sourceKey),
+    severity: base.severity.score === undefined && stored.severity.score !== undefined ? stored.severity : base.severity,
     exploited: stored.exploited || incoming.exploited,
     epss: incoming.epss ?? stored.epss,
   };
 }
 
-function checked(doc: Advisory): Advisory {
+export function checked(doc: Advisory): Advisory {
   const v = validateAdvisory(doc);
   if (!v.ok) throw new InvalidAdvisoryError(v.errors);
   return doc;
