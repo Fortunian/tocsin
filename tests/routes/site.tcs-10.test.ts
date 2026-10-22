@@ -125,7 +125,7 @@ describe("landing GET / (production entry)", () => {
 
   it("links Cromford without rel and has the footer links", async () => {
     const html = await landing();
-    expect(html).toContain('<a href="https://cromford.ai">Built with Cromford</a>.');
+    expect(html).toContain('<a href="https://cromford.dev">Built with Cromford</a>.');
     const anchor = html.match(/<a [^>]*cromford\.ai[^>]*>/)?.[0] ?? "";
     expect(anchor).not.toContain("rel=");
     expect(html).toContain('href="https://github.com/Fortunian/tocsin"');

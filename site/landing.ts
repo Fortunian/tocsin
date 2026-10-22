@@ -56,6 +56,6 @@ ${command("npx tocsin check")}
 ${latestTable(rows)}
 <p>Free. No account to read. An API key (free) for watch lists and signed webhooks.</p>
 <p>Open source, Apache-2.0. <a href="https://github.com/Fortunian/tocsin">github.com/Fortunian/tocsin</a><br>
-<a href="https://cromford.ai">Built with Cromford</a>.</p>`;
+<a href="https://cromford.dev">Built with Cromford</a>.</p>`;
   return page("tocsin: security advisories, built for agents", body, { script: true });
 }
