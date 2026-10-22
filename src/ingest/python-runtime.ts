@@ -2,8 +2,9 @@
 // (psf/advisory-database, advisories/python/PSF-YYYY-N.json, OSV format).
 // The python/cpython GitHub security-advisories endpoint is empty (checked
 // 2026-10-22), so it is not read. A PSF record names the CVE; the PSF CVE
-// record gives the fixed version per release line; python.org releases
-// confirm each fix is released. One advisory per PSF record (one CVE).
+// record gives the fixed version per release line; the CPython git tags
+// (python.org as the fallback) confirm each fix is released. One advisory per
+// PSF record (one CVE).
 //
 // Per run: 1 GitHub listing call (conditional on the stored ETag). Every
 // listed id is checked against python_runtime_records in one batched read;
@@ -13,14 +14,16 @@
 // retry_schedule_minutes up to max_attempts reads, then terminal). One record
 // never stops the run; a terminal record is reported once, by the run that
 // makes it terminal, and is then visible only in the ledger.
-import { fetchCveRecord, fetchListing, fetchPsfRecord, fetchReleases } from "./python-runtime-client";
-import { comparePsfIds, normalizePythonAdvisory, parsePsfListing, parsePythonReleases, publishedDoc, readPsf } from "./python-runtime-normalize";
+import { fetchCveRecord, fetchListing, fetchPsfRecord } from "./python-runtime-client";
+import { comparePsfIds, normalizePythonAdvisory, parsePsfListing, publishedDoc, readPsf } from "./python-runtime-normalize";
 import { attemptsOf, dueRows, knownIds, readPendingState, writeRecord, type PendingState, type RecordRow } from "./python-runtime-records";
+import { releasedVersions } from "./python-runtime-releases";
 import { readRuntimeConfig } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
 import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
 
-export { comparePsfIds, lineRanges, normalizePythonAdvisory, parsePsfListing, parsePythonReleases, publishedDoc } from "./python-runtime-normalize";
+export { comparePsfIds, lineRanges, normalizePythonAdvisory, parseCpythonTags, parsePsfListing, parsePythonReleases, publishedDoc } from "./python-runtime-normalize";
+export { PY_TAGS_KEY, PythonReleasesError } from "./python-runtime-releases";
 export { RECORD_SQL } from "./python-runtime-records";
 
 export const PY_ETAG_KEY = "python:listing-etag";
@@ -34,6 +37,8 @@ export const PY_DEFAULTS = {
   record_base: "https://raw.githubusercontent.com/psf/advisory-database/main/advisories/python",
   html_base: "https://github.com/psf/advisory-database/blob/main/advisories/python",
   cve_api_base: "https://cveawg.mitre.org/api/cve",
+  // Released versions: the CPython tags (primary); python.org only when the GitHub read fails.
+  tags_url: "https://api.github.com/repos/python/cpython/git/matching-refs/tags/v3.",
   releases_url: "https://www.python.org/api/v2/downloads/release/?is_published=true",
   min_line: "3.9",
   max_records: 50,
@@ -171,8 +176,10 @@ async function run(ctx: IngestContext): Promise<RunResult> {
     listed = parsePsfListing(listing.body);
   }
   const work = await planWork(state, listed);
-  // One python.org read per run, before any record read; its error throws before any vendor spend.
-  if (work.records.length + work.pending.length > 0) state.released = parsePythonReleases(await fetchReleases(ctx.fetch, cfg.releases_url));
+  // One release-source read per run, before any record read; if both sources fail it throws before any vendor spend.
+  if (work.records.length + work.pending.length > 0) {
+    state.released = await releasedVersions(ctx.fetch, kv, { tagsUrl: cfg.tags_url, releasesUrl: cfg.releases_url, token: ctx.env.GITHUB_TOKEN });
+  }
   for (const id of work.records) await handleRecord(state, id);
   for (const row of work.pending) await recheck(state, row);
   await finish(state, listing, work.capped);

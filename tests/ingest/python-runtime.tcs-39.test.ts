@@ -5,7 +5,9 @@ import {
   normalizePythonAdvisory,
   parsePsfListing,
   parsePythonReleases,
+  parseCpythonTags,
   PY_ETAG_KEY,
+  PY_TAGS_KEY,
   pythonRuntime,
   RECORD_SQL,
 } from "../../src/ingest/python-runtime";
@@ -24,6 +26,7 @@ import psf42 from "../fixtures/python-runtime/PSF-2026-42.json?raw";
 import psf43 from "../fixtures/python-runtime/PSF-2026-43.json?raw";
 import psf44 from "../fixtures/python-runtime/PSF-2026-44.json?raw";
 import releasesJson from "../fixtures/python-runtime/releases.json?raw";
+import tagsJson from "../fixtures/python-runtime/tags.json?raw";
 import { get } from "../routes/seed.tcs-3";
 import { createPyFake, type PyAnswer, type PyFake } from "./python-fake.tcs-39";
 
@@ -33,6 +36,8 @@ const RECORD_BASE = "https://raw.githubusercontent.com/psf/advisory-database/mai
 const HTML_BASE = "https://github.com/psf/advisory-database/blob/main/advisories/python";
 const CVE_BASE = "https://cveawg.mitre.org/api/cve";
 const RELEASES = "https://www.python.org/api/v2/downloads/release/?is_published=true";
+const TAGS = "https://api.github.com/repos/python/cpython/git/matching-refs/tags/v3.";
+const TAGS_ETAG = 'W/"2195fb0c96593c3bd8f8247c04474dc6847de1158166bc7a08d5db1ea10b5c0e"';
 const ETAG = '"39fd4cc08d4e9fccc7b7b084cfe4080373d7c4fb"';
 const NOW = new Date("2026-10-22T22:00:00Z");
 const HOUR = 3_600_000;
@@ -79,6 +84,7 @@ function routes(over: Record<string, string | PyAnswer> = {}): Record<string, st
     [REC("PSF-2026-41")]: psf41,
     [CVE("CVE-2026-82049")]: cve82049,
     ...Object.fromEntries(EXPECTED.flatMap((e) => [[REC(e.psf), e.psfJson], [CVE(e.cve), e.cveJson]])),
+    [TAGS]: { body: tagsJson, etag: TAGS_ETAG },
     [RELEASES]: releasesJson,
     ...over,
   };
@@ -90,7 +96,7 @@ function ctxFor(fetchFn: typeof fetch, opts: { config?: Record<string, unknown>;
 }
 
 const runAt = (fake: PyFake, now: Date, config: Record<string, unknown> = {}) => pythonRuntime.run(ctxFor(fake.fetch, { now, config }));
-// Calls that are not the one GitHub listing call: PSF record, CVE record and releases reads.
+// Calls that are not the one GitHub listing call: PSF record, CVE record and release-source reads.
 const recordCalls = (fake: PyFake) => fake.urls().filter((u) => u !== LISTING);
 const readsOf = (fake: PyFake, psf: string, cve: string) => fake.count(REC(psf)) + fake.count(CVE(cve));
 
@@ -161,6 +167,7 @@ beforeEach(async () => {
     await env.DB.prepare("INSERT INTO python_runtime_records (psf_id, state, attempts, updated_at) VALUES (?, 'ok', 0, ?)").bind(id, NOW.toISOString()).run();
   }
   await env.CURSORS.delete(PY_ETAG_KEY);
+  await env.CURSORS.delete(PY_TAGS_KEY);
 });
 
 describe("python parsers (text)", () => {
@@ -230,11 +237,12 @@ describe("python-runtime seam (seam)", () => {
     expect(await ledger("PSF-2026-44")).toBeNull();
   });
 
-  it("GITHUB_TOKEN reaches only the GitHub API listing as a bearer token", async () => {
+  it("GITHUB_TOKEN reaches only the GitHub API reads (listing and tags) as a bearer token", async () => {
     const fake = createPyFake(routes());
     await pythonRuntime.run(ctxFor(fake.fetch, { env: { GITHUB_TOKEN: "tok-fixture-39" } }));
-    expect(fake.calls.find((c) => c.url === LISTING)!.headers["authorization"]).toBe("Bearer tok-fixture-39");
-    for (const c of fake.calls.filter((c) => c.url !== LISTING)) expect(c.headers["authorization"]).toBeUndefined();
+    const api = [LISTING, TAGS];
+    for (const u of api) expect(fake.calls.find((c) => c.url === u)!.headers["authorization"]).toBe("Bearer tok-fixture-39");
+    for (const c of fake.calls.filter((c) => !api.includes(c.url))) expect(c.headers["authorization"]).toBeUndefined();
   });
 });
 
@@ -245,7 +253,7 @@ describe("pythonRuntime.run (run)", () => {
     expect(res.errors).toEqual([]);
     expect(res.upserted).toBe(3);
     expect(fake.count(LISTING)).toBe(1);
-    expect(recordCalls(fake).sort()).toEqual([...EXPECTED.flatMap((e) => [REC(e.psf), CVE(e.cve)]), RELEASES].sort());
+    expect(recordCalls(fake).sort()).toEqual([...EXPECTED.flatMap((e) => [REC(e.psf), CVE(e.cve)]), TAGS].sort());
     expect(await env.CURSORS.get(PY_ETAG_KEY)).toBe(ETAG);
     const rows = await pyRows();
     expect(rows.map((r) => r.source_id)).toEqual(EXPECTED.map((e) => e.psf));
@@ -442,12 +450,13 @@ describe("failed and empty records (ledger)", () => {
 });
 
 describe("unreleased fix (pending)", () => {
-  const noFix = JSON.stringify(JSON.parse(releasesJson).filter((r: { name: string }) => r.name !== "Python 3.14.9"));
+  const noFixBody = JSON.stringify(JSON.parse(tagsJson).filter((r: { ref: string }) => r.ref !== "refs/tags/v3.14.9"));
+  const noFix: PyAnswer = { body: noFixBody, etag: '"tags-nofix"' };
   const NO_FIX_ACTION = "Upgrade python to 3.12.15 or later. The 3.14.x fix (3.14.9) is not released yet.";
 
   it("a fix missing from python.org still publishes every range at once; the action names the unreleased fix; no error", async () => {
-    expect(noFix).not.toBe(releasesJson);
-    const res = await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
+    expect(noFixBody).not.toBe(tagsJson);
+    const res = await runAt(createPyFake(routes({ [TAGS]: noFix })), NOW);
     expect(res.errors).toEqual([]);
     expect(res.upserted).toBe(3);
     expect(res.deferred).toBe(1);
@@ -462,19 +471,19 @@ describe("unreleased fix (pending)", () => {
   });
 
   it("while pending, python=3.14.4 is affected by PSF-2026-42 with fixed_in the announced 3.14.9", async () => {
-    await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
+    await runAt(createPyFake(routes({ [TAGS]: noFix })), NOW);
     const res = await get("/v1/check?python=3.14.4", "192.0.2.141");
     const body = (await res.json()) as { affected: { cve_ids: string[]; fixed_in: string | null; action: string }[] };
     const hit = body.affected.find((a) => a.cve_ids.includes("CVE-2026-12345"));
     expect(hit).toMatchObject({ fixed_in: "3.14.9", action: NO_FIX_ACTION });
   });
 
-  it("the next due run re-checks only python.org (304 listing + 1 releases read), rewrites the action and leaves pending", async () => {
-    await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
+  it("the next due run re-checks only the release source (304 listing + 1 tags read), rewrites the action and leaves pending", async () => {
+    await runAt(createPyFake(routes({ [TAGS]: noFix })), NOW);
     const before = await env.DB.prepare("SELECT a.cursor FROM advisories a JOIN advisory_sources s ON s.advisory_id = a.id WHERE s.source_id = 'PSF-2026-42'").first<{ cursor: number }>();
     const fake = createPyFake(routes());
     const res = await runAt(fake, later(2 * HOUR));
-    expect(fake.urls()).toEqual([LISTING, RELEASES]);
+    expect(fake.urls()).toEqual([LISTING, TAGS]);
     expect(res.errors).toEqual([]);
     expect(res.upserted).toBe(1);
     expect(res.deferred ?? 0).toBe(0);
@@ -487,17 +496,17 @@ describe("unreleased fix (pending)", () => {
   });
 
   it("a run before next_check_at makes no releases read for the pending record", async () => {
-    await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
-    const fake = createPyFake(routes({ [RELEASES]: noFix }));
+    await runAt(createPyFake(routes({ [TAGS]: noFix })), NOW);
+    const fake = createPyFake(routes({ [TAGS]: noFix }));
     await runAt(fake, later(10 * 60_000));
     expect(fake.urls()).toEqual([LISTING]);
   });
 
   it("a line unreleased for 90 days drops only the action note, never the range: the record ends ok with a last_error note", async () => {
-    await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
-    const fake = createPyFake(routes({ [RELEASES]: noFix }));
+    await runAt(createPyFake(routes({ [TAGS]: noFix })), NOW);
+    const fake = createPyFake(routes({ [TAGS]: noFix }));
     await runAt(fake, later(91 * DAY));
-    expect(fake.urls()).toEqual([LISTING, RELEASES]);
+    expect(fake.urls()).toEqual([LISTING, TAGS]);
     const row = await ledger("PSF-2026-42");
     expect(row).toMatchObject({ state: "ok", next_check_at: null });
     expect(row!.last_error).toBe("no python.org release after 90 days: 3.14.9");
@@ -508,7 +517,7 @@ describe("unreleased fix (pending)", () => {
 
   it("through runIngesters, a run with a pending record marks python-runtime ok with last_error NULL", async () => {
     await env.DB.prepare("UPDATE sources SET enabled = 0 WHERE id != 'python-runtime'").run();
-    const fake = createPyFake(routes({ [RELEASES]: noFix }));
+    const fake = createPyFake(routes({ [TAGS]: noFix }));
     fetchSpy.mockImplementation(fake.fetch as never);
     try {
       const outcomes = await runIngesters(env, defaultRegistry, () => NOW);
@@ -543,3 +552,66 @@ describe("GET /v1/check?python= (check)", () => {
     expect(body.affected.filter((a) => EXPECTED.some((e) => a.cve_ids.includes(e.cve)))).toEqual([]);
   });
 });
+
+describe("release source (tags)", () => {
+  it("the recorded tag refs give 3.15.1 and 3.12.15 and no a, b or rc tag", () => {
+    const tags = parseCpythonTags(JSON.parse(tagsJson));
+    for (const v of ["3.15.1", "3.12.15", "3.14.9", "3.10.22"]) expect(tags.has(v)).toBe(true);
+    for (const v of ["3.16.0a1", "3.15.0rc3", "3.14.0b1"]) expect(tags.has(v)).toBe(false);
+    expect([...tags].every((v) => /^\d+\.\d+\.\d+$/.test(v))).toBe(true);
+  });
+
+  it("the tags read is the one release read: python.org is not called when GitHub answers", async () => {
+    const fake = createPyFake(routes());
+    const res = await runAt(fake, NOW);
+    expect(res.upserted).toBe(3);
+    expect(fake.count(TAGS)).toBe(1);
+    expect(fake.count(RELEASES)).toBe(0);
+    expect(JSON.parse((await env.CURSORS.get(PY_TAGS_KEY))!).etag).toBe(TAGS_ETAG);
+  });
+
+  it("a GitHub 403 on the tags falls back to python.org and the run succeeds", async () => {
+    const fake = createPyFake(routes({ [TAGS]: { status: 403, body: '{"message":"rate limit"}' } }));
+    const res = await runAt(fake, NOW);
+    expect(res.errors).toEqual([]);
+    expect(res.upserted).toBe(3);
+    expect(fake.count(TAGS)).toBe(1);
+    expect(fake.count(RELEASES)).toBe(1);
+  });
+
+  it("both sources 403: the run throws naming both hosts, reads no record, and runIngesters marks the source failed", async () => {
+    const both = { [TAGS]: { status: 403 }, [RELEASES]: { status: 403 } };
+    const fake = createPyFake(routes(both));
+    const err = await runAt(fake, NOW).catch((e: unknown) => e);
+    expect((err as Error).message).toBe("release list unavailable: api.github.com HTTP 403; www.python.org HTTP 403");
+    expect(fake.urls().filter((u) => u.startsWith(RECORD_BASE) || u.startsWith(CVE_BASE))).toEqual([]);
+
+    await env.DB.prepare("UPDATE sources SET enabled = 0 WHERE id != 'python-runtime'").run();
+    fetchSpy.mockImplementation(createPyFake(routes(both)).fetch as never);
+    try {
+      const outcomes = await runIngesters(env, defaultRegistry, () => NOW);
+      expect(outcomes).toEqual([expect.objectContaining({ source: "python-runtime", status: "failed" })]);
+      const row = await env.DB.prepare("SELECT last_error FROM sources WHERE id = 'python-runtime'").first<{ last_error: string }>();
+      expect(row!.last_error).toContain("api.github.com HTTP 403");
+      expect(row!.last_error).toContain("www.python.org HTTP 403");
+    } finally {
+      fetchSpy.mockImplementation(throwing as never);
+      await env.DB.prepare("UPDATE sources SET enabled = 1").run();
+    }
+  });
+
+  it("a 304 on the tags reuses the cached set and makes no second release read", async () => {
+    await runAt(createPyFake(routes({ [TAGS]: noFixTags })), NOW);
+    const fake = createPyFake(routes({ [TAGS]: noFixTags }));
+    await runAt(fake, later(2 * HOUR));
+    const tagCall = fake.calls.find((c) => c.url === TAGS)!;
+    expect(tagCall.headers["if-none-match"]).toBe('"tags-nofix"');
+    expect(tagCall.status).toBe(304);
+    expect(fake.count(RELEASES)).toBe(0);
+    expect(fake.urls()).toEqual([LISTING, TAGS]);
+    // The cached set still lacks 3.14.9, so PSF-2026-42 stays pending.
+    expect(await ledger("PSF-2026-42")).toMatchObject({ state: "pending" });
+  });
+});
+
+const noFixTags: PyAnswer = { body: JSON.stringify(JSON.parse(tagsJson).filter((r: { ref: string }) => r.ref !== "refs/tags/v3.14.9")), etag: '"tags-nofix"' };
