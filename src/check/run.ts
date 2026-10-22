@@ -2,7 +2,16 @@
 // each dependency against them, and answer the affected ones in a fixed order.
 // Read-only over D1: one batch per check.
 import type { Advisory, SeverityLabel } from "../schema/advisory";
-import { CANDIDATE_SQL, CHUNK_SIZE, FEED_CURSOR_SQL, PYPI_CANDIDATE_SQL, candidateKeys, lookupName } from "./candidates";
+import {
+  CANDIDATE_SQL,
+  CHUNK_SIZE,
+  FEED_CURSOR_SQL,
+  GO_RUNTIME_CANDIDATE_SQL,
+  PYPI_CANDIDATE_SQL,
+  candidateKeys,
+  lookupName,
+} from "./candidates";
+import { goRuntimeView, isGoToolchainAdvisory, needsGoToolchainRows } from "./go-runtime";
 import { matchAdvisory, supportsEcosystem } from "./match";
 import type { Dependency } from "./parsers";
 
@@ -45,6 +54,7 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
       stmts.push(db.prepare(sql).bind(JSON.stringify(keys.slice(i, i + CHUNK_SIZE))));
     }
   }
+  if (needsGoToolchainRows(checkedDeps)) stmts.push(db.prepare(GO_RUNTIME_CANDIDATE_SQL));
   const [cursorRes, ...chunkRes] = await db.batch<{ c?: number; doc_json?: string }>(stmts);
   const feed_cursor = Number(cursorRes.results[0]?.c ?? 0);
 
@@ -55,10 +65,9 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
       const a = JSON.parse(row.doc_json as string) as Advisory;
       if (seenIds.has(a.id)) continue;
       seenIds.add(a.id);
-      const k = groupKey(a.ecosystem, lookupName(a.ecosystem, a.component));
-      const list = byKey.get(k);
-      if (list) list.push(a);
-      else byKey.set(k, [a]);
+      addCandidate(byKey, a);
+      // The same row, read as the `go` runtime (TCS-40). Not a second advisory.
+      if (isGoToolchainAdvisory(a)) addCandidate(byKey, goRuntimeView(a));
     }
   }
 
@@ -100,6 +109,13 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
   );
 
   return { checked: checkedDeps.length, affected, skipped, feed_cursor };
+}
+
+function addCandidate(byKey: Map<string, Advisory[]>, a: Advisory): void {
+  const k = groupKey(a.ecosystem, lookupName(a.ecosystem, a.component));
+  const list = byKey.get(k);
+  if (list) list.push(a);
+  else byKey.set(k, [a]);
 }
 
 function cmp(a: string, b: string): number {

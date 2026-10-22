@@ -30,6 +30,15 @@ export const PYPI_CANDIDATE_SQL =
   `(${PYPI_NAME_EXPR}, ecosystem) IN ` +
   "(SELECT json_extract(value, '$[1]'), json_extract(value, '$[0]') FROM json_each(?1))";
 
+// OSV `Go` rows on the toolchain (stdlib, toolchain, cmd/*), read for a `go`
+// runtime dependency. Three seeks on idx_advisories_component_ecosystem: two
+// equality seeks and one range seek ('cmd/' <= component < 'cmd0', '0' is the
+// character after '/'), each with ecosystem = 'Go' on the second index column.
+// Proof: tests/check/go-runtime.tcs-40.test.ts.
+export const GO_RUNTIME_CANDIDATE_SQL =
+  "SELECT doc_json FROM advisories WHERE ecosystem = 'Go' AND " +
+  "(component IN ('stdlib', 'toolchain') OR (component >= 'cmd/' AND component < 'cmd0'))";
+
 export type CandidateKey = [ecosystem: string, component: string];
 
 export function isPypi(ecosystem: string): boolean {

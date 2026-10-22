@@ -41,6 +41,8 @@ curl -F "package-lock.json=@package-lock.json" https://tocsin.sh/v1/check
 curl -H "Content-Type: application/json" -d '{"dependencies":[{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}],"runtimes":{"node":"24.22.0"}}' https://tocsin.sh/v1/check
 ```
 
+Runtime parameters are `node=`, `php=`, `python=`, `go=`, `deno=` and `bun=`. `go=` takes the Go toolchain version as `go version` prints it (`go=1.22.3` or `go=go1.22.3`). It matches the OSV `Go` advisories on the toolchain itself (package `stdlib`, `toolchain` or `cmd/<tool>`) by their OSV range events, and `fixed_in` is the lowest OSV `fixed` version above yours. Those advisories stay `Go` advisories for module matching; the runtime match does not add a second advisory. An affected item for `go=` has `dependency` `{ "ecosystem": "go", "name": "go", "version": "1.22.3" }`.
+
 The answer is `{ "checked": <int>, "affected": [...], "skipped": [...], "feed_cursor": <int> }`. Each affected item has `dependency`, `advisory_id`, `cve_ids`, `severity`, `exploited`, `fixed_in`, `action` and `url`, critical first, then exploited first. `skipped` lists what could not be checked; it is not a clean result. Send `feed_cursor` as `since=` to `/v1/events` to get every advisory published after the check.
 
 ### Status
