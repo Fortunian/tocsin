@@ -92,13 +92,14 @@ describe("freshness line on GET /", () => {
 
 describe("one KV put for the Latest rows and the freshness line", () => {
   // The same bindings, with CURSORS.put counted.
-  function counted(): { env: Env; puts: { key: string; value: string }[] } {
-    const puts: { key: string; value: string }[] = [];
+  type Put = { key: string; value: string; opts?: KVNamespacePutOptions };
+  function counted(): { env: Env; puts: Put[] } {
+    const puts: Put[] = [];
     const kv = env.CURSORS;
     const wrapped = {
       get: kv.get.bind(kv),
       put: async (key: string, value: string, opts?: KVNamespacePutOptions) => {
-        puts.push({ key, value });
+        puts.push({ key, value, opts });
         return kv.put(key, value, opts);
       },
     } as unknown as KVNamespace;
@@ -130,7 +131,52 @@ describe("one KV put for the Latest rows and the freshness line", () => {
     expect(c.puts.length).toBe(1);
     expect(home.freshness?.total).toBe(SOURCES.length);
   });
+
+  it("puts with expirationTtl from the site.latest_cache_seconds row", async () => {
+    await allOk(60_000);
+    const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'site.latest_cache_seconds'").first<{ value: string }>();
+    expect(row, "settings row site.latest_cache_seconds").not.toBeNull();
+    await env.DB.prepare("UPDATE settings SET value = '137' WHERE key = 'site.latest_cache_seconds'").run();
+    try {
+      const c = counted();
+      await loadHome(c.env);
+      expect(c.puts.length).toBe(1);
+      expect(c.puts[0].opts?.expirationTtl).toBe(137);
+    } finally {
+      await env.DB.prepare("UPDATE settings SET value = ? WHERE key = 'site.latest_cache_seconds'").bind(row?.value ?? "60").run();
+    }
+  });
+
+  it("caches nothing when the status read fails, and the page still renders the Latest table", async () => {
+    await allOk(60_000);
+    await breakStatus(async () => {
+      const c = counted();
+      const home = await loadHome(c.env);
+      expect(c.puts.length).toBe(0);
+      expect(home.freshness).toBeNull();
+      expect(Array.isArray(home.rows)).toBe(true);
+
+      const res = await get("/", ip);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("<h2>Latest</h2>");
+      expect(html).toMatch(/<tbody>|No advisories yet\./);
+      expect(html).not.toContain('<p class="fresh"');
+      expect(await env.CURSORS.get(LATEST_KEY)).toBeNull();
+    });
+  });
 });
+
+// Makes the loadStatus batch throw: the sources table is renamed for the
+// duration of `fn`, then restored. The Latest read does not touch it.
+async function breakStatus(fn: () => Promise<void>): Promise<void> {
+  await env.DB.prepare("ALTER TABLE sources RENAME TO sources_tcs35").run();
+  try {
+    await fn();
+  } finally {
+    await env.DB.prepare("ALTER TABLE sources_tcs35 RENAME TO sources").run();
+  }
+}
 
 describe("GET /badge/status.svg", () => {
   it("returns an SVG badge with 6/6 sources ok and max-age=300", async () => {
@@ -155,6 +201,18 @@ describe("GET /badge/status.svg", () => {
     expect(svg).toContain(">degraded</text>");
     expect(svg).toContain("<title>tocsin · degraded (5/6 sources ok)</title>");
     expect(svg).not.toContain(">6/6 sources ok</text>");
+  });
+
+  it("draws degraded with max-age=60 when the status read throws", async () => {
+    await breakStatus(async () => {
+      const res = await get("/badge/status.svg", ip);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(/^image\/svg\+xml/);
+      expect(res.headers.get("cache-control")).toBe("public, max-age=60");
+      const svg = await res.text();
+      expect(svg).toContain(">degraded</text>");
+      expect(svg).not.toContain("sources ok</text>");
+    });
   });
 });
 

@@ -7,7 +7,7 @@ import { docFor, get, idFor, type SeedRow } from "./seed.tcs-3";
 
 // The site pages through the production entry (src/index.ts -> app).
 const ip = "198.51.100.40";
-const KEY = "site:latest:v1";
+const KEY = "site:latest:v2";
 
 function stripTags(html: string): string {
   return html

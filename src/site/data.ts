@@ -6,7 +6,7 @@ import { MAX_LIMIT } from "../feed/query";
 import { getSettingInt } from "../lib/settings";
 import type { Advisory } from "../schema/advisory";
 
-export const LATEST_KEY = "site:latest:v1";
+export const LATEST_KEY = "site:latest:v2";
 // Newest by publish date, not by feed cursor: cursor order is ingest order, so a
 // re-touched old advisory would push a fresh one out. idx_advisories_published_at (0008).
 export const LATEST_SQL = "SELECT cursor, doc_json FROM advisories ORDER BY published_at DESC, cursor DESC LIMIT ?";
