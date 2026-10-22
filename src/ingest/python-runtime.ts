@@ -73,25 +73,27 @@ async function store(state: RunState, doc: AdvisoryInput): Promise<boolean> {
   }
 }
 
-// Publishes the released lines and writes the row: ok, pending (some lines wait) or empty.
+// Publishes every affected range at once and writes the row. While a fix is
+// not on python.org the row is pending and the action says so; the re-check
+// rewrites the action once the fix is released.
 async function settle(state: RunState, psfId: string, p: PendingState): Promise<void> {
   const { cfg, now } = state;
   const db = state.ctx.env.DB;
   const waiting = p.lines.filter((l) => !state.released.has(l.fixed));
   const stale = waiting.filter((l) => now.getTime() - new Date(l.since).getTime() >= cfg.pending_max_days * 86_400_000);
   const pending = { ...p, lines: waiting.filter((l) => !stale.includes(l)), dropped: [...p.dropped, ...stale.map((l) => l.fixed)] };
-  const open = new Set(pending.lines.map((l) => l.fixed));
-  const out = pending.dropped.filter((f) => !open.has(f));
-  const released = p.doc.affected.filter((r) => !open.has(r.fixed!) && !out.includes(r.fixed!));
-  const note = out.length === 0 ? undefined : `no python.org release after ${cfg.pending_max_days} days: ${out.join(", ")}`;
+  const open = pending.lines.map((l) => l.fixed);
+  const quiet = pending.dropped.filter((f) => !state.released.has(f) && !open.includes(f));
+  const note = quiet.length === 0 ? undefined : `no python.org release after ${cfg.pending_max_days} days: ${quiet.join(", ")}`;
   const cve = p.doc.cve_ids[0];
-  const stored = released.length === 0 || (await store(state, publishedDoc(p.doc, released, [...open])));
-  if (!stored) return writeRecord(db, { psf_id: psfId, state: "empty", attempts: 0, last_error: "advisory failed validation", cve }, now);
-  if (open.size > 0) {
+  if (!(await store(state, publishedDoc(p.doc, open, quiet)))) {
+    return writeRecord(db, { psf_id: psfId, state: "empty", attempts: 0, last_error: "advisory failed validation", cve }, now);
+  }
+  if (open.length > 0) {
     state.pending += 1;
     return writeRecord(db, { psf_id: psfId, state: "pending", attempts: 0, last_error: note, cve, unreleased: pending, next_check_at: minutesFrom(now, cfg.pending_recheck_minutes) }, now);
   }
-  await writeRecord(db, { psf_id: psfId, state: released.length > 0 ? "ok" : "empty", attempts: 0, last_error: note, cve }, now);
+  await writeRecord(db, { psf_id: psfId, state: "ok", attempts: 0, last_error: note, cve }, now);
 }
 
 // Reads one PSF record and its CVE record. A read or parse error is a failed

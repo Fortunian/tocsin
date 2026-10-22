@@ -408,9 +408,9 @@ describe("failed and empty records (ledger)", () => {
 
 describe("unreleased fix (pending)", () => {
   const noFix = JSON.stringify(JSON.parse(releasesJson).filter((r: { name: string }) => r.name !== "Python 3.14.9"));
-  const NO_FIX_ACTION = "Upgrade python to 3.12.15 or later. The 3.14.x (3.14.9) fix is not released yet.";
+  const NO_FIX_ACTION = "Upgrade python to 3.12.15 or later. The 3.14.x fix (3.14.9) is not released yet.";
 
-  it("a fix missing from python.org publishes the released line at once and keeps the other line pending, with no error", async () => {
+  it("a fix missing from python.org still publishes every range at once; the action names the unreleased fix; no error", async () => {
     expect(noFix).not.toBe(releasesJson);
     const res = await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
     expect(res.errors).toEqual([]);
@@ -418,16 +418,25 @@ describe("unreleased fix (pending)", () => {
     expect(res.deferred).toBe(1);
     expect(res.incomplete).toBe(true);
     const doc = (await pyRows()).find((r) => r.source_id === "PSF-2026-42")!.doc;
-    expect(doc.affected).toEqual([{ introduced: "0", fixed: "3.12.15" }]);
-    expect(doc.fixed_versions).toEqual(["3.12.15"]);
+    expect(doc.affected).toEqual(EXPECTED[0].affected);
+    expect(doc.fixed_versions).toEqual(["3.12.15", "3.14.9"]);
     expect(doc.action).toBe(NO_FIX_ACTION);
     const row = await ledger("PSF-2026-42");
     expect(row).toMatchObject({ state: "pending", next_check_at: later(HOUR).toISOString() });
     expect(JSON.parse(row!.unreleased!).lines).toEqual([{ fixed: "3.14.9", since: NOW.toISOString() }]);
   });
 
-  it("the next due run re-checks only python.org (304 listing + 1 releases read) and adds the released line", async () => {
+  it("while pending, python=3.14.4 is affected by PSF-2026-42 with fixed_in the announced 3.14.9", async () => {
     await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
+    const res = await get("/v1/check?python=3.14.4", "192.0.2.141");
+    const body = (await res.json()) as { affected: { cve_ids: string[]; fixed_in: string | null; action: string }[] };
+    const hit = body.affected.find((a) => a.cve_ids.includes("CVE-2026-12345"));
+    expect(hit).toMatchObject({ fixed_in: "3.14.9", action: NO_FIX_ACTION });
+  });
+
+  it("the next due run re-checks only python.org (304 listing + 1 releases read), rewrites the action and leaves pending", async () => {
+    await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
+    const before = await env.DB.prepare("SELECT a.cursor FROM advisories a JOIN advisory_sources s ON s.advisory_id = a.id WHERE s.source_id = 'PSF-2026-42'").first<{ cursor: number }>();
     const fake = createPyFake(routes());
     const res = await runAt(fake, later(2 * HOUR));
     expect(fake.urls()).toEqual([LISTING, RELEASES]);
@@ -438,6 +447,8 @@ describe("unreleased fix (pending)", () => {
     expect(doc.affected).toEqual(EXPECTED[0].affected);
     expect(doc.action).toBe(EXPECTED[0].action);
     expect(await ledger("PSF-2026-42")).toMatchObject({ state: "ok", unreleased: null, next_check_at: null });
+    const after = await env.DB.prepare("SELECT a.cursor FROM advisories a JOIN advisory_sources s ON s.advisory_id = a.id WHERE s.source_id = 'PSF-2026-42'").first<{ cursor: number }>();
+    expect(after!.cursor).toBeGreaterThan(before!.cursor);
   });
 
   it("a run before next_check_at makes no releases read for the pending record", async () => {
@@ -447,7 +458,7 @@ describe("unreleased fix (pending)", () => {
     expect(fake.urls()).toEqual([LISTING]);
   });
 
-  it("a line unreleased for 90 days is dropped: the record ends ok with a last_error note", async () => {
+  it("a line unreleased for 90 days drops only the action note, never the range: the record ends ok with a last_error note", async () => {
     await runAt(createPyFake(routes({ [RELEASES]: noFix })), NOW);
     const fake = createPyFake(routes({ [RELEASES]: noFix }));
     await runAt(fake, later(91 * DAY));
@@ -456,7 +467,7 @@ describe("unreleased fix (pending)", () => {
     expect(row).toMatchObject({ state: "ok", next_check_at: null });
     expect(row!.last_error).toBe("no python.org release after 90 days: 3.14.9");
     const doc = (await pyRows()).find((r) => r.source_id === "PSF-2026-42")!.doc;
-    expect(doc.affected).toEqual([{ introduced: "0", fixed: "3.12.15" }]);
+    expect(doc.affected).toEqual(EXPECTED[0].affected);
     expect(doc.action).toBe("Upgrade python to 3.12.15 or later.");
   });
 

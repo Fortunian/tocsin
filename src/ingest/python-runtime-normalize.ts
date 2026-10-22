@@ -2,7 +2,7 @@
 // A PSF advisory record (OSV format, GIT commit ranges only) names the CVE;
 // the PSF CVE record (CVE JSON 5) gives the affected range per release line.
 import { comparePep440 } from "../check/match/pep440";
-import type { AffectedRange, SeverityLabel } from "../schema/advisory";
+import type { SeverityLabel } from "../schema/advisory";
 import { isoUtc, oneLine } from "./runtime-text";
 import type { AdvisoryInput } from "./types";
 
@@ -138,24 +138,23 @@ const lineOf = (fixed: string): string => fixed.split(".").slice(0, 2).join(".")
 // " The 3.14.x fix (3.14.9) is not released yet." for each pending line.
 function pendingTail(pendingFixed: string[]): string {
   if (pendingFixed.length === 0) return "";
-  const parts = pendingFixed.map((f) => `${lineOf(f)}.x (${f})`).join(", ");
-  return pendingFixed.length === 1 ? ` The ${parts} fix is not released yet.` : ` The fixes for ${parts} are not released yet.`;
+  if (pendingFixed.length === 1) return `The ${lineOf(pendingFixed[0])}.x fix (${pendingFixed[0]}) is not released yet.`;
+  return `The fixes for ${pendingFixed.map((f) => `${lineOf(f)}.x (${f})`).join(", ")} are not released yet.`;
 }
 
 /**
- * The advisory to publish while some lines wait for a python.org release:
- * `affected`, `fixed_versions` and the action name only the released lines.
+ * The advisory to publish: every affected range from the CVE record, always.
+ * Only the action changes while a fix is not on python.org: it names the
+ * released lines and states each unreleased fix. `quiet` lines (unreleased
+ * past the pending window) leave the action without a note.
  */
-export function publishedDoc(full: AdvisoryInput, released: AffectedRange[], pendingFixed: string[]): AdvisoryInput {
-  const lines = released.map((r) => ({ line: lineOf(r.fixed!), introduced: r.introduced!, fixed: r.fixed! }));
-  const base = actionFor(lines);
+export function publishedDoc(full: AdvisoryInput, pendingFixed: string[], quiet: string[]): AdvisoryInput {
+  const all = full.affected.map((r) => ({ line: lineOf(r.fixed!), introduced: r.introduced!, fixed: r.fixed! }));
+  const released = all.filter((l) => !pendingFixed.includes(l.fixed) && !quiet.includes(l.fixed));
   const tail = pendingTail(pendingFixed);
-  return {
-    ...full,
-    affected: released.map((r) => ({ introduced: r.introduced, fixed: r.fixed })),
-    fixed_versions: lines.map((l) => l.fixed),
-    action: (base + tail).length <= 200 ? base + tail : base,
-  };
+  let action = released.length > 0 ? actionFor(released) : tail === "" ? actionFor(all) : "";
+  if (tail !== "" && (action === "" || action.length + 1 + tail.length <= 200)) action = action === "" ? tail : `${action} ${tail}`;
+  return { ...full, action: action.slice(0, 200) };
 }
 
 function readCna(psfId: string, cve: string, raw: unknown): { ok: true; cna: Obj; published?: string } | Fail {
