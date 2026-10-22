@@ -16,8 +16,12 @@ A fixed set of rows (6 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-
 
 ## settings
 
-A small key/value table of run-time limits and knobs (today three rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (today five rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `site.latest_rows`, `site.latest_cache_seconds`). Rows change in place by key; the table does not grow with traffic. No delete job.
 
 ## KV `rl:` keys (CURSORS namespace)
 
 The rate-limit counters, one key per client IP per minute: `rl:v1:<ip>:<minute>` for `/v1/events` and `rl:v1:check:<ip>:<minute>` for `/v1/check`. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
+
+## KV `site:latest:v1` key (CURSORS namespace)
+
+One key: the landing page's Latest rows as JSON. It is written with a TTL from the settings row `site.latest_cache_seconds` (default 60, never below 60), so KV expires it on its own. Losing it costs one D1 read. No delete job.
