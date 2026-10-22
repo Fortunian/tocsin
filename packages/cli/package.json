@@ -1,0 +1,29 @@
+{
+  "name": "tocsin",
+  "version": "0.1.0",
+  "description": "Security advisories, built for agents. Wire Tocsin into your agent tools and check a project for known advisories.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://tocsin.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fortunian/tocsin.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "tocsin": "bin/tocsin.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build && node -e \"const f=require('fs');f.mkdirSync('skills/tocsin',{recursive:true});f.copyFileSync('../../skills/tocsin/SKILL.md','skills/tocsin/SKILL.md')\"",
+    "postpack": "node -e \"require('fs').rmSync('skills',{recursive:true,force:true})\""
+  }
+}

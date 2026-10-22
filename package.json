@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p workers/mcp",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p workers/mcp && tsc --noEmit -p packages/cli",
     "dev": "wrangler dev",
     "migrate:local": "wrangler d1 migrations apply DB --local",
     "gen:schema": "node scripts/gen-advisory-validator.mjs",
@@ -23,6 +23,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.23.0",
     "@cloudflare/workers-types": "^5.20261021.1",
+    "@types/node": "^22.20.5",
     "@types/semver": "^7.8.0",
     "typescript": "^7.0.2",
     "vitest": "~4.1.0",

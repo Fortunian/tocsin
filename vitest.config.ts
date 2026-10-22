@@ -1,8 +1,9 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
-// Two projects, one per worker. `api` is the main worker (src/index.ts, D1).
+// Three projects. `api` is the main worker (src/index.ts, D1).
 // `mcp` is the MCP worker (workers/mcp), which has no D1 binding.
+// `cli` is the npm package in packages/cli; it runs in plain Node.
 export default defineConfig(async () => {
   const migrations = await readD1Migrations("./migrations");
   return {
@@ -18,7 +19,7 @@ export default defineConfig(async () => {
           test: {
             name: "api",
             include: ["tests/**/*.test.ts"],
-            exclude: ["tests/mcp/**"],
+            exclude: ["tests/mcp/**", "tests/cli/**"],
             setupFiles: ["./tests/apply-migrations.ts"],
           },
         },
@@ -32,6 +33,13 @@ export default defineConfig(async () => {
           test: {
             name: "mcp",
             include: ["tests/mcp/**/*.test.ts"],
+          },
+        },
+        {
+          test: {
+            name: "cli",
+            environment: "node",
+            include: ["tests/cli/**/*.test.ts"],
           },
         },
       ],

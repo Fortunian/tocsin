@@ -56,4 +56,18 @@ Run it locally: `npx wrangler dev -c workers/mcp/wrangler.toml`.
 Before the first deploy, an operator adds a proxied DNS record for `mcp.tocsin.sh` in the `tocsin.sh`
 zone (for example `AAAA mcp 100::`), so the route `mcp.tocsin.sh/*` receives traffic.
 
+## CLI
+
+`packages/cli/` is the `tocsin` npm package (Node 20+, no runtime dependencies).
+
+```
+npx tocsin connect   # add the Tocsin MCP server to Claude Code, Cursor, Claude Desktop and Codex
+npx tocsin check     # check the lockfiles in this directory and the installed runtimes
+npx tocsin latest    # the newest advisories, one per line
+npx tocsin watch     # print new advisories every 5 minutes
+```
+
+`skills/tocsin/SKILL.md` is the Claude Code skill. `connect` installs it, and the package ships a copy.
+See `packages/cli/README.md` for flags, exit codes and env vars.
+
 Apache-2.0. The hosted service runs at https://tocsin.sh.
