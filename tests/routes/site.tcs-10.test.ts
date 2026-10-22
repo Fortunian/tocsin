@@ -1,3 +1,4 @@
+import { LATEST_SQL } from "../../src/site/data";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Advisory } from "../../src/schema/advisory";
@@ -121,6 +122,15 @@ describe("landing GET / (production entry)", () => {
     expect(html).toContain('data-copy="curl &quot;https://tocsin.sh/v1/events?since=0&amp;min_severity=high&quot;"');
     expect(html).toContain('data-copy="curl &quot;https://tocsin.sh/v1/check?node=24.22.0&amp;php=8.4.26&quot;"');
     expect(html).toMatch(/<button[^>]*data-copy="npx tocsin check"/);
+  });
+
+  it("the Latest read uses idx_advisories_published_at (EXPLAIN QUERY PLAN)", async () => {
+    await seedTop("XPQ", 60);
+    await env.DB.prepare("ANALYZE").run();
+    const { results } = await env.DB.prepare(`EXPLAIN QUERY PLAN ${LATEST_SQL}`).bind(10).all<{ detail: string }>();
+    const plan = results.map((r) => r.detail).join("\n");
+    expect(plan).toContain("idx_advisories_published_at");
+    expect(plan).not.toMatch(/SCAN advisories(?! USING)/);
   });
 
   it("orders the Latest table by publish date, newest first, not by feed cursor", async () => {

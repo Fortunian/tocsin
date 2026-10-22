@@ -1,11 +1,14 @@
 import type { LatestRow } from "../../site/landing";
 import type { StatusData, StatusSource } from "../../site/status";
 import type { Env } from "../env";
-import { buildEventsQuery, MAX_LIMIT } from "../feed/query";
+import { MAX_LIMIT } from "../feed/query";
 import { getSettingInt } from "../lib/settings";
 import type { Advisory } from "../schema/advisory";
 
 export const LATEST_KEY = "site:latest:v1";
+// Newest by publish date, not by feed cursor: cursor order is ingest order, so a
+// re-touched old advisory would push a fresh one out. idx_advisories_published_at (0008).
+export const LATEST_SQL = "SELECT cursor, doc_json FROM advisories ORDER BY published_at DESC, cursor DESC LIMIT ?";
 // Documented fallbacks. The live values are the settings rows
 // site.latest_rows and site.latest_cache_seconds (migrations/0006).
 const DEFAULT_ROWS = 10;
@@ -46,18 +49,7 @@ export async function loadLatest(env: Env): Promise<LatestRow[] | null> {
 
   let latest: LatestRow[];
   try {
-    const { sql, params } = buildEventsQuery({
-      since: 0,
-      limit: rows,
-      ecosystem: [],
-      component: [],
-      min_severity: null,
-      exploited: false,
-      order: "desc",
-    });
-    const { results } = await env.DB.prepare(sql)
-      .bind(...params)
-      .all<{ cursor: number; doc_json: string }>();
+    const { results } = await env.DB.prepare(LATEST_SQL).bind(rows).all<{ cursor: number; doc_json: string }>();
     latest = results.slice(0, rows).map((r) => {
       const d = JSON.parse(r.doc_json) as Advisory;
       return {
@@ -70,8 +62,6 @@ export async function loadLatest(env: Env): Promise<LatestRow[] | null> {
         action: d.action,
       };
     });
-    // The feed window is "newest in the feed" (cursor order); the table reads by publish date.
-    latest.sort((a, b) => (a.when < b.when ? 1 : a.when > b.when ? -1 : 0));
   } catch (err) {
     console.error(JSON.stringify({ lane: "site", step: "latest-read", err: errText(err) }));
     return null;
