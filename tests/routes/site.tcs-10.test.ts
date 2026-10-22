@@ -123,6 +123,13 @@ describe("landing GET / (production entry)", () => {
     expect(html).toMatch(/<button[^>]*data-copy="npx tocsin check"/);
   });
 
+  it("orders the Latest table by publish date, newest first", async () => {
+    const html = await landing();
+    const dates = [...html.matchAll(/<time datetime="([^"]+)">/g)].map((m) => m[1]);
+    expect(dates.length).toBeGreaterThan(1);
+    for (let i = 1; i < dates.length; i++) expect(dates[i] <= dates[i - 1], `row ${i} (${dates[i]}) is newer than row ${i - 1} (${dates[i - 1]})`).toBe(true);
+  });
+
   it("links Cromford without rel and has the footer links", async () => {
     const html = await landing();
     expect(html).toContain('<a href="https://cromford.dev">Built with Cromford</a>.');

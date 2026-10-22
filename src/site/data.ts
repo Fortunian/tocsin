@@ -70,6 +70,8 @@ export async function loadLatest(env: Env): Promise<LatestRow[] | null> {
         action: d.action,
       };
     });
+    // The feed window is "newest in the feed" (cursor order); the table reads by publish date.
+    latest.sort((a, b) => (a.when < b.when ? 1 : a.when > b.when ? -1 : 0));
   } catch (err) {
     console.error(JSON.stringify({ lane: "site", step: "latest-read", err: errText(err) }));
     return null;
