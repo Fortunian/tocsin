@@ -47,3 +47,7 @@ The python-runtime ingest ledger. It has one row per PSF advisory id (`PSF-YYYY-
 ## KV `python:listing-etag` (CURSORS namespace)
 
 One key: the ETag of the last full PSF listing. Each run overwrites it in place. No delete job.
+
+## KV `python:tags` (CURSORS namespace)
+
+One key: `{etag, versions}` from the last full read of the CPython `v3.` tag refs, so a 304 answer can reuse the released set. Each full read overwrites it in place, and its size follows the number of CPython 3.x tags (471 on 2026-10-22). No delete job.

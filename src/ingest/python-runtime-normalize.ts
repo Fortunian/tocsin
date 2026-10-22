@@ -55,6 +55,17 @@ export function parsePsfListing(body: unknown): string[] {
   return [...ids].sort(comparePsfIds);
 }
 
+/** The final versions ("3.14.9") among CPython tag refs: `refs/tags/v3.14.9`; a1, b1, rc1 tags are skipped. */
+export function parseCpythonTags(body: unknown): Set<string> {
+  if (!Array.isArray(body)) throw new Error("CPython tag refs answer is not a JSON array");
+  const out = new Set<string>();
+  for (const r of body) {
+    const m = /^refs\/tags\/v(\d+\.\d+\.\d+)$/.exec(isObj(r) ? (str(r.ref) ?? "") : "");
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
 /** The final versions ("3.14.9") of the published python.org releases. */
 export function parsePythonReleases(body: unknown): Set<string> {
   if (!Array.isArray(body)) throw new Error("python.org releases answer is not a JSON array");

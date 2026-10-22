@@ -29,3 +29,14 @@ Sha256 of the trimmed files in this directory:
 
 - `listing.json`: fe2f22221ef7ff5b446ad2d4d0f9160c37520b335708de5db3297d334a6991ee
 - `releases.json`: cb17a467574ef48c86ab2765214cd5ca1208192277778167cbde81537019dadc
+- `tags.json`: 6d80fb67edeeb77f6691bfa474d7e2ca78a34596d0b47f2364dd4832ff337cb5
+
+## CPython tag refs (release source)
+
+python.org (Fastly) answered 403 to Cloudflare Workers egress on the first
+production cron (2026-10-22 22:00 UTC), so the released versions now come from
+the CPython git tags on GitHub. python.org is the fallback only.
+
+| File | Source URL | sha256 of the recording | Rule |
+|---|---|---|---|
+| `tags.json` | https://api.github.com/repos/python/cpython/git/matching-refs/tags/v3. | 240126c154abb1a84bae41b4f46cebe36d3a0203f2ff14dcd329e3d058b3011e | recorded 2026-10-22T22:02:44Z, HTTP 200, no token, ETag `W/"2195fb0c96593c3bd8f8247c04474dc6847de1158166bc7a08d5db1ea10b5c0e"`. The recording is a JSON array of 471 refs; kept all 471 in their order with only the `ref` field (names only; `node_id`, `url` and `object` removed), written back with `json.dump(indent=2)` |

@@ -23,9 +23,10 @@ async function getJson(fetchFn: typeof fetch, url: string, headers: Record<strin
 
 export type ListingResult = { notModified: true } | { notModified: false; body: unknown; etag?: string };
 
-// The PSF advisories/python directory listing (GitHub REST, metered).
-// `token` is the optional GITHUB_TOKEN secret. `etag` makes the request
-// conditional: a 304 answer does not count against the GitHub rate limit.
+// One conditional GitHub REST read (metered): the PSF advisories/python
+// directory listing, or the CPython `v3.` tag refs. `token` is the optional
+// GITHUB_TOKEN secret. `etag` makes the request conditional: a 304 answer
+// does not count against the GitHub rate limit.
 export async function fetchListing(fetchFn: typeof fetch, url: string, token: string | undefined, etag: string | undefined): Promise<ListingResult> {
   const headers: Record<string, string> = { Accept: "application/vnd.github+json", ...UA, "X-GitHub-Api-Version": "2022-11-28" };
   if (token !== undefined && token.trim() !== "") headers.Authorization = `Bearer ${token.trim()}`;
@@ -37,6 +38,9 @@ export async function fetchListing(fetchFn: typeof fetch, url: string, token: st
   const tag = res.headers.get("ETag");
   return tag === null ? { notModified: false, body } : { notModified: false, body, etag: tag };
 }
+
+// The CPython tag refs (`git/matching-refs/tags/v3.`): the primary release source.
+export const fetchTags = fetchListing;
 
 // One PSF-YYYY-N.json record (OSV format) from raw.githubusercontent.com.
 export function fetchPsfRecord(fetchFn: typeof fetch, base: string, psfId: string): Promise<unknown> {
