@@ -29,7 +29,7 @@ const ROUTES = {
 const START = "2026-10-01T00:00:00Z";
 
 interface CheckAnswer {
-  affected: { dependency: { ecosystem: string; version: string }; cve_ids: string[]; action: string }[];
+  affected: { dependency: { ecosystem: string; version: string }; cve_ids: string[]; action: string; fixed_in: string | null }[];
 }
 
 async function scheduledWithFake() {
@@ -103,5 +103,16 @@ describe("runtime ingesters through worker.scheduled", () => {
 
     const fixed = await check("192.0.2.62", { node: "24.22.1" });
     expect(fixed.affected.flatMap((a) => a.cve_ids)).not.toContain("CVE-2026-111497");
+  });
+
+  it("C4 F1: after the cron, /v1/check flags php 8.1.30 (no fix line) with fixed_in 8.2.35, and not php 8.2.35", async () => {
+    await scheduledWithFake();
+    const old = await check("192.0.2.63", { php: "8.1.30" });
+    const hit = old.affected.find((a) => a.cve_ids.includes("CVE-2026-109618"));
+    expect(hit?.fixed_in).toBe("8.2.35");
+    expect(hit?.action).toContain("8.1 and older");
+
+    const fixed = await check("192.0.2.64", { php: "8.2.35" });
+    expect(fixed.affected.flatMap((a) => a.cve_ids)).not.toContain("CVE-2026-109618");
   });
 });

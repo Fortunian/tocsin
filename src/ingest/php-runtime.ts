@@ -56,7 +56,7 @@ interface Ghsa {
   withdrawn_at?: unknown;
   published_at?: unknown;
   updated_at?: unknown;
-  vulnerabilities?: { patched_versions?: unknown }[];
+  vulnerabilities?: { patched_versions?: unknown; vulnerable_version_range?: unknown }[];
   cvss_severities?: { cvss_v4?: { score?: unknown }; cvss_v3?: { score?: unknown } };
 }
 
@@ -104,6 +104,12 @@ function scoreOf(g: Ghsa): number | undefined {
   return undefined;
 }
 
+// True for a GHSA range with an upper bound and no lower bound ("< 8.2.35"):
+// every version below the fix is vulnerable, older unsupported lines included.
+function opensFromZero(range: string | undefined): boolean {
+  return range !== undefined && /</.test(range) && !/>/.test(range);
+}
+
 function actionFor(perLine: { line: string; fixed: string }[], noFixLine: string | undefined): string {
   const tail = noFixLine === undefined ? "" : ` Unsupported lines (${noFixLine} and older) get no fix.`;
   if (perLine.length === 1) return `Upgrade php to ${perLine[0].fixed} or later.${tail}`;
@@ -127,9 +133,15 @@ export function normalizePhpAdvisory(
   if (typeof g.cve_id === "string" && g.cve_id !== pair.cve) return fail(`GHSA names ${g.cve_id}, the post names ${pair.cve}`);
 
   const fixed = new Set<string>();
+  // Patched version -> the GHSA vulnerable_version_range of its entry.
+  const rangeOf = new Map<string, string>();
   for (const v of Array.isArray(g.vulnerabilities) ? g.vulnerabilities : []) {
     if (typeof v?.patched_versions !== "string") continue;
-    for (const p of v.patched_versions.split(",")) if (p.trim() !== "") fixed.add(p.trim());
+    for (const p of v.patched_versions.split(",")) {
+      if (p.trim() === "") continue;
+      fixed.add(p.trim());
+      if (typeof v.vulnerable_version_range === "string") rangeOf.set(p.trim(), v.vulnerable_version_range);
+    }
   }
   if (fixed.size === 0) return fail("GHSA has no patched version");
   const sorted = [...fixed].sort(compareVersions);
@@ -156,7 +168,7 @@ export function normalizePhpAdvisory(
       ghsa_id: pair.ghsa,
       ecosystem: "php",
       component: "php",
-      affected: perLine.map((p) => ({ introduced: `${p.line}.0`, fixed: p.fixed })),
+      affected: perLine.map((p, i) => ({ introduced: i === 0 && opensFromZero(rangeOf.get(p.fixed)) ? "0" : `${p.line}.0`, fixed: p.fixed })),
       fixed_versions: sorted,
       severity: score === undefined ? { label } : { score, label },
       exploited: false,

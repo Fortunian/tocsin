@@ -2,7 +2,7 @@
 // each "Security Release" post newer than the KV cursor, and emits one
 // advisory per CVE heading. The post is the source of truth for fixed
 // versions; the dist index confirms each fixed version exists.
-import { fetchDistIndex, fetchFeed, fetchPost } from "./node-runtime-client";
+import { fetchDistIndex, fetchFeed, fetchPost, NodeLinkError } from "./node-runtime-client";
 import { compareVersions } from "./osv";
 import { htmlSections, htmlText, isoUtc, oneLine, readRuntimeConfig, readSince, xmlBlocks, xmlText } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
@@ -157,9 +157,21 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   if (posts.length === 0) return result;
 
   const dist = await fetchDistIndex(ctx.fetch, cfg.dist_index_url);
+  // Post links are read only on the origin of the configured feed.
+  const allowedOrigin = new URL(cfg.feed_url).origin;
   for (const post of posts) {
     // HTTP and D1 errors throw out of the run: this post's cursor is not written.
-    const norm = normalizeNodePost(post, await fetchPost(ctx.fetch, post.link), dist);
+    let html: string;
+    try {
+      html = await fetchPost(ctx.fetch, post.link, allowedOrigin);
+    } catch (err) {
+      if (!(err instanceof NodeLinkError)) throw err;
+      // A permanent data problem in the feed: report it and move the cursor past the post.
+      result.errors.push(err.message);
+      await kv.put(NODE_CURSOR_KEY, post.published);
+      continue;
+    }
+    const norm = normalizeNodePost(post, html, dist);
     result.errors.push(...norm.errors);
     // An incomplete post stops the run; the cursor stays at the last complete post.
     if (norm.incomplete) break;

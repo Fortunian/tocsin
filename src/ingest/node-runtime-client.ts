@@ -11,6 +11,18 @@ export class NodeHttpError extends Error {
   }
 }
 
+// A post link from the feed that is not on the feed's own origin. The link is
+// not fetched: a feed item must never make the worker call another host.
+export class NodeLinkError extends Error {
+  constructor(
+    readonly url: string,
+    readonly allowedOrigin: string,
+  ) {
+    super(`${url}: post link is not on ${allowedOrigin}, not read`);
+    this.name = "NodeLinkError";
+  }
+}
+
 async function getText(fetchFn: typeof fetch, url: string): Promise<string> {
   const res = await fetchFn(url, { headers: { "User-Agent": "tocsin.sh" } });
   if (!res.ok) throw new NodeHttpError(res.status, url);
@@ -22,8 +34,15 @@ export function fetchFeed(fetchFn: typeof fetch, url: string): Promise<string> {
   return getText(fetchFn, url);
 }
 
-// One security release post, by its feed link.
-export function fetchPost(fetchFn: typeof fetch, url: string): Promise<string> {
+// One security release post, by its feed link. Only a link on allowedOrigin is read.
+export async function fetchPost(fetchFn: typeof fetch, url: string, allowedOrigin: string): Promise<string> {
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    throw new NodeLinkError(url, allowedOrigin);
+  }
+  if (origin !== allowedOrigin) throw new NodeLinkError(url, allowedOrigin);
   return getText(fetchFn, url);
 }
 

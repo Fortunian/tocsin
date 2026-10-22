@@ -138,7 +138,7 @@ describe("php-runtime seam (seam)", () => {
 });
 
 describe("normalizePhpAdvisory (normalize)", () => {
-  it.each([0, 1])("P1: advisory %i has the 4 fixed versions, score 9.2 critical, the 8.1 no-fix action", (i) => {
+  it.each([0, 1])("P1 F1: advisory %i has the 4 fixed versions, score 9.2 critical, the 8.1 no-fix action", (i) => {
     const d = normalizeOk(i);
     for (const v of ["8.5.12", "8.4.27", "8.3.36", "8.2.35"]) expect(d.fixed_versions).toContain(v);
     expect(d.fixed_versions).toEqual(["8.2.35", "8.3.36", "8.4.27", "8.5.12"]);
@@ -151,7 +151,12 @@ describe("normalizePhpAdvisory (normalize)", () => {
     expect(d.ghsa_id).toBe(EXPECTED[i].ghsa);
     expect(d.cve_ids).toEqual([EXPECTED[i].cve]);
     expect(d.affected).toHaveLength(4);
-    expect(d.affected).toContainEqual({ introduced: "8.2.0", fixed: "8.2.35" });
+    // F1: the GHSA range for 8.2 is "< 8.2.35" (no lower bound), so the lowest line opens from "0".
+    expect(d.affected).toContainEqual({ introduced: "0", fixed: "8.2.35" });
+    expect(d.affected).not.toContainEqual({ introduced: "8.2.0", fixed: "8.2.35" });
+    expect(d.affected).toContainEqual({ introduced: "8.3.0", fixed: "8.3.36" });
+    expect(d.affected).toContainEqual({ introduced: "8.4.0", fixed: "8.4.27" });
+    expect(d.affected).toContainEqual({ introduced: "8.5.0", fixed: "8.5.12" });
     expect(d.summary).toBe(EXPECTED[i].summary);
     expect(d.ecosystem).toBe("php");
     expect(d.component).toBe("php");
@@ -159,6 +164,44 @@ describe("normalizePhpAdvisory (normalize)", () => {
     expect(d.references).toEqual([LINK, `https://github.com/php/php-src/security/advisories/${EXPECTED[i].ghsa}`]);
     const v = validateAdvisory(d);
     expect(v.ok ? [] : v.errors).toEqual([]);
+  });
+
+  it("P9 F1: a lower bound on the lowest GHSA range keeps the per-line start (source: assumed, in-test edit)", () => {
+    const entry = securityEntry();
+    const g = JSON.parse(ghsaW8hw);
+    const low = g.vulnerabilities.find((v: { patched_versions: string }) => v.patched_versions === "8.2.35");
+    expect(low.vulnerable_version_range).toBe("< 8.2.35");
+    low.vulnerable_version_range = ">= 8.2.0, < 8.2.35";
+    const r = normalizePhpAdvisory(entry, { cve: EXPECTED[0].cve, ghsa: EXPECTED[0].ghsa }, g, "8.1", RELEASED);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.doc.affected).toEqual([
+      { introduced: "8.2.0", fixed: "8.2.35" },
+      { introduced: "8.3.0", fixed: "8.3.36" },
+      { introduced: "8.4.0", fixed: "8.4.27" },
+      { introduced: "8.5.0", fixed: "8.5.12" },
+    ]);
+  });
+
+  it("P10 F1: with the 8.2 entry removed, the lowest emitted line 8.3 opens from 0 (source: assumed, in-test edit)", () => {
+    const entry = securityEntry();
+    const g = JSON.parse(ghsaW8hw);
+    g.vulnerabilities = g.vulnerabilities.filter((v: { patched_versions: string }) => v.patched_versions !== "8.2.35");
+    const r = normalizePhpAdvisory(entry, { cve: EXPECTED[0].cve, ghsa: EXPECTED[0].ghsa }, g, "8.1", RELEASED);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.doc.affected).toEqual([
+      { introduced: "0", fixed: "8.3.36" },
+      { introduced: "8.4.0", fixed: "8.4.27" },
+      { introduced: "8.5.0", fixed: "8.5.12" },
+    ]);
+  });
+
+  it("F1: only the lowest line opens from 0, though every recorded range is \"< X\"", () => {
+    const entry = securityEntry();
+    const g = JSON.parse(ghsaW8hw);
+    // Only the lowest line may open from "0": every other line keeps its start even when its range is "< X".
+    const r = normalizePhpAdvisory(entry, { cve: EXPECTED[0].cve, ghsa: EXPECTED[0].ghsa }, g, "8.1", RELEASED);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.doc.affected.filter((a) => a.introduced === "0")).toEqual([{ introduced: "0", fixed: "8.2.35" }]);
   });
 
   it("normalize: a withdrawn or unpublished GHSA is an error, not a doc", () => {

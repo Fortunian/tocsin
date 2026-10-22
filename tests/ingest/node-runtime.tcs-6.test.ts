@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { fetchFeed, NodeHttpError } from "../../src/ingest/node-runtime-client";
+import { fetchFeed, fetchPost, NodeHttpError, NodeLinkError } from "../../src/ingest/node-runtime-client";
 import { NODE_CURSOR_KEY, normalizeNodePost, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
 import { decodeEntities, htmlSections } from "../../src/ingest/runtime-text";
 import type { IngestContext } from "../../src/ingest/types";
@@ -64,6 +64,14 @@ function feedWithTitle(title: string): string {
   const before = "<title><![CDATA[Wednesday, October 21, 2026 Security Releases]]></title>";
   expect(feedXml).toContain(before);
   return feedXml.replace(before, `<title><![CDATA[${title}]]></title>`);
+}
+
+// Adds one "Security Releases" item with the given link and pubDate to an in-test copy of the recorded feed.
+function feedWithExtraItem(link: string, pubDate: string): string {
+  const anchor = "<item>";
+  expect(feedXml).toContain(anchor);
+  const item = `<item>\n<title><![CDATA[Thursday, October 22, 2026 Security Releases]]></title>\n<link>${link}</link>\n<pubDate>${pubDate}</pubDate>\n</item>\n`;
+  return feedXml.replace(anchor, item + anchor);
 }
 
 async function nodeRowCount(): Promise<number> {
@@ -285,6 +293,46 @@ describe("nodeRuntime.run (run)", () => {
     const fake = createRuntimeFake(routes({ [POST]: { status: 503 } }));
     await expect(nodeRuntime.run(ctxFor(fake.fetch))).rejects.toBeInstanceOf(NodeHttpError);
     expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe("2026-10-01T00:00:00Z");
+  });
+
+  it("N11 F2: a feed item linking off nodejs.org is not fetched, is reported, and does not stop the real post (source: assumed, in-test edit)", async () => {
+    const evil = "https://evil.example/post";
+    const fake = createRuntimeFake(routes({ [FEED]: feedWithExtraItem(evil, "Thu, 22 Oct 2026 01:00:00 GMT") }));
+    const res = await nodeRuntime.run(ctxFor(fake.fetch));
+    expect(fake.urls().filter((u) => u.includes("evil.example"))).toEqual([]);
+    expect(fake.urls()).toEqual([FEED, INDEX, POST]);
+    expect(res.errors).toHaveLength(1);
+    expect(res.errors[0]).toContain(evil);
+    expect(res.errors[0]).toContain("https://nodejs.org");
+    expect(res.upserted).toBe(10);
+    expect(await nodeRowCount()).toBe(10);
+    // The off-origin post counts as done: the cursor reaches the newest post date.
+    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe("2026-10-22T01:00:00Z");
+  });
+
+  it("N11 F2: an http:// link on nodejs.org is refused for an https feed (source: assumed, in-test edit)", async () => {
+    const plain = POST.replace("https://", "http://");
+    const fake = createRuntimeFake(routes({ [FEED]: feedWithExtraItem(plain, "Thu, 22 Oct 2026 01:00:00 GMT") }));
+    const res = await nodeRuntime.run(ctxFor(fake.fetch));
+    expect(fake.count(plain)).toBe(0);
+    expect(res.errors).toHaveLength(1);
+    expect(res.errors[0]).toContain(plain);
+  });
+
+  it("N11 F2 near miss: a nodejs.org link with a query string is read (source: assumed, in-test edit)", async () => {
+    const withQuery = `${POST}?x=1`;
+    const fake = createRuntimeFake(routes({ [FEED]: feedWithExtraItem(withQuery, "Thu, 22 Oct 2026 01:00:00 GMT"), [withQuery]: postHtml }));
+    const res = await nodeRuntime.run(ctxFor(fake.fetch));
+    expect(res.errors).toEqual([]);
+    expect(fake.count(withQuery)).toBe(1);
+    expect(res.upserted + res.unchanged).toBe(20);
+  });
+
+  it("F2 seam: fetchPost throws NodeLinkError for another origin and makes no call", async () => {
+    const fake = createRuntimeFake(routes());
+    await expect(fetchPost(fake.fetch, "https://evil.example/post", "https://nodejs.org")).rejects.toBeInstanceOf(NodeLinkError);
+    expect(fake.calls).toHaveLength(0);
+    await expect(fetchPost(fake.fetch, POST, "https://nodejs.org")).resolves.toBe(postHtml);
   });
 
   it("config: a bad config value throws before any fetch", async () => {
