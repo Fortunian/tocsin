@@ -1,0 +1,209 @@
+# TCS-4 (#4): Check: lockfile and runtime parsers — plan
+
+## Context checked
+- Ticket #4: body only, 0 comments. Labels: ai-build. Blocked-by #1 is CLOSED (merged as aaa6f23).
+- Already on main? No. `git log origin/main --since=2026-10-22T00:26:43Z -- src/check tests/check` is empty. `src/check/` does not exist on origin/main. `git log -S"detect("` finds only aa873de (the ticket text in docs/tickets/06a-check-parsers.md), no code.
+- No open PRs on Fortunian/tocsin. `/root/harness/state/claims/tocsin/` is empty.
+- CodeGraph: NOT AVAILABLE on this box. This is a green-field module with no callers on main (no `src/check/` and no import of it), so the regression surface is the vitest run and `tsc --noEmit` only.
+- Stack: Cloudflare Workers, vitest 4.1 with `@cloudflare/vitest-pool-workers` (tests run inside workerd, so there is no `fs`). Fixtures load as text with Vite `?raw` imports.
+- Box toolchains: node, npm, corepack, python3 are present. pnpm, yarn (direct), pip, go, composer, cargo, ruby/bundle are absent.
+
+## Spec changes from comments
+none
+
+## Scope
+Pure functions, no I/O, under `src/check/parsers/`. Each function takes the file text and returns `ParseResult = { dependencies: Dependency[]; skipped: Skipped[] }`, where `Dependency = { ecosystem: string; name: string; version: string }` and `Skipped = { line?: number; raw: string; reason: string }`.
+Out of scope (ticket): range matching (TCS-5), the HTTP endpoint (#9), SBOM input.
+
+## ASSUMPTIONS
+- Return shape. The ticket says each parser "returns `Dependency[]`" but also requires `skipped[]` for requirements.txt. I assume ONE uniform shape `{ dependencies, skipped }` for every parser, so `detect()` and the future endpoint handle all formats the same way. Other reading: only `requirements.ts` returns `skipped`; that would make `detect()` return a union.
+- `detect(filename, text)` return value. I assume it returns `{ parser: ParserId; result: ParseResult } | null`: it uses the basename (case-insensitive) to choose the parser, runs it on `text`, and returns `null` for an unknown filename. `text` is used to split yarn v1 from yarn berry (`__metadata:` present → berry). Other reading: return only the parser function; tests would still assert the id.
+- Malformed input. A file that does not parse at all (invalid JSON in package-lock/composer.lock, package-lock without a `packages` map such as lockfileVersion 1) throws `LockfileParseError` with the parser id and a reason. It never returns an empty list, because "no dependencies" and "could not read" are different facts (build-discipline D11). Other reading: return empty `dependencies` plus a `skipped` row.
+- Ecosystem names are OSV names: `npm` (package-lock, pnpm, yarn), `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`. Runtimes use the runtime name (`node`, `php`, `python`, `go`, `deno`, `bun`) per the ticket.
+- Name normalization. PyPI names are normalized per PEP 503 (lowercase, runs of `-_.` become `-`), because that is the identity OSV matches on. All other names are kept as written. Versions are kept as written (trimmed): Go keeps the `v` prefix and `+incompatible`; runtime versions keep whatever the caller sent (trimmed). Normalizing versions belongs to the matcher (TCS-5). Other reading: strip the `v` here.
+- Dedup. Each parser dedups on `(ecosystem, name, version)`, so nested `node_modules` copies and go.sum `/go.mod` lines count once. The fixture entry counts in the tests are post-dedup counts.
+- Dev dependencies are included (package-lock `dev: true`, composer `packages-dev`): a vulnerable dev tool is still a finding.
+- Non-registry entries go to `skipped[]` with a reason, not into `dependencies`: package-lock `link: true` and the root `""` entry; yarn `workspace:`/`link:`/`portal:`/`file:` protocols; Cargo `[[package]]` with no `source` or a non-`registry+` source (workspace members, git, path); Gemfile.lock `GIT` and `PATH` sections. Other reading: include them; that would feed local code to the matcher.
+- requirements.txt. Only `name==version` (optionally with `[extras]`, a `; marker` and `--hash` options) is a dependency. Everything else that names a package is skipped with its raw line and line number: ranges (`>=`, `<=`, `~=`, `!=`, `<`, `>`), `===`, wildcard pins (`==1.*`), bare names, URLs and `-e` lines. Comments, blank lines, `-r`/`-c`/`--index-url` style option lines and `\` continuations are consumed, not skipped.
+- Runtimes. `undefined` keys are omitted. A key whose value is an empty or whitespace-only string goes to `skipped[]`. Keys outside the six runtimes go to `skipped[]` (the input will come from HTTP JSON in #9).
+- YAML. No YAML dependency is added. pnpm-lock and yarn berry are read with a line scanner over their fixed key shapes (top-level `packages:` keys for pnpm; `"<descriptors>":` + `  version:` for berry). This keeps the worker bundle unchanged. Other reading: add the `yaml` npm package.
+- Fixtures "recorded from real projects": npm-family fixtures are generated by the real package managers (npm, `corepack pnpm`, `corepack yarn@1`, `corepack yarn@4`) resolving this repo's own `package.json`. The five other formats have no toolchain on this box, so they are copied from the public repos listed below at a pinned commit. Large lockfiles are cut to a contiguous run of whole entries (at least 20, target 25 to 60) so the diff stays small. `tests/fixtures/lockfiles/SOURCES.md` records each source, commit sha, command and the cut.
+- Test file name. The ticket names `tests/check/parsers.test.ts`; the harness rule is one file per ticket, so the file is `tests/check/parsers.tcs-4.test.ts`. It still lives in `tests/check/`.
+- Types live in `src/check/parsers/types.ts`, not a shared `src/check/types.ts`, so this build cannot collide with TCS-5 (`src/check/match/`), which runs in parallel and may define its own types.
+
+CROSS-REPO-READ: pallets/flask
+CROSS-REPO-READ: cli/cli
+CROSS-REPO-READ: composer/composer
+CROSS-REPO-READ: BurntSushi/ripgrep
+CROSS-REPO-READ: rails/rails
+
+(Fixture sources: flask `requirements/dev.txt` (pip-compile `==` pins), cli/cli `go.sum`, composer/composer `composer.lock` (has both `packages` and `packages-dev`), ripgrep `Cargo.lock`, rails `Gemfile.lock`. If one of these files is missing at HEAD, use another public repo and change its CROSS-REPO-READ line in this plan and SOURCES.md together.)
+
+## Files to touch
+Create (product code):
+- `src/check/parsers/types.ts`
+- `src/check/parsers/package-lock.ts`
+- `src/check/parsers/pnpm-lock.ts`
+- `src/check/parsers/yarn-lock.ts`
+- `src/check/parsers/requirements.ts`
+- `src/check/parsers/go-sum.ts`
+- `src/check/parsers/composer-lock.ts`
+- `src/check/parsers/cargo-lock.ts`
+- `src/check/parsers/gemfile-lock.ts`
+- `src/check/parsers/runtimes.ts`
+- `src/check/parsers/index.ts`
+Create (tests and fixtures):
+- `tests/check/parsers.tcs-4.test.ts`
+- `tests/fixtures/lockfiles/package-lock.v3.json`
+- `tests/fixtures/lockfiles/package-lock.v2.json`
+- `tests/fixtures/lockfiles/pnpm-lock.yaml`
+- `tests/fixtures/lockfiles/yarn.v1.lock`
+- `tests/fixtures/lockfiles/yarn.berry.lock`
+- `tests/fixtures/lockfiles/requirements.txt`
+- `tests/fixtures/lockfiles/go.sum`
+- `tests/fixtures/lockfiles/composer.lock`
+- `tests/fixtures/lockfiles/Cargo.lock`
+- `tests/fixtures/lockfiles/Gemfile.lock`
+- `tests/fixtures/lockfiles/SOURCES.md`
+
+No migration, no route, no UI, no change to `src/app.ts`, `wrangler.toml`, `package.json` or `vitest.config.ts`.
+
+## Tests that must change
+None
+
+## Changed symbols
+- format `ParseResult` / `Dependency` / `Skipped` (`src/check/parsers/types.ts`): new types.
+- function `LockfileParseError`: new error class (types.ts).
+- function `parsePackageLock`: new.
+- function `parsePnpmLock`: new.
+- function `parseYarnLock`: new (v1 and berry).
+- function `parseRequirements`: new.
+- function `parseGoSum`: new.
+- function `parseComposerLock`: new.
+- function `parseCargoLock`: new.
+- function `parseGemfileLock`: new.
+- function `parseRuntimes`: new.
+- function `detect`: new (`src/check/parsers/index.ts`).
+
+## Tasks
+
+### T1. Types, fixtures and the `?raw` loader proof
+Write `types.ts`. Produce the 10 fixtures and `SOURCES.md`:
+- `package-lock.v3.json`: copy of this repo's `package-lock.json` (real project, lockfileVersion 3, 250 `node_modules/` entries).
+- `package-lock.v2.json`: `npm install --package-lock-only --lockfile-version 2` in a scratch dir with this repo's `package.json`.
+- `pnpm-lock.yaml`: `corepack pnpm@9 install --lockfile-only` in a scratch dir with this `package.json`.
+- `yarn.v1.lock`: `corepack yarn@1.22.22 install --ignore-scripts` (lockfile only kept).
+- `yarn.berry.lock`: `corepack yarn@4 install --mode=update-lockfile`.
+- Five copies from the CROSS-REPO-READ repos (raw file at a pinned sha), cut to whole entries as needed; the cut keeps the file valid in its own format (JSON stays valid; composer keeps both arrays non-empty; Cargo keeps whole `[[package]]` blocks; Gemfile.lock keeps the GEM/specs, PLATFORMS and DEPENDENCIES sections).
+- Inject nothing by hand into a recorded fixture. The `requests>=2.0` skip case is an inline string in the test, not an edit to the flask fixture.
+- Confirm a `?raw` import works under `@cloudflare/vitest-pool-workers` with a first smoke test (`import txt from "../fixtures/lockfiles/go.sum?raw"`; `/// <reference types="vite/client" />` at the top of the test file for the type).
+VALIDATE: `npx vitest run tests/check/parsers.tcs-4.test.ts -t "fixtures load"` passes, and `grep -c . tests/fixtures/lockfiles/SOURCES.md` shows one row per fixture (10).
+SATISFIES: "One fixture per parser in `tests/fixtures/lockfiles/`, recorded from real projects, each with at least 20 entries."
+
+### T2. npm-family parsers: package-lock, pnpm, yarn
+- `package-lock.ts`: `JSON.parse` (throw `LockfileParseError` on failure or when `packages` is absent). For each key of `packages`: skip `""`; `link: true` → skipped; name = `entry.name` if present, else the text after the last `node_modules/` in the key (keeps `@scope/name`); version = `entry.version`; an entry without `version` → skipped. Dedup.
+- `pnpm-lock.ts`: find the top-level `packages:` line; read the 2-space-indented keys until the next top-level key. Strip quotes and a trailing `:`. Handle `/name/1.2.3` (v5), `/name@1.2.3` (v6), `name@1.2.3` (v9); drop a peer suffix `(...)` or `_peer` tail; split name and version on the last `@` that is not at index 0. Ignore `snapshots:`, `importers:`. Dedup.
+- `yarn-lock.ts`: berry if the text has a top-level `__metadata:` line, else v1. For each unindented descriptor line ending in `:`, read the next indented `version` line (`version "x"` for v1, `version: x` for berry). Name = the descriptor text before the `@` that starts the range (scoped names keep their first `@`). Berry descriptors with `@workspace:`, `@link:`, `@portal:`, `@file:` → skipped. Skip `__metadata`. Dedup.
+VALIDATE: `npx vitest run tests/check/parsers.tcs-4.test.ts -t "npm family"` passes: v3 count, v2 count, pnpm count, yarn v1 count, yarn berry count, and one known `(name, version)` pair each (for example `hono` at the version in this repo's lockfile).
+SATISFIES: "`package-lock.ts` (v2 and v3 `packages` map), `pnpm-lock.ts` (yaml, `packages:` keys), `yarn-lock.ts` (v1 text and berry yaml)".
+
+### T3. requirements.txt parser
+`requirements.ts` per the ASSUMPTIONS rules. Join `\` continuations first. Strip inline ` #` comments and `; marker`. Match `^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?\s*==\s*([^\s;*]+)` with no second specifier after it; a match → dependency (PEP 503 name); any other package line → `skipped` with `line`, `raw` and reason `not an exact pin`.
+VALIDATE: `npx vitest run tests/check/parsers.tcs-4.test.ts -t "requirements"` passes, including `parseRequirements("requests>=2.0\nflask==3.0.0\n")` → `dependencies` has `flask 3.0.0` only and `skipped[0].raw === "requests>=2.0"`.
+SATISFIES: "`requirements.ts` (`name==version` lines only; skip ranges and report them in `skipped[]`)" and "`requirements.txt` with `requests>=2.0` lands in `skipped[]`, not in the result."
+
+### T4. go.sum, composer.lock, Cargo.lock, Gemfile.lock parsers
+- `go-sum.ts`: each non-blank line is `<module> <version>[/go.mod] h1:<hash>`. Drop the `/go.mod` suffix, then dedup, so a module listed twice counts once. A line with fewer than 3 fields → skipped.
+- `composer-lock.ts`: `JSON.parse`; read `packages` and `packages-dev` (either may be absent; both absent → `LockfileParseError`). `name` as written, `version` as written (keeps a `v` prefix if present, matcher normalizes).
+- `cargo-lock.ts`: split on `[[package]]`; read `name = "..."`, `version = "..."`, `source = "..."`. `source` starting `registry+` → dependency; anything else → skipped with reason `not from a registry`.
+- `gemfile-lock.ts`: inside each `GEM` section's `specs:` block, a 4-space-indented `name (version)` line is a dependency; 6-space lines are sub-dependency constraints and are ignored. `GIT`/`PATH` section specs → skipped. Platform suffixes (`1.15.0-x86_64-linux`) are kept as written.
+VALIDATE: `npx vitest run tests/check/parsers.tcs-4.test.ts -t "other ecosystems"` passes: count plus one known pair per fixture; the go.sum test asserts a module that has both `h1:` and `/go.mod h1:` lines appears once; the composer test asserts one pair from `packages` and one from `packages-dev`.
+SATISFIES: "`go-sum.ts` (module@version lines, drop `/go.mod` suffix duplicates), `composer-lock.ts` (`packages` and `packages-dev`), `cargo-lock.ts`, `gemfile-lock.ts`."
+
+### T5. Runtimes parser
+`runtimes.ts`: `parseRuntimes(input: Partial<Record<RuntimeName, string>> & Record<string, unknown>)` → for each of `node, php, python, go, deno, bun` with a non-empty trimmed string → `{ ecosystem: rt, name: rt, version }`. Empty string or non-string → skipped. Unknown key → skipped.
+VALIDATE: `npx vitest run tests/check/parsers.tcs-4.test.ts -t "runtimes"` passes: `{node:"22.11.0", php:"8.3.12"}` → 2 deps with `ecosystem === name`; `{}` → 0 deps; `{node:" "}` → 0 deps, 1 skipped; `{ruby:"3.3"}` → 1 skipped.
+SATISFIES: "`runtimes.ts`: accepts `{node?, php?, python?, go?, deno?, bun?}` version strings and returns dependencies with `ecosystem` equal to the runtime name and `name` equal to the runtime name."
+
+### T6. `detect()`
+`index.ts`: basename (split on `/` and `\`), lowercase compare. Map: `package-lock.json`, `npm-shrinkwrap.json` → `package-lock`; `pnpm-lock.yaml` → `pnpm-lock`; `yarn.lock` → `yarn-lock`; `requirements.txt` and `requirements*.txt` (e.g. `requirements-dev.txt`) → `requirements`; `go.sum` → `go-sum`; `composer.lock` → `composer-lock`; `cargo.lock` → `cargo-lock`; `gemfile.lock` → `gemfile-lock`. Unknown → `null`. Re-export every parser and the types.
+The fixture tests in T2–T4 call the parsers THROUGH `detect()` with the real filename (D2: `detect` is the production entry point the endpoint will use), plus one direct call each where the test needs a fixture name that is not a real lockfile name (`yarn.v1.lock`).
+VALIDATE: `npx vitest run tests/check/parsers.tcs-4.test.ts -t "detect"` passes: each real filename (including `sub/dir/package-lock.json` and `Cargo.lock` vs `cargo.lock`) maps to its parser id; `package.json`, `go.mod`, `Gemfile`, `requirements.in`, `poetry.lock` → `null`.
+SATISFIES: "`src/check/parsers/index.ts`: `detect(filename, text)` picks the parser from the filename" and "`detect()` returns the right parser for each filename".
+
+### T7. Full gates and mutation check
+Run the full suite and typecheck. Mutation check (D1): (a) remove the `/go.mod` strip, (b) let a `>=` line through in requirements, (c) drop `packages-dev` in composer, (d) map `yarn.lock` to null in detect. Each one must turn a test red; revert after.
+VALIDATE: `npm test; echo rc=$?` → `rc=0`, and `npm run typecheck; echo rc=$?` → `rc=0` (unpiped exit codes, D6). Each of the 4 mutations shows a failing test before revert.
+SATISFIES: Verification contract "`npm test` / `npm run typecheck`".
+
+## Edge cases (all covered by inline-string tests in the same test file)
+- package-lock: scoped package key `node_modules/@cloudflare/workers-types`; nested `node_modules/a/node_modules/b`; aliased entry with `name`; `link: true`; invalid JSON throws `LockfileParseError`; lockfileVersion 1 (no `packages`) throws.
+- pnpm v9 key with peer suffix `react-dom@18.2.0(react@18.2.0)` → `react-dom 18.2.0`; scoped `'@babel/core@7.24.0'`.
+- yarn v1 multi-descriptor line `"@babel/core@^7.0.0", "@babel/core@^7.1.0":` → one dep; berry `workspace:` → skipped.
+- requirements: `Django==4.2.7` → `django`; `zope.interface==6.0` → `zope-interface`; `requests[security]==2.31.0 ; python_version>"3.8"` → dep; `pkg==1.*` → skipped; `-r base.txt`, comments and `--hash` continuations → neither dep nor skipped.
+- go.sum: `+incompatible` version kept.
+- Cargo: package with no `source` → skipped.
+- Gemfile.lock: `GIT` section spec → skipped.
+- Empty text for a text-format parser → `{ dependencies: [], skipped: [] }` (an empty requirements.txt is a valid file with no pins). Empty text for a JSON format → throws.
+
+## Iron laws: how they apply
+- Sortable headers, list-over-cards, drill-down, mobile, native dialogs: n/a, no UI.
+- DB-driven config, RLS, indexes, EXPLAIN proof, retention, correlated subqueries: n/a, no table and no query. The filename→parser map is format knowledge, not a business parameter, so it is code (same as a file-format spec).
+- De-AI, model-id, dedup-before-spend: n/a, no LLM and no metered call. CLAUDE.md rule 6 (deterministic) holds: pure parsing.
+- Scalable tests: the tests call no external service; fixtures are recorded once at build time, then read locally. Each test uses its own inline data or a read-only fixture; no shared mutable state, no order dependence.
+- Performance: no screen, no loader, no DB reads. Parsers are single-pass over the text (O(n)); no regex with nested quantifiers over whole files.
+- Build discipline rules that bite: D1 (T7 mutation check), D2 (tests go through `detect()`), D4 (fixtures are real lockfiles, not hand-made), D5 (code comments describe only what the code does), D6 (unpiped exit codes), D11 (malformed input throws, it never reads as "no dependencies"), D12 (every dropped package line is in `skipped[]` with a reason, never silently lost), D17 (PyPI names normalize once, in the parser).
+
+## Verify (run, not edited)
+- `npm test` (all suites, including `tests/unit/schema.tcs-1.test.ts`, `tests/worker/health.tcs-1.test.ts`, `tests/worker/migrations.tcs-1.test.ts`)
+- `npm run typecheck`
+
+Suites at regression risk: none functionally (no existing file changes). `npm run typecheck` is the one shared risk: `tsconfig.json` includes `tests/`, so the `?raw` imports must type-check (vite/client reference).
+
+## System invariants
+None beyond the iron laws. This is a set of pure functions with no cross-run state, no external side effect, no classifier that gates an irreversible action, and no cron, lock or queue interaction; the only neighbor is TCS-5, which owns `src/check/match/` and shares no file with this plan.
+
+## Requirements coverage
+| Requirement (ticket) | Task | Acceptance test |
+|---|---|---|
+| Pure functions, no I/O, in `src/check/parsers/` | T1–T6 | typecheck; no import of env/fetch in `src/check/parsers/` (test asserts parsers are called with text only) |
+| Returns `{ecosystem, name, version}[]` | T1 | every fixture test asserts the three fields on its known pair |
+| package-lock v2 and v3 `packages` map | T2 | "npm family" v2 + v3 cases |
+| pnpm-lock `packages:` keys | T2 | "npm family" pnpm case + peer-suffix inline case |
+| yarn v1 text and berry yaml | T2 | "npm family" yarn v1 + berry cases |
+| requirements `name==version` only; ranges in `skipped[]` | T3 | "requirements" fixture + inline cases |
+| `requests>=2.0` lands in `skipped[]`, not in the result | T3 | "requirements" inline case asserts absent from `dependencies`, present in `skipped` |
+| go.sum, drop `/go.mod` duplicates | T4 | "other ecosystems" go.sum count + once-only assertion |
+| composer `packages` and `packages-dev` | T4 | "other ecosystems" composer pair from each array |
+| cargo-lock, gemfile-lock | T4 | "other ecosystems" Cargo + Gemfile cases |
+| runtimes: ecosystem = name = runtime name | T5 | "runtimes" cases |
+| `detect(filename, text)` picks the parser | T6 | "detect" cases incl. nulls |
+| One fixture per parser, real projects, ≥20 entries | T1 | each fixture test asserts `dependencies.length >= 20` and the exact count |
+| Out of scope: range matching, HTTP endpoint, SBOM (negative) | all | no file under `src/check/match/`, `src/routes/` or SBOM parser in the diff (reviewer check on the file list) |
+| `npm test` and `npm run typecheck` green | T7 | unpiped rc=0 |
+
+## Acceptance tests
+File: `tests/check/parsers.tcs-4.test.ts` (vitest, runs in the workers pool).
+- `describe("fixtures load")`: every `?raw` fixture is a non-empty string.
+- `describe("npm family")`: `detect("package-lock.json", v3)` → parser `package-lock`, exact dep count N3 (≥20), `hono` at its locked version, every dep has `ecosystem === "npm"`; same for v2 fixture (count N2, known pair); `detect("pnpm-lock.yaml", …)` count + pair; `parseYarnLock(v1)` and `parseYarnLock(berry)` count + pair; inline cases from Edge cases.
+- `describe("requirements")`: `detect("requirements.txt", flaskDev)` count (≥20) + one pair; the `requests>=2.0` case; the normalization, extras, marker, wildcard and option-line inline cases.
+- `describe("other ecosystems")`: go.sum, composer.lock, Cargo.lock, Gemfile.lock each through `detect()` with count, ≥20, one known pair, correct ecosystem; go.sum once-only; composer dev pair; Cargo no-source skipped; Gemfile GIT skipped.
+- `describe("runtimes")`: the four cases in T5.
+- `describe("detect")`: each filename → parser id; the five unknown names → `null`; malformed JSON → throws `LockfileParseError`.
+Each test asserts only the fields this ticket owns (count, pair, ecosystem, skipped entries). The exact counts are measured once from the recorded fixture and pinned, with the number in SOURCES.md.
+
+## QA screens
+None. No route or screen changes; the parsers have no caller until #9 (check endpoint).
+
+## Design collision check (BH-5791)
+
+Checked 12 listed and 0 derived symbols against main aaa6f2322bf4..aaa6f2322bf4 and 0 open PRs.
+- `none`: no checked symbol changed after the base.
+
+## Size
+FILES: 11
+LINES: 560
+DIFF_KB: 160
+
+KIND: feature
+SIZE: M
