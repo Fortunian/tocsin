@@ -1,3 +1,4 @@
+import type { Freshness } from "../../site/freshness";
 import type { LatestRow } from "../../site/landing";
 import type { StatusData, StatusSource } from "../../site/status";
 import type { Env } from "../env";
@@ -20,20 +21,34 @@ export const STATUS_SOURCES_SQL =
   "SELECT id, kind, last_run_at, last_ok_at, last_error FROM sources WHERE enabled = 1 ORDER BY id";
 export const STATUS_CURSOR_SQL = "SELECT MAX(cursor) AS cursor FROM advisories";
 
+// The landing page data, cached as one KV value under LATEST_KEY (TCS-35).
+export interface Home {
+  rows: LatestRow[] | null;
+  freshness: Freshness | null;
+}
+
 function errText(err: unknown): string {
   return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
 }
 
-// The newest advisories for the landing page. KV first; on a miss, one D1
-// read, then a KV put. A D1 failure returns null and caches nothing.
-export async function loadLatest(env: Env): Promise<LatestRow[] | null> {
+// A value cached before TCS-35 is a bare array of rows; it reads as a miss.
+function isHome(v: unknown): v is Home {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const h = v as Partial<Home>;
+  return Array.isArray(h.rows) && typeof h.freshness === "object" && h.freshness !== null;
+}
+
+async function cachedHome(env: Env): Promise<Home | null> {
   try {
-    const hit = await env.CURSORS.get<LatestRow[]>(LATEST_KEY, "json");
-    if (hit) return hit;
+    const hit = await env.CURSORS.get<unknown>(LATEST_KEY, "json");
+    return isHome(hit) ? hit : null;
   } catch (err) {
     console.error(JSON.stringify({ lane: "site", step: "kv-get", err: errText(err) }));
+    return null;
   }
+}
 
+async function latestSettings(env: Env): Promise<{ rows: number; ttl: number }> {
   let [rows, ttl] = await Promise.all([
     getSettingInt(env.DB, "site.latest_rows", DEFAULT_ROWS),
     getSettingInt(env.DB, "site.latest_cache_seconds", DEFAULT_TTL),
@@ -46,33 +61,66 @@ export async function loadLatest(env: Env): Promise<LatestRow[] | null> {
     console.error(JSON.stringify({ lane: "site", setting: "site.latest_cache_seconds", value: ttl, used: MIN_TTL }));
     ttl = MIN_TTL;
   }
+  return { rows, ttl };
+}
 
-  let latest: LatestRow[];
+function toRow(docJson: string): LatestRow {
+  const d = JSON.parse(docJson) as Advisory;
+  return {
+    id: d.id,
+    when: d.published_at,
+    ecosystem: d.ecosystem,
+    component: d.component,
+    cve: d.cve_ids[0] ?? null,
+    severity: d.severity.label,
+    action: d.action,
+  };
+}
+
+async function readLatest(db: D1Database, rows: number): Promise<LatestRow[] | null> {
   try {
-    const { results } = await env.DB.prepare(LATEST_SQL).bind(rows).all<{ cursor: number; doc_json: string }>();
-    latest = results.slice(0, rows).map((r) => {
-      const d = JSON.parse(r.doc_json) as Advisory;
-      return {
-        id: d.id,
-        when: d.published_at,
-        ecosystem: d.ecosystem,
-        component: d.component,
-        cve: d.cve_ids[0] ?? null,
-        severity: d.severity.label,
-        action: d.action,
-      };
-    });
+    const { results } = await db.prepare(LATEST_SQL).bind(rows).all<{ cursor: number; doc_json: string }>();
+    return results.slice(0, rows).map((r) => toRow(r.doc_json));
   } catch (err) {
     console.error(JSON.stringify({ lane: "site", step: "latest-read", err: errText(err) }));
     return null;
   }
+}
 
+async function readFreshness(db: D1Database): Promise<Freshness | null> {
   try {
-    await env.CURSORS.put(LATEST_KEY, JSON.stringify(latest), { expirationTtl: ttl });
+    return freshnessOf(await loadStatus(db));
+  } catch (err) {
+    console.error(JSON.stringify({ lane: "site", step: "status-read", err: errText(err) }));
+    return null;
+  }
+}
+
+// The freshness numbers from one loadStatus read. A source is ok when it has
+// had a good run and its last run left no error. `updated` is the newest good run.
+export function freshnessOf(status: StatusData): Freshness {
+  const ok = status.sources.filter((s) => s.last_error === null && s.last_ok_at !== null).length;
+  const times = status.sources.map((s) => s.last_ok_at).filter((t): t is string => t !== null);
+  const updated = times.length ? times.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null;
+  return { updated, ok, total: status.sources.length };
+}
+
+// KV first; on a miss, the Latest read and one loadStatus read in parallel,
+// then ONE KV put that holds both. A failed read returns null for its part
+// and caches nothing, so the next request reads D1 again.
+export async function loadHome(env: Env): Promise<Home> {
+  const hit = await cachedHome(env);
+  if (hit) return hit;
+  const { rows, ttl } = await latestSettings(env);
+  const [latest, freshness] = await Promise.all([readLatest(env.DB, rows), readFreshness(env.DB)]);
+  const home: Home = { rows: latest, freshness };
+  if (latest === null || freshness === null) return home;
+  try {
+    await env.CURSORS.put(LATEST_KEY, JSON.stringify(home), { expirationTtl: ttl });
   } catch (err) {
     console.error(JSON.stringify({ lane: "site", step: "kv-put", err: errText(err) }));
   }
-  return latest;
+  return home;
 }
 
 // One round trip: the enabled sources and the newest feed cursor. The cursor
