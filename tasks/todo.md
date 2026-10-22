@@ -8,7 +8,8 @@ Plan: docs/PLAN_2026-10-21.html. Tickets: docs/tickets/*.md.
 - [x] Namecheap nameservers changed (Lior, 2026-10-21)
 - [ ] Nameservers live at the registry (re-check with `dig NS tocsin.sh @a0.nic.sh`)
 - [ ] Lior approves plan + tickets
-- [ ] Repo transferred to Fortunian/tocsin (Lior runs the transfer; classifier blocks it here); set public before launch
+- [x] Repo at Fortunian/tocsin (transferred 2026-10-22)
+- [ ] Make repo public when launch-check (#14) passes against prod — Lior pre-authorized 2026-10-22: `gh api -X PATCH repos/Fortunian/tocsin -f private=false`
 - [ ] Harness load: `bin/load-project.sh Fortunian/tocsin --prefix TCS --prod https://tocsin.sh`
 - [ ] GitHub Actions secret CLOUDFLARE_API_TOKEN (Workers + D1 + KV + Queues scopes, liorwn account)
 - [ ] Reserve npm `tocsin` with a placeholder 0.0.1 publish
