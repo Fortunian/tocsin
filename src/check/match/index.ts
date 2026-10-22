@@ -28,6 +28,11 @@ const COMPARATORS: Record<string, Comparator> = {
   RubyGems: gemComparator,
 };
 
+/** True when the matcher has version rules for this ecosystem name. */
+export function supportsEcosystem(ecosystem: string): boolean {
+  return Object.hasOwn(COMPARATORS, ecosystem);
+}
+
 function sameName(ecosystem: string, a: string, b: string): boolean {
   if (ecosystem === "PyPI" || ecosystem === "python") return normalizePypiName(a) === normalizePypiName(b);
   return a === b;

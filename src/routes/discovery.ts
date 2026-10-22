@@ -11,6 +11,7 @@ const WELL_KNOWN = {
     events: `${BASE}/v1/events`,
     event: `${BASE}/v1/events/{id}`,
     event_by_cve: `${BASE}/v1/events/cve/{cve}`,
+    check: `${BASE}/v1/check`,
     schema: `${BASE}/schema/advisory.v1.json`,
     llms: `${BASE}/llms.txt`,
   },
@@ -48,6 +49,27 @@ An empty page returns your own since as next_cursor, so you never lose your plac
 
 Each page has a strong ETag. Send it back in If-None-Match; an unchanged page answers 304.
 Anonymous reads of /v1/events are limited per IP per minute. A 429 carries Retry-After in seconds.
+
+## Check your dependencies
+
+Runtimes only, no body:
+
+curl "${BASE}/v1/check?node=24.22.0&php=8.4.26"
+
+One or more lockfiles, field name = file name (package-lock.json, npm-shrinkwrap.json,
+pnpm-lock.yaml, yarn.lock, requirements.txt, go.sum, composer.lock, Cargo.lock, Gemfile.lock):
+
+curl -F "package-lock.json=@package-lock.json" ${BASE}/v1/check
+
+Or JSON:
+
+curl -H "Content-Type: application/json" -d '{"dependencies":[{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}],"runtimes":{"node":"24.22.0"}}' ${BASE}/v1/check
+
+The answer is { "checked": <int>, "affected": [...], "skipped": [...], "feed_cursor": <int> }.
+Each affected item has dependency, advisory_id, cve_ids, severity, exploited, fixed_in, action, url,
+critical first, then exploited first. skipped lists what could not be checked; it is not a clean result.
+Send feed_cursor as since=<feed_cursor> to /v1/events to get every advisory published after the check.
+The body cap is 2 MB by default (413 over it). Anonymous checks are limited per IP per minute; a 429 carries Retry-After.
 
 ## One advisory
 
