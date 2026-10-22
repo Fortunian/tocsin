@@ -2,6 +2,7 @@ name = "tocsin"
 main = "src/index.ts"
 compatibility_date = "2026-08-15"
 compatibility_flags = ["nodejs_compat"]
+account_id = "11b818a4b2a98b4b5012359edb39cae8"
 
 # Custom domain: Cloudflare creates the DNS record and certificate on deploy.
 routes = [{ pattern = "tocsin.sh", custom_domain = true }]
