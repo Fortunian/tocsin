@@ -6,8 +6,14 @@ import check from "./routes/check";
 import discovery from "./routes/discovery";
 import events from "./routes/events";
 import health from "./routes/health";
+import site from "./routes/site";
+import status from "./routes/status";
+import { soRedirect } from "./site/redirect";
 
 const app = new Hono<{ Bindings: Env }>();
+
+// First: tocsin.so answers 301 before any other middleware runs.
+app.use("*", soRedirect);
 
 app.use(
   "*",
@@ -17,7 +23,9 @@ app.use(
 app.route("/v1/health", health);
 app.route("/v1/events", events);
 app.route("/v1/check", check);
+app.route("/v1/status", status);
 app.route("/", discovery);
+app.route("/", site);
 
 app.notFound((c) => jsonUtf8(c, { error: "not found" }, 404));
 app.onError((err, c) => {

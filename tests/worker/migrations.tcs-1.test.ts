@@ -12,6 +12,7 @@ const INDEXES = [
   "idx_advisories_cve_primary",
   "idx_advisory_sources_advisory_id",
   "idx_advisories_pypi_name",
+  "idx_advisories_nvd_pending",
 ];
 const SOURCES = ["epss", "kev", "node-runtime", "nvd", "osv", "php-runtime"];
 const ECOSYSTEMS = ["node", "php", "npm", "PyPI", "Go", "crates.io"];
@@ -50,9 +51,9 @@ async function seedAdvisories(prefix: string, count: number, cursorBase: number)
 }
 
 describe("migrations on a fresh local D1", () => {
-  it("applies 0001..0005", async () => {
+  it("applies 0001..0006", async () => {
     const { results } = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id").all<{ name: string }>();
-    expect(results.map((r) => r.name)).toEqual(["0001_init.sql", "0002_seed_sources.sql", "0003_settings.sql", "0004_check_settings.sql", "0005_pypi_name_index.sql"]);
+    expect(results.map((r) => r.name)).toEqual(["0001_init.sql", "0002_seed_sources.sql", "0003_settings.sql", "0004_check_settings.sql", "0005_pypi_name_index.sql", "0006_site_settings.sql", "0007_nvd_pending_index.sql"]);
   });
 
   it("creates the 3 tables and the 5 named indexes", async () => {

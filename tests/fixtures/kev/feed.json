@@ -1,0 +1,60 @@
+{
+  "title": "CISA Catalog of Known Exploited Vulnerabilities",
+  "catalogVersion": "2026.10.22",
+  "dateReleased": "2026-10-22T12:00:00.0000Z",
+  "count": 4,
+  "vulnerabilities": [
+    {
+      "cveID": "CVE-2021-44228",
+      "vendorProject": "Apache",
+      "product": "Log4j2",
+      "vulnerabilityName": "Apache Log4j2 Remote Code Execution Vulnerability",
+      "dateAdded": "2021-12-10",
+      "shortDescription": "Apache Log4j2 contains a vulnerability where JNDI features do not protect against attacker-controlled JNDI-related endpoints, allowing for remote code execution.",
+      "requiredAction": "For all affected software assets for which updates exist, the only acceptable remediation actions are: 1) Apply updates; OR 2) remove affected assets from agency networks.",
+      "dueDate": "2021-12-24",
+      "knownRansomwareCampaignUse": "Known",
+      "notes": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228",
+      "cwes": ["CWE-20", "CWE-400", "CWE-502"]
+    },
+    {
+      "cveID": "CVE-2026-90011",
+      "vendorProject": "Fixture",
+      "product": "fixture-pkg",
+      "vulnerabilityName": "Fixture entry for tocsin tests",
+      "dateAdded": "2026-10-21",
+      "shortDescription": "Fixture entry. Not a real vulnerability.",
+      "requiredAction": "Apply mitigations per vendor instructions or discontinue use of the product if mitigations are unavailable.",
+      "dueDate": "2026-11-11",
+      "knownRansomwareCampaignUse": "Unknown",
+      "notes": "",
+      "cwes": []
+    },
+    {
+      "cveID": "cve-2026-90012",
+      "vendorProject": "Fixture",
+      "product": "fixture-lowercase",
+      "vulnerabilityName": "Fixture entry with a lowercase id (must be ignored)",
+      "dateAdded": "2026-10-21",
+      "shortDescription": "Fixture entry. Not a real vulnerability.",
+      "requiredAction": "Fixture.",
+      "dueDate": "2026-11-11",
+      "knownRansomwareCampaignUse": "Unknown",
+      "notes": "",
+      "cwes": []
+    },
+    {
+      "cveID": "CVE-2026-90013",
+      "vendorProject": "Fixture",
+      "product": "fixture-second",
+      "vulnerabilityName": "Second fixture entry for tocsin tests",
+      "dateAdded": "2026-10-22",
+      "shortDescription": "Fixture entry. Not a real vulnerability.",
+      "requiredAction": "Fixture.",
+      "dueDate": "2026-11-12",
+      "knownRansomwareCampaignUse": "Unknown",
+      "notes": "",
+      "cwes": []
+    }
+  ]
+}

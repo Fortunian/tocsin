@@ -17,6 +17,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run gen:schema -- --check
+      - run: npm run gen:docs -- --check
       - run: npm test
 
   # Runs only after an operator creates the Cloudflare resources and sets the

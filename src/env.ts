@@ -4,4 +4,6 @@ export interface Env {
   DELIVERIES: Queue;
   // Optional. Raises the GitHub API limit for the php-runtime ingester.
   GITHUB_TOKEN?: string;
+  // NVD API key (wrangler secret). Unset: the NVD ingester runs at the keyless limit.
+  NVD_API_KEY?: string;
 }

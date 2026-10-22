@@ -12,7 +12,7 @@ curl "https://tocsin.sh/v1/check?node=24.22.0&php=8.4.26"
 npx tocsin check
 ```
 
-Status: scaffold. Only `GET /v1/health` is live in code. See `docs/PLAN_2026-10-21.html` and `docs/tickets/`.
+Live status of each source: https://tocsin.sh/status (JSON at `/v1/status`). API reference: `docs/API.md`, served at https://tocsin.sh/docs.
 
 ## Run locally
 
@@ -69,5 +69,22 @@ npx tocsin watch     # print new advisories every 5 minutes
 
 `skills/tocsin/SKILL.md` is the Claude Code skill. `connect` installs it, and the package ships a copy.
 See `packages/cli/README.md` for flags, exit codes and env vars.
+
+## Site
+
+`GET /` (landing), `/docs` and `/status` are HTML pages the main worker renders (`src/routes/site.ts`, templates in `site/`).
+`/docs` comes from `docs/API.md`: after you edit it, run `npm run gen:docs`; CI fails if `site/docs.generated.ts` is stale
+(`npm run gen:docs -- --check`). Any request to `tocsin.so` or `www.tocsin.so` answers 301 to the same path on `tocsin.sh`.
+
+The browser test (`tests/e2e/site.spec.ts`) is not part of `npm test` or CI. Run it locally:
+
+```
+npx playwright install chromium
+npm run test:e2e
+```
+
+## Built with
+
+Built with [Cromford](https://cromford.ai).
 
 Apache-2.0. The hosted service runs at https://tocsin.sh.
