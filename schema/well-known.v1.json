@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tocsin.sh/schema/well-known.v1.json",
+  "title": "Tocsin discovery document v1 (/.well-known/tocsin.json)",
+  "type": "object",
+  "required": ["schema", "endpoints", "mcp", "docs"],
+  "properties": {
+    "schema": { "type": "string", "pattern": "^https://" },
+    "endpoints": {
+      "type": "object",
+      "required": ["events", "event", "event_by_cve"],
+      "properties": {
+        "events": { "type": "string", "pattern": "^https://" },
+        "event": { "type": "string", "pattern": "^https://" },
+        "event_by_cve": { "type": "string", "pattern": "^https://" },
+        "schema": { "type": "string", "pattern": "^https://" },
+        "llms": { "type": "string", "pattern": "^https://" }
+      },
+      "additionalProperties": { "type": "string", "pattern": "^https://" }
+    },
+    "mcp": { "type": "string", "pattern": "^https://" },
+    "docs": { "type": "string", "pattern": "^https://" }
+  }
+}
