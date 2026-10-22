@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { jsonUtf8 } from "../lib/http";
 
 const BASE = "https://tocsin.sh";
+const MCP_URL = "https://mcp.tocsin.sh/mcp";
 
 const WELL_KNOWN = {
   schema: `${BASE}/schema/advisory.v1.json`,
@@ -14,6 +15,7 @@ const WELL_KNOWN = {
     check: `${BASE}/v1/check`,
     schema: `${BASE}/schema/advisory.v1.json`,
     llms: `${BASE}/llms.txt`,
+    mcp: MCP_URL,
   },
   mcp: "https://mcp.tocsin.sh",
   docs: `${BASE}/docs`,
@@ -44,6 +46,7 @@ An empty page returns your own since as next_cursor, so you never lose your plac
 - min_severity=critical|high|medium|low
 - exploited=true   only advisories known to be exploited
 - limit=1..100     default 50
+- order=desc       newest first; next_cursor is the newest cursor on the page
 
 ## Caching and limits
 
@@ -75,6 +78,33 @@ The body cap is 2 MB by default (413 over it). Anonymous checks are limited per 
 
 - ${BASE}/v1/events/{id}
 - ${BASE}/v1/events/cve/{cve}
+
+## MCP
+
+Remote MCP server (streamable HTTP): ${MCP_URL}
+
+Claude Code:
+
+claude mcp add --transport http tocsin ${MCP_URL}
+
+Cursor (~/.cursor/mcp.json):
+
+{"mcpServers":{"tocsin":{"url":"${MCP_URL}"}}}
+
+Claude Desktop (claude_desktop_config.json):
+
+{"mcpServers":{"tocsin":{"command":"npx","args":["-y","mcp-remote","${MCP_URL}"]}}}
+
+Tools:
+
+- tocsin_latest   newest advisories; filters ecosystem, min_severity, exploited_only, limit (1..100, default 10)
+- tocsin_check    which dependencies are affected; lockfile_name + lockfile_text, and/or runtimes {"node":"24.22.0"}
+- tocsin_get      one advisory by Tocsin id or CVE id
+- tocsin_watchlist_events  new events on a watch list; needs an API key
+
+Every tool result is { "human": <one line>, "data": <the API answer> }.
+tocsin_watchlist_events needs the header Authorization: Bearer <your API key> on the MCP connection.
+The other tools need no key.
 
 Discovery: ${BASE}/.well-known/tocsin.json
 `;

@@ -1,0 +1,20 @@
+# The Tocsin MCP server: a second worker that reads the public Tocsin API over
+# HTTP. It has no D1, KV or queue binding. Deploy: npx wrangler deploy -c workers/mcp/wrangler.toml
+name = "tocsin-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [{ pattern = "mcp.tocsin.sh/*", zone_name = "tocsin.sh" }]
+
+[vars]
+TOCSIN_BASE_URL = "https://tocsin.sh"
+
+# One Durable Object per MCP session (agents SDK McpAgent).
+[[durable_objects.bindings]]
+name = "MCP_OBJECT"
+class_name = "TocsinMcp"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TocsinMcp"]
