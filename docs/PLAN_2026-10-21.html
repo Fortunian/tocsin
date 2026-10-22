@@ -48,18 +48,20 @@ small{color:var(--muted)}
 <main>
 <h1>Tocsin: security advisories, built for agents</h1>
 <div class="sub">Plan v1, 2026-10-21. Domains tocsin.sh and tocsin.so (Cloudflare, liorwn@gmail.com account). Repo liorwn/tocsin. License Apache-2.0.</div>
-<span class="pill">Cloudflare Workers</span><span class="pill">D1 + KV + Queues</span><span class="pill">Open core</span><span class="pill">Free + Pro</span><span class="pill">14 tickets</span><span class="pill">~4 sessions</span>
+<span class="pill">Cloudflare Workers</span><span class="pill">D1 + KV + Queues</span><span class="pill">Open core</span><span class="pill">Free + Pro</span><span class="pill">15 tickets</span><span class="pill">~4 sessions</span>
 
 <h2 id="tldr">TL;DR</h2>
 <ul class="cols2">
 <li>One normalized feed of runtime and package security advisories. An agent subscribes in one call and acts without a human.</li>
 <li>The hook: an agent on Node 24 that called <code>fetch()</code> on 2026-10-21 was exposed to CVE-2026-111497 and nothing told it.</li>
+<li>One command hooks an agent up: <code>npx tocsin connect</code> wires Claude Code, Cursor, Claude Desktop and Codex to the feed in one run.</li>
 <li>Four surfaces: a JSON feed with a cursor, an "am I affected?" check endpoint, a remote MCP server, and a CLI plus Claude Code skill.</li>
 <li>Sources: OSV (packages), Node.js and PHP runtime advisories, NVD severity, CISA KEV exploited flag, EPSS probability.</li>
 <li>Open source engine, schema, ingesters, MCP server, CLI and skill. The hosted service at tocsin.sh is the business.</li>
 <li>Free: public feed, polling, 5 watch lists, check endpoint. Pro: webhooks, unlimited watch lists, lockfile-scoped feeds, delivery history.</li>
 <li>No LLM in the request path. Every field is computed from source data. Every write is idempotent. Every read is cursor-bounded with ETag.</li>
-<li>14 harness tickets in 4 waves. First usable feed after wave 1 (tickets 1 to 5). Launch after wave 3.</li>
+<li>15 harness tickets in 4 waves, through launch: the site ships with its final copy, the CLI ships with <code>connect</code>, and ticket 13 is the launch gate that proves the real 2026-10-21 advisories in prod.</li>
+<li>The repo is itself marketing: public, Apache-2.0, every PR built by the Cromford factory, "Built with Cromford" on the site and in the README.</li>
 </ul>
 
 <h2 id="why">Why now</h2>
@@ -153,17 +155,45 @@ small{color:var(--muted)}
 <tr><td>4</td><td>Enrichment: NVD, KEV, EPSS</td><td>2</td><td>#2</td><td>src/ingest/nvd, kev, epss</td><td>zero HTTP calls on second run</td></tr>
 <tr><td>7</td><td>Watch lists and API keys, free limits from plans table</td><td>2</td><td>#5</td><td>src/routes/watchlists, keys, middleware/auth</td><td>6th list 403, cursor advance vs peek</td></tr>
 <tr><td>6c</td><td>Check endpoint</td><td>2</td><td>#5, #6a, #6b</td><td>src/routes/check</td><td>node 24.22.0 affected, 24.22.1 clean, 413 on 3 MB</td></tr>
-<tr><td>11</td><td>Site: landing, docs, status, .so redirect</td><td>2</td><td>#5</td><td>site/, src/routes/site</td><td>375px no horizontal scroll, status lists sources</td></tr>
+<tr><td>11</td><td>Site: minimalist landing with final copy, docs, status, .so redirect</td><td>2</td><td>#5</td><td>site/, src/routes/site</td><td>exact copy strings present, no external assets, 375px no horizontal scroll</td></tr>
 <tr><td>8</td><td>Webhooks, exactly-once, retries</td><td>3</td><td>#7</td><td>src/queue/, migrations/0004</td><td>one deliveries row per pair, signature verifies</td></tr>
 <tr><td>9</td><td>Remote MCP server</td><td>3</td><td>#5, #6c</td><td>workers/mcp/</td><td>initialize, 3 tools against mocked API</td></tr>
-<tr><td>10</td><td>CLI + Claude Code skill, npm publish</td><td>3</td><td>#6c</td><td>packages/cli/, skills/</td><td>exit 1 on affected, 0 clean, 2 usage</td></tr>
+<tr><td>10</td><td>CLI: connect, check, latest, watch + Claude Code skill, npm publish</td><td>3</td><td>#6c</td><td>packages/cli/, skills/</td><td>connect is idempotent and never corrupts a config; exit 1 on affected</td></tr>
+<tr><td>13</td><td>Launch gate: real advisories in prod, README, post, public repo</td><td>3</td><td>#3, #10, #11</td><td>scripts/, docs/LAUNCH_POST.md</td><td>launch-check.sh exits 0 against prod</td></tr>
 <tr><td>12</td><td>Stripe pro checkout</td><td>4 (post-launch)</td><td>#7</td><td>src/billing/, src/routes/billing</td><td>idempotent on Stripe event id</td></tr>
 </table>
 <p style="margin-top:12px">Estimate: wave 0 and 1 in about 1 session of harness throughput, waves 2 and 3 in about 2 more, wave 4 in under 1. A usable public feed exists after wave 1. Launch needs waves 0 to 3.</p>
 
 <h2 id="launch">Launch</h2>
 <div class="two">
-<div class="card"><h3>The story</h3><p>"Your agent's fetch() was exploitable on October 21 and nothing told it." One post, one curl line, one MCP config block. The feed must already contain the real 2026-10-21 Node and PHP advisories with correct fixed versions, which ticket 3 proves from recorded fixtures.</p></div>
+<div class="card"><h3>The story</h3><p>"Your agent's fetch() was exploitable on October 21 and nothing told it." One post, one command. The feed must already contain the real 2026-10-21 Node and PHP advisories with correct fixed versions, which ticket 3 proves from recorded fixtures and ticket 13 proves against prod.</p>
+<h3>The site, in full</h3>
+<pre>tocsin
+
+Security advisories, built for agents.
+
+Your agent runs on Node, PHP, Python, Go. When one of them ships a critical
+fix, nothing tells the agent. Tocsin does. One feed. One command.
+
+    npx tocsin connect
+
+Wires Claude Code, Cursor, Claude Desktop and Codex to the feed in one run.
+
+Or by hand:
+    curl "https://tocsin.sh/v1/events?since=0&amp;min_severity=high"
+    curl "https://tocsin.sh/v1/check?node=24.22.0&amp;php=8.4.26"
+    npx tocsin check
+MCP: https://mcp.tocsin.sh/mcp
+
+Latest  [live table, 10 rows]
+
+Free: the feed, the check, 5 watch lists.
+Pro, $19 a month: signed webhooks, unlimited watch lists, feeds scoped to your lockfile.
+
+Open source, Apache-2.0. github.com/&lt;org&gt;/tocsin
+Built with Cromford.
+docs · status · llms.txt</pre></div>
+<div class="card"><h3>Built with Cromford</h3><p>The public repo is a Cromford case study. Every PR carries a TCS ticket key and was planned, built, reviewed and merged by the factory. The site footer and the README say "Built with Cromford" and link to cromford.ai. The launch post says it once, in one sentence, so the product stays the story.</p></div>
 <div class="card"><h3>Channels</h3><p>Hacker News (Show HN), the Claude Code and Cursor communities, the OSV and Node security working group lists (ask for a link from their advisory pages), Lior's social through lior-social. The skill file goes into the Claude Code skills marketplace once it exists.</p></div>
 </div>
 
