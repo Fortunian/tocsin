@@ -1,29 +1,13 @@
 // `tocsin check`: send the lockfiles in cwd and the installed runtime versions
 // to POST /v1/check. Exit 1 when anything is affected, 0 when clean, 2 when
 // there is nothing to check, 3 when the check could not run.
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { Api, describeFailure, type ApiResult } from "./api.js";
 import type { Io } from "./io.js";
+import { LOCKFILE_NAMES, findLockfiles, isLockfileName } from "./lockfiles.js";
 
-// The same names src/check/parsers/index.ts:detectParser accepts.
-const LOCKFILE_NAMES = new Set([
-  "package-lock.json",
-  "npm-shrinkwrap.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-  "requirements.txt",
-  "go.sum",
-  "composer.lock",
-  "cargo.lock",
-  "gemfile.lock",
-]);
+// The lockfile list lives in lockfiles.js, shared with the GitHub Action.
+export { isLockfileName };
 export const LOCKFILE_NAMES_FOR_TEST: readonly string[] = [...LOCKFILE_NAMES];
-
-export function isLockfileName(name: string): boolean {
-  const base = name.toLowerCase();
-  return LOCKFILE_NAMES.has(base) || /^requirements[-_.][^/]*\.txt$/.test(base);
-}
 
 const PROBE_TIMEOUT_MS = 5_000;
 const PROBES: [runtime: string, ...commands: [string, string[]][]][] = [
@@ -51,12 +35,6 @@ interface CheckResult {
   affected: AffectedItem[];
   skipped: unknown[];
   feed_cursor: number;
-}
-
-async function findLockfiles(cwd: string): Promise<{ name: string; text: string }[]> {
-  const entries = await readdir(cwd, { withFileTypes: true });
-  const names = entries.filter((e) => e.isFile() && isLockfileName(e.name)).map((e) => e.name).sort();
-  return Promise.all(names.map(async (name) => ({ name, text: await readFile(join(cwd, name), "utf8") })));
 }
 
 async function probe(io: Io, commands: [string, string[]][]): Promise<string | null> {

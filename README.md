@@ -27,6 +27,27 @@ The CLI exits 1 when something is affected, 0 when clean, 2 on a usage error and
 
 The schema every advisory follows: https://tocsin.sh/schema/advisory.v1.json (source: `schema/advisory.v1.json`). API reference: https://tocsin.sh/docs (source: `docs/API.md`). Source health: https://tocsin.sh/status (JSON at `/v1/status`).
 
+## In CI
+
+The GitHub Action runs the same check on every pull request. It fails the job when a lockfile dependency has a known advisory, writes a job summary, and posts one PR comment (updated on each push) with the fixed version, the action and the upgrade command. Add these 6 lines as `.github/workflows/tocsin.yml`:
+
+```yaml
+on: pull_request
+permissions: { contents: read, pull-requests: write }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps: [{ uses: actions/checkout@v4 }, { uses: Fortunian/tocsin/action@v1 }]
+```
+
+Inputs (all optional): `min-severity` (default `low`), `fail-on` (`affected`, `exploited` or `never`; default `affected`), `fail-on-error` (default `false`: a network or API error is a warning, never a pass), `comment` (default `true`), `working-directory` (default `.`), `base-url` (default `https://tocsin.sh`), `api-key` and `github-token`. The output `affected` holds the count. The Action finds the same lockfiles as `tocsin check` and needs no npm install.
+
+Badge for your README (the standard Actions badge):
+
+```markdown
+[![tocsin](https://github.com/<owner>/<repo>/actions/workflows/tocsin.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/tocsin.yml)
+```
+
 ## Built with Cromford
 
 [Cromford](https://cromford.dev) is an open-source software factory: tickets in, reviewed and merged changes out. The engine is public at https://github.com/cromford-ai/cromford.
@@ -66,6 +87,7 @@ npm test
 - `src/` the main worker: feed, check, status, site routes, cron ingest (`src/ingest/` holds one file per source).
 - `workers/mcp/` the remote MCP server. Tools: `tocsin_latest`, `tocsin_check`, `tocsin_get`, `tocsin_watchlist_events`. Run it locally with `npx wrangler dev -c workers/mcp/wrangler.toml`.
 - `packages/cli/` the `tocsin` npm package (Node 20+, no runtime dependencies).
+- `action/` the GitHub Action (`Fortunian/tocsin/action@v1`). `.github/workflows/release.yml` moves the `v1` tag (manual dispatch).
 - `skills/tocsin/SKILL.md` the agent skill that `connect` installs.
 - `site/` the landing, docs and status pages. Any request to `tocsin.so` answers 301 to the same path on `tocsin.sh`.
 - `tests/e2e/site.spec.ts` the browser test. It is not part of `npm test`: `npx playwright install chromium && npm run test:e2e`.

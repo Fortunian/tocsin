@@ -13,5 +13,5 @@
     "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"]
   },
   "include": ["src", "site", "tests", "vitest.config.ts"],
-  "exclude": ["tests/mcp", "tests/cli"]
+  "exclude": ["tests/mcp", "tests/cli", "tests/action"]
 }

@@ -1,0 +1,44 @@
+name: release
+
+# Moves the major tag of the GitHub Action (`Fortunian/tocsin/action@v1`) to a
+# commit on main. Run it by hand after a release: Actions > release > Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The commit or branch the tag points at.
+        required: false
+        default: main
+      tag:
+        description: The major tag to move.
+        required: false
+        default: v1
+
+permissions:
+  contents: write
+
+jobs:
+  move-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Check the tag name
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+$ ]]; then
+            echo "::error::tag must look like v1, got $TAG"
+            exit 1
+          fi
+      - name: Move the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$TAG" -m "$TAG -> $(git rev-parse --short HEAD)"
+          git push -f origin "refs/tags/$TAG"
+          echo "Moved $TAG to $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"

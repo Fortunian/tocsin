@@ -1,0 +1,61 @@
+name: Tocsin check
+description: Fail a pull request when a lockfile dependency has a known security advisory, and comment the upgrade.
+author: Fortunian
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  base-url:
+    description: The Tocsin API base URL. Self-hosters point it at their own worker.
+    required: false
+    default: https://tocsin.sh
+  api-key:
+    description: An optional Tocsin API key for higher rate limits. Pass it from a secret.
+    required: false
+    default: ""
+  min-severity:
+    description: The lowest severity that counts (low, medium, high, critical). An unknown severity always counts.
+    required: false
+    default: low
+  fail-on:
+    description: When the step fails. affected = any counted advisory, exploited = only an exploited one (CISA KEV), never = report only.
+    required: false
+    default: affected
+  fail-on-error:
+    description: Fail the step when the check could not run (network or API error, no lockfile). Default is a warning.
+    required: false
+    default: "false"
+  comment:
+    description: On pull_request events, post or update one comment with the affected dependencies.
+    required: false
+    default: "true"
+  working-directory:
+    description: The directory to scan for lockfiles, relative to the workspace.
+    required: false
+    default: .
+  github-token:
+    description: The token that posts the PR comment. It needs pull-requests write.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  affected:
+    description: The number of affected dependencies at or above min-severity.
+    value: ${{ steps.check.outputs.affected }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      run: node "${{ github.action_path }}/check.mjs"
+      env:
+        TOCSIN_BASE_URL: ${{ inputs.base-url }}
+        TOCSIN_API_KEY: ${{ inputs.api-key }}
+        TOCSIN_MIN_SEVERITY: ${{ inputs.min-severity }}
+        TOCSIN_FAIL_ON: ${{ inputs.fail-on }}
+        TOCSIN_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        TOCSIN_COMMENT: ${{ inputs.comment }}
+        TOCSIN_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        TOCSIN_GITHUB_TOKEN: ${{ inputs.github-token }}
