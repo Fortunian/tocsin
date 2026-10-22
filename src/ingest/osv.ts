@@ -51,7 +51,10 @@ export interface OsvVuln {
   [k: string]: unknown;
 }
 
-export type NormalizeResult = { ok: true; doc: AdvisoryInput } | { ok: false; reason: string };
+// One doc per enabled package of the record; `doc` is docs[0].doc.
+export type NormalizeResult =
+  | { ok: true; doc: AdvisoryInput; docs: { source_id: string; doc: AdvisoryInput }[] }
+  | { ok: false; reason: string };
 
 const TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/;
 const CVE = /^CVE-\d{4}-\d{4,}$/;
@@ -193,18 +196,25 @@ function summaryOf(v: OsvVuln, component: string): string {
   return oneLine(`Advisory ${v.id} affects ${component}.`);
 }
 
+// The source key of the package at `index` in a record. The first package keeps
+// the bare OSV id, so rows stored before TCS-46 keep their key.
+export function osvSourceId(id: string, index: number, ecosystem: string, name: string): string {
+  return index === 0 ? id : `${id}#${ecosystem}/${name}`;
+}
+
 export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult {
   if (typeof v?.id !== "string" || v.id === "") return { ok: false, reason: "record has no id" };
   if (typeof v.modified !== "string") return { ok: false, reason: "record has no modified" };
   const affectedList = Array.isArray(v.affected) ? v.affected : [];
-  const primary = affectedList.find(
-    (a) => typeof a.package?.ecosystem === "string" && ecosystems.includes(a.package.ecosystem) && typeof a.package.name === "string" && a.package.name !== "",
-  );
-  if (!primary) return { ok: false, reason: "no affected package in a listed ecosystem" };
-  const ecosystem = primary.package!.ecosystem!;
-  const component = primary.package!.name!;
-  const same = affectedList.filter((a) => a.package?.ecosystem === ecosystem && a.package?.name === component);
-  const { affected, fixed } = rangesOf(same);
+  // Distinct enabled (ecosystem, name) pairs, in first-appearance order.
+  const packages: { ecosystem: string; component: string }[] = [];
+  for (const a of affectedList) {
+    const ecosystem = a.package?.ecosystem;
+    const component = a.package?.name;
+    if (typeof ecosystem !== "string" || !ecosystems.includes(ecosystem) || typeof component !== "string" || component === "") continue;
+    if (!packages.some((p) => p.ecosystem === ecosystem && p.component === component)) packages.push({ ecosystem, component });
+  }
+  if (packages.length === 0) return { ok: false, reason: "no affected package in a listed ecosystem" };
 
   const modified_at = schemaTimestamp(v.modified);
   const published_at = schemaTimestamp(typeof v.published === "string" ? v.published : v.modified);
@@ -213,29 +223,36 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
   const ids = [v.id, ...(Array.isArray(v.aliases) ? v.aliases : [])].filter((x): x is string => typeof x === "string");
   const cve_ids = [...new Set(ids.filter((x) => CVE.test(x)))].sort();
   const ghsa_id = ids.find((x) => GHSA.test(x));
-  const lowest = [...fixed].sort(compareVersions)[0];
   const osvUrl = `https://osv.dev/vulnerability/${v.id}`;
   const refs = (Array.isArray(v.references) ? v.references : [])
     .map((r) => r?.url)
     .filter((u): u is string => typeof u === "string" && /^https?:\/\//.test(u));
+  const severity = severityOf(v);
 
-  const doc: AdvisoryInput = {
-    cve_ids,
-    ...(ghsa_id ? { ghsa_id } : {}),
-    ecosystem,
-    component,
-    affected,
-    fixed_versions: fixed,
-    severity: severityOf(v),
-    exploited: false,
-    published_at,
-    modified_at,
-    summary: summaryOf(v, component),
-    action: lowest !== undefined ? oneLine(`Upgrade ${component} to ${lowest} or later.`) : NO_FIX,
-    references: [...new Set([osvUrl, ...refs])],
-    sources: [{ source: "osv", source_id: v.id, url: osvUrl }],
-  };
-  return { ok: true, doc };
+  const docs = packages.map(({ ecosystem, component }, i) => {
+    const same = affectedList.filter((a) => a.package?.ecosystem === ecosystem && a.package?.name === component);
+    const { affected, fixed } = rangesOf(same);
+    const lowest = [...fixed].sort(compareVersions)[0];
+    const source_id = osvSourceId(v.id, i, ecosystem, component);
+    const doc: AdvisoryInput = {
+      cve_ids,
+      ...(ghsa_id ? { ghsa_id } : {}),
+      ecosystem,
+      component,
+      affected,
+      fixed_versions: fixed,
+      severity,
+      exploited: false,
+      published_at,
+      modified_at,
+      summary: summaryOf(v, component),
+      action: lowest !== undefined ? oneLine(`Upgrade ${component} to ${lowest} or later.`) : NO_FIX,
+      references: [...new Set([osvUrl, ...refs])],
+      sources: [{ source: "osv", source_id, url: osvUrl }],
+    };
+    return { source_id, doc };
+  });
+  return { ok: true, doc: docs[0].doc, docs };
 }
 
 function readConfig(raw: Record<string, unknown>): OsvConfig {
@@ -306,13 +323,16 @@ async function run(ctx: IngestContext): Promise<RunResult> {
         result.errors.push(`${row.id}: ${norm.reason}`);
         continue;
       }
-      try {
-        const outcome = await upsertAdvisory(ctx.env.DB, norm.doc, { source: "osv", source_id: vuln.id });
-        if (outcome === "unchanged") result.unchanged += 1;
-        else result.upserted += 1;
-      } catch (err) {
-        if (!(err instanceof InvalidAdvisoryError)) throw err;
-        result.errors.push(`${row.id}: ${err.message}`);
+      // One advisory per package; an invalid doc does not stop the others.
+      for (const d of norm.docs) {
+        try {
+          const outcome = await upsertAdvisory(ctx.env.DB, d.doc, { source: "osv", source_id: d.source_id });
+          if (outcome === "unchanged") result.unchanged += 1;
+          else result.upserted += 1;
+        } catch (err) {
+          if (!(err instanceof InvalidAdvisoryError)) throw err;
+          result.errors.push(`${d.source_id}: ${err.message}`);
+        }
       }
     }
     await kv.put(CURSOR_KEY, page[page.length - 1].modified);
