@@ -7,7 +7,7 @@ import { docFor, get, idFor, type SeedRow } from "./seed.tcs-3";
 
 // The site pages through the production entry (src/index.ts -> app).
 const ip = "198.51.100.40";
-const KEY = "site:latest:v1";
+const KEY = "site:latest:v2";
 
 function stripTags(html: string): string {
   return html
@@ -162,7 +162,8 @@ describe("landing Latest table", () => {
     const docs = await seedTop("SNA", 12);
     await env.CURSORS.delete(KEY);
     const html = await landing();
-    for (const d of docs.slice(2)) expect(html).toContain(`href="/v1/events/${d.id}"`);
+    // TCS-34: the component link opens the advisory page, not the raw JSON.
+    for (const d of docs.slice(2)) expect(html).toContain(`href="/advisories/${d.id}"`);
     for (const d of docs.slice(0, 2)) expect(html).not.toContain(d.id);
     const head = html.match(/<thead>[\s\S]*?<\/thead>/)?.[0] ?? "";
     expect(stripTags(head).trim().split(" ")).toEqual(["when", "component", "CVE", "severity", "action"]);

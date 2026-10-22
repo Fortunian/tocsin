@@ -1,3 +1,4 @@
+import { type Freshness, renderFreshness } from "./freshness";
 import { command, escapeHtml, page } from "./layout";
 
 // One row of the Latest table, as src/site/data.ts builds and caches it.
@@ -23,7 +24,7 @@ function latestTable(rows: LatestRow[] | null): string {
       return (
         "<tr>" +
         `<td class="nowrap"><time datetime="${escapeHtml(r.when)}">${escapeHtml(r.when.slice(0, 10))}</time></td>` +
-        `<td><a href="/v1/events/${id}">${escapeHtml(`${r.ecosystem}/${r.component}`)}</a></td>` +
+        `<td><a href="/advisories/${id}">${escapeHtml(`${r.ecosystem}/${r.component}`)}</a></td>` +
         `<td class="nowrap">${cve}</td>` +
         `<td>${escapeHtml(r.severity)}</td>` +
         `<td>${escapeHtml(r.action)}</td>` +
@@ -40,7 +41,7 @@ ${body}
 }
 
 // The landing copy is the client's final text (TCS-10). Do not reword it.
-export function renderLanding(rows: LatestRow[] | null): string {
+export function renderLanding(rows: LatestRow[] | null, freshness: Freshness | null = null, nowMs = Date.now()): string {
   const body = `<h1>tocsin</h1>
 <p class="tag">Security advisories, built for agents.</p>
 <p>Your agent runs on Node, PHP, Python, Go, Rust, Ruby and the packages on top of them. When one of them ships a critical
@@ -53,6 +54,7 @@ ${command('curl "https://tocsin.sh/v1/check?node=24.22.0&php=8.4.26"')}
 ${command("npx tocsin check")}
 <p>MCP: <a href="https://mcp.tocsin.sh/mcp">https://mcp.tocsin.sh/mcp</a></p>
 <h2>Latest</h2>
+${renderFreshness(freshness, nowMs)}
 ${latestTable(rows)}
 <p>Free. No account to read. An API key (free) for watch lists and signed webhooks.</p>
 <p>Open source, Apache-2.0. <a href="https://github.com/Fortunian/tocsin">github.com/Fortunian/tocsin</a><br>

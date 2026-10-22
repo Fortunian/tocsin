@@ -10,6 +10,9 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `GET /v1/events` | One page of the feed: `{ "events": [...], "next_cursor": <int>, "has_more": <bool> }`. |
 | `GET /v1/events/{id}` | One advisory by its Tocsin id. 404 when it does not exist. |
 | `GET /v1/events/cve/{cve}` | The earliest advisory for a CVE id (`CVE-YYYY-NNNN`). 400 for a malformed id, 404 when none. |
+| `GET /advisories/{id}` | One advisory as an HTML page. HTML is the default: no `Accept` header, `*/*` and any `Accept` that names `text/html` get HTML. An `Accept` that names `application/json` (any q-value) and not `text/html` gets the advisory JSON. ETag with 304, `Cache-Control: public, max-age=300`. 404 when it does not exist. |
+| `GET /cve/{cve}` | Every advisory that carries a CVE id (any of its `cve_ids`), as one HTML page. `Accept: application/json` returns `{ "cve", "advisories": [...] }`. 404 when none. |
+| `GET /sitemap.xml` | Every advisory page and every CVE page, with no `lastmod`. Past one file (50,000 URLs at most) it is an index of `/sitemap-{n}.xml` files. |
 | `GET /v1/check` | Which runtimes are affected, from query parameters such as `?node=24.22.0&php=8.4.26`. |
 | `POST /v1/check` | Which dependencies are affected, from lockfiles (multipart) or JSON. |
 | `GET /v1/status` | Each enabled source with `last_run_at`, `last_ok_at` and `last_error`, plus the newest feed `cursor`. |
@@ -40,6 +43,8 @@ An invalid filter answers 400 with `{ "error": "<reason>" }`.
 curl -F "package-lock.json=@package-lock.json" https://tocsin.sh/v1/check
 curl -H "Content-Type: application/json" -d '{"dependencies":[{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}],"runtimes":{"node":"24.22.0"}}' https://tocsin.sh/v1/check
 ```
+
+Runtime parameters are `node=`, `php=`, `python=`, `go=`, `deno=` and `bun=`. `go=` takes the Go toolchain version as `go version` prints it (`go=1.22.3` or `go=go1.22.3`). It matches the OSV `Go` advisories on the toolchain itself (package `stdlib`, `toolchain` or `cmd/<tool>`) by their OSV range events, and `fixed_in` is the lowest OSV `fixed` version above yours. Those advisories stay `Go` advisories for module matching; the runtime match does not add a second advisory. An affected item for `go=1.22.3` has `dependency` `{ "ecosystem": "go", "name": "go", "version": "1.22.3" }`. The version is echoed as given: `go=go1.22.3` answers `"version": "go1.22.3"`.
 
 The answer is `{ "checked": <int>, "affected": [...], "skipped": [...], "feed_cursor": <int> }`. Each affected item has `dependency`, `advisory_id`, `cve_ids`, `severity`, `exploited`, `fixed_in`, `action` and `url`, critical first, then exploited first. `skipped` lists what could not be checked; it is not a clean result. Send `feed_cursor` as `since=` to `/v1/events` to get every advisory published after the check.
 
