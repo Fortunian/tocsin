@@ -8,6 +8,10 @@ export interface RunResult {
   upserted: number;
   unchanged: number;
   errors: string[];
+  // Work this run saw and left for a later run (a per-run cap). `deferred` is
+  // the count where the ingester measured it; `incomplete` says more remains.
+  deferred?: number;
+  incomplete?: boolean;
 }
 
 // The `sources` row the ingester runs for, with `config_json` parsed.
