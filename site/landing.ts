@@ -43,7 +43,7 @@ ${body}
 export function renderLanding(rows: LatestRow[] | null): string {
   const body = `<h1>tocsin</h1>
 <p class="tag">Security advisories, built for agents.</p>
-<p>Your agent runs on Node, PHP, Python, Go. When one of them ships a critical
+<p>Your agent runs on Node, PHP, Python, Go, Rust, Ruby and the packages on top of them. When one of them ships a critical
 fix, nothing tells the agent. Tocsin does. One feed. One command.</p>
 ${command("npx tocsin connect")}
 <p>Wires Claude Code, Cursor, Claude Desktop and Codex to the feed in one run.</p>

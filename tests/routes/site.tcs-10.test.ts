@@ -58,7 +58,7 @@ async function seedTop(prefix: string, n: number, mutate?: (d: Advisory, i: numb
 const COPY = [
   "tocsin",
   "Security advisories, built for agents.",
-  "Your agent runs on Node, PHP, Python, Go. When one of them ships a critical fix, nothing tells the agent. Tocsin does. One feed. One command.",
+  "Your agent runs on Node, PHP, Python, Go, Rust, Ruby and the packages on top of them. When one of them ships a critical fix, nothing tells the agent. Tocsin does. One feed. One command.",
   "npx tocsin connect",
   "Wires Claude Code, Cursor, Claude Desktop and Codex to the feed in one run.",
   "Or do it by hand:",
