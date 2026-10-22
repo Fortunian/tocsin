@@ -9,7 +9,7 @@ Plan: docs/PLAN_2026-10-21.html. Tickets: docs/tickets/*.md.
 - [ ] Nameservers live at the registry (re-check with `dig NS tocsin.sh @a0.nic.sh`)
 - [ ] Lior approves plan + tickets
 - [ ] Repo transferred to Fortunian/tocsin (Lior runs the transfer; classifier blocks it here); set public before launch
-- [ ] Harness load: `bin/load-project.sh liorwn/tocsin --prefix TCS --prod https://tocsin.sh`
+- [ ] Harness load: `bin/load-project.sh Fortunian/tocsin --prefix TCS --prod https://tocsin.sh`
 - [ ] GitHub Actions secret CLOUDFLARE_API_TOKEN (Workers + D1 + KV + Queues scopes, liorwn account)
 - [ ] Reserve npm `tocsin` with a placeholder 0.0.1 publish
 
@@ -24,6 +24,6 @@ Plan: docs/PLAN_2026-10-21.html. Tickets: docs/tickets/*.md.
 - [ ] Feed contains the real 2026-10-21 Node and PHP advisories (proved by #3 fixtures against prod)
 - [ ] Post: "Your agent's fetch() was exploitable on October 21 and nothing told it."
 
-## Filed 2026-10-22 (liorwn/tocsin issues, ai-build)
+## Filed 2026-10-22 (Fortunian/tocsin issues, ai-build)
 #1 scaffold · #2 OSV ingest · #3 feed API · #4 parsers · #5 matcher · #6 node+php runtime · #7 NVD/KEV/EPSS · #8 watch lists · #9 check endpoint · #10 site · #11 webhooks · #12 MCP · #13 CLI connect/check · #14 launch gate · #15 Stripe
 Blocked until the box can read the repo: install the board-harness GitHub Apps on the liorwn account (or make the repo public and rely on the PAT rung), then re-run load-project.

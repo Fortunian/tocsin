@@ -47,7 +47,7 @@ small{color:var(--muted)}
 </div></nav>
 <main>
 <h1>Tocsin: security advisories, built for agents</h1>
-<div class="sub">Plan v1, 2026-10-21. Domains tocsin.sh and tocsin.so (Cloudflare, liorwn@gmail.com account). Repo liorwn/tocsin. License Apache-2.0.</div>
+<div class="sub">Plan v1, 2026-10-21. Domains tocsin.sh and tocsin.so (Cloudflare, liorwn@gmail.com account). Repo Fortunian/tocsin. License Apache-2.0.</div>
 <span class="pill">Cloudflare Workers</span><span class="pill">D1 + KV + Queues</span><span class="pill">Open core</span><span class="pill">Free + Pro</span><span class="pill">15 tickets</span><span class="pill">~4 sessions</span>
 
 <h2 id="tldr">TL;DR</h2>
@@ -143,7 +143,7 @@ small{color:var(--muted)}
 </div>
 
 <h2 id="build">Build plan</h2>
-<p>14 tickets, filed as <code>ai-build</code> issues on liorwn/tocsin and built by the harness on board-watcher-small. Bodies are in <code>docs/tickets/</code>. Blockers are hard code dependencies only. Tickets in the same wave touch different folders, so they build in parallel.</p>
+<p>14 tickets, filed as <code>ai-build</code> issues on Fortunian/tocsin and built by the harness on board-watcher-small. Bodies are in <code>docs/tickets/</code>. Blockers are hard code dependencies only. Tickets in the same wave touch different folders, so they build in parallel.</p>
 <table>
 <tr><th>#</th><th>Ticket</th><th>Wave</th><th>Blocked by</th><th>Folders</th><th>Proof</th></tr>
 <tr><td>1</td><td>Scaffold: worker, D1 schema, advisory schema v1, CI</td><td>0</td><td>none</td><td>root, migrations/, schema/, src/app.ts</td><td>health 200, schema validates, EXPLAIN uses cursor index</td></tr>
@@ -204,14 +204,14 @@ docs · status · llms.txt</pre></div>
 <tr><td>Wrong fixed versions published to agents that act on them.</td><td>Fixed versions come only from the vendor post, cross-checked against the dist index where one exists. Every advisory links its source. The schema has no free-text field that an ingester invents.</td></tr>
 <tr><td>Version range matching errors (PEP 440, composer, pseudo-versions).</td><td>Table-driven tests per ecosystem with boundary cases. The check response says "checked n" so a consumer sees coverage, not only hits.</td></tr>
 <tr><td>Free tier abuse of the check endpoint.</td><td>Per-IP KV rate limit, 2 MB body cap, batched candidate queries with an index proof.</td></tr>
-<tr><td>Name collisions: tocsin.ai, tocsin.io, tocsin.dev are owned by others.</td><td>The brand is "Tocsin" at tocsin.sh, npm <code>tocsin</code>, PyPI <code>tocsin</code>. GitHub user tocsin is taken, so the repo is liorwn/tocsin.</td></tr>
+<tr><td>Name collisions: tocsin.ai, tocsin.io, tocsin.dev are owned by others.</td><td>The brand is "Tocsin" at tocsin.sh, npm <code>tocsin</code>, PyPI <code>tocsin</code>. GitHub user tocsin is taken, so the repo is Fortunian/tocsin.</td></tr>
 </table>
 
 <h2 id="next">Next steps</h2>
 <ol>
 <li>Lior approves this plan and the ticket set, or edits the tiers and the price.</li>
-<li>Push liorwn/tocsin and set it public when Lior says so.</li>
-<li>Load the repo into the harness (<code>bin/load-project.sh liorwn/tocsin --prefix TCS --prod https://tocsin.sh</code>), add the Cloudflare API token as a GitHub Actions secret.</li>
+<li>Push Fortunian/tocsin and set it public when Lior says so.</li>
+<li>Load the repo into the harness (<code>bin/load-project.sh Fortunian/tocsin --prefix TCS --prod https://tocsin.sh</code>), add the Cloudflare API token as a GitHub Actions secret.</li>
 <li>File tickets 1, 2, 5, 6a, 6b, then the rest with their blockers.</li>
 <li>When the nameservers go live, point tocsin.sh at the worker and tocsin.so at the redirect.</li>
 </ol>
