@@ -3,11 +3,20 @@
 import type { Env } from "../env";
 import { epss } from "./epss";
 import { kev } from "./kev";
+import { nodeRuntime } from "./node-runtime";
 import { nvd } from "./nvd";
 import { osv } from "./osv";
+import { phpRuntime } from "./php-runtime";
 import type { Ingester, RunResult } from "./types";
 
-export const defaultRegistry: Record<string, Ingester> = { osv, nvd, kev, epss };
+export const defaultRegistry: Record<string, Ingester> = {
+  osv,
+  nvd,
+  kev,
+  epss,
+  "node-runtime": nodeRuntime,
+  "php-runtime": phpRuntime,
+};
 
 // sources is a fixed set of rows (docs/RETENTION.md); this scan is bounded.
 export const ENABLED_SOURCES_SQL = "SELECT id, kind, config_json FROM sources WHERE enabled = 1 ORDER BY id";
