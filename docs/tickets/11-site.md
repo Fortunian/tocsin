@@ -30,8 +30,7 @@ MCP: https://mcp.tocsin.sh/mcp
 Latest
 [live table: 10 rows from /v1/events?limit=10, columns: when, component, CVE, severity, action]
 
-Free: the feed, the check, 5 watch lists.
-Pro, $19 a month: signed webhooks, unlimited watch lists, feeds scoped to your lockfile.
+Free. No account to read. An API key (free) for watch lists and signed webhooks.
 
 Open source, Apache-2.0. github.com/<org>/tocsin
 Built with Cromford.
@@ -52,4 +51,4 @@ docs · status · llms.txt
 `/`, `/docs`, `/status`.
 
 ## Out of scope
-Sign-up UI, dashboard, billing pages, analytics scripts.
+Sign-up UI, dashboard, any pricing or billing page, analytics scripts.

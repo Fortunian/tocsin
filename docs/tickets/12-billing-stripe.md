@@ -1,3 +1,5 @@
+# PARKED (2026-10-22): Tocsin launches free. Do not build.
+
 # Billing: Stripe checkout for the pro plan (after launch)
 
 Blocked-by: #7 (hard)

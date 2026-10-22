@@ -48,7 +48,7 @@ small{color:var(--muted)}
 <main>
 <h1>Tocsin: security advisories, built for agents</h1>
 <div class="sub">Plan v1, 2026-10-21. Domains tocsin.sh and tocsin.so (Cloudflare, liorwn@gmail.com account). Repo Fortunian/tocsin. License Apache-2.0.</div>
-<span class="pill">Cloudflare Workers</span><span class="pill">D1 + KV + Queues</span><span class="pill">Open core</span><span class="pill">Free + Pro</span><span class="pill">15 tickets</span><span class="pill">~4 sessions</span>
+<span class="pill">Cloudflare Workers</span><span class="pill">D1 + KV + Queues</span><span class="pill">Open core</span><span class="pill">Free at launch</span><span class="pill">15 tickets</span><span class="pill">~4 sessions</span>
 
 <h2 id="tldr">TL;DR</h2>
 <ul class="cols2">
@@ -137,8 +137,8 @@ small{color:var(--muted)}
 <h2 id="tiers">Tiers and open source</h2>
 <div class="grid">
 <div class="card"><h3>Open source <span class="pill ok">Apache-2.0</span></h3><p>Engine, schema, ingesters, MCP server, CLI, skill. Self-host with one <code>wrangler deploy</code>. The schema is the standard we want others to adopt, so it stays open and versioned.</p></div>
-<div class="card"><h3>Free <span class="pill">$0</span></h3><p>Public feed, polling, check endpoint (20 a minute), 5 watch lists with up to 200 components each, MCP, CLI.</p></div>
-<div class="card"><h3>Pro <span class="pill warn">price TBD, test $19 a month</span></h3><p>Webhooks with signed delivery and history, unlimited watch lists, lockfile-scoped feeds, higher rate limits, an uptime commitment. Billing through Stripe after launch (ticket 12).</p></div>
+<div class="card"><h3>Free <span class="pill">$0</span></h3><p>Everything at launch: public feed, polling, check endpoint (20 a minute), 25 watch lists with up to 2,000 components each, signed webhooks, MCP, CLI. A free API key unlocks watch lists and webhooks.</p></div>
+<div class="card"><h3>Paid <span class="pill warn">parked</span></h3><p>No paid tier at launch. If one comes, the likely shape is a platform tier for products that embed the feed (webhooks to many endpoints, private sources, uptime commitment), not an individual pro tier. Ticket 12 (Stripe) is parked.</p></div>
 <div class="card"><h3>Later</h3><p>Org seats, SBOM input (CycloneDX, SPDX), Slack and email delivery, more runtimes (Go, Python, Rust, Deno, Bun), a hosted status badge.</p></div>
 </div>
 
@@ -160,7 +160,7 @@ small{color:var(--muted)}
 <tr><td>9</td><td>Remote MCP server</td><td>3</td><td>#5, #6c</td><td>workers/mcp/</td><td>initialize, 3 tools against mocked API</td></tr>
 <tr><td>10</td><td>CLI: connect, check, latest, watch + Claude Code skill, npm publish</td><td>3</td><td>#6c</td><td>packages/cli/, skills/</td><td>connect is idempotent and never corrupts a config; exit 1 on affected</td></tr>
 <tr><td>13</td><td>Launch gate: real advisories in prod, README, post, public repo</td><td>3</td><td>#3, #10, #11</td><td>scripts/, docs/LAUNCH_POST.md</td><td>launch-check.sh exits 0 against prod</td></tr>
-<tr><td>12</td><td>Stripe pro checkout</td><td>4 (post-launch)</td><td>#7</td><td>src/billing/, src/routes/billing</td><td>idempotent on Stripe event id</td></tr>
+<tr><td>12</td><td>Stripe checkout (PARKED, launch is free)</td><td>parked</td><td>#7</td><td>src/billing/, src/routes/billing</td><td>idempotent on Stripe event id</td></tr>
 </table>
 <p style="margin-top:12px">Estimate: wave 0 and 1 in about 1 session of harness throughput, waves 2 and 3 in about 2 more, wave 4 in under 1. A usable public feed exists after wave 1. Launch needs waves 0 to 3.</p>
 
@@ -187,8 +187,7 @@ MCP: https://mcp.tocsin.sh/mcp
 
 Latest  [live table, 10 rows]
 
-Free: the feed, the check, 5 watch lists.
-Pro, $19 a month: signed webhooks, unlimited watch lists, feeds scoped to your lockfile.
+Free. No account to read. An API key (free) for watch lists and signed webhooks.
 
 Open source, Apache-2.0. github.com/&lt;org&gt;/tocsin
 Built with Cromford.
