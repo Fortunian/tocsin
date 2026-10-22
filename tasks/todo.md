@@ -23,3 +23,7 @@ Plan: docs/PLAN_2026-10-21.html. Tickets: docs/tickets/*.md.
 ## Launch
 - [ ] Feed contains the real 2026-10-21 Node and PHP advisories (proved by #3 fixtures against prod)
 - [ ] Post: "Your agent's fetch() was exploitable on October 21 and nothing told it."
+
+## Filed 2026-10-22 (liorwn/tocsin issues, ai-build)
+#1 scaffold · #2 OSV ingest · #3 feed API · #4 parsers · #5 matcher · #6 node+php runtime · #7 NVD/KEV/EPSS · #8 watch lists · #9 check endpoint · #10 site · #11 webhooks · #12 MCP · #13 CLI connect/check · #14 launch gate · #15 Stripe
+Blocked until the box can read the repo: install the board-harness GitHub Apps on the liorwn account (or make the repo public and rely on the PAT rung), then re-run load-project.
