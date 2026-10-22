@@ -23,7 +23,7 @@ function latestTable(rows: LatestRow[] | null): string {
       return (
         "<tr>" +
         `<td class="nowrap"><time datetime="${escapeHtml(r.when)}">${escapeHtml(r.when.slice(0, 10))}</time></td>` +
-        `<td><a href="/v1/events/${id}">${escapeHtml(`${r.ecosystem}/${r.component}`)}</a></td>` +
+        `<td><a href="/advisories/${id}">${escapeHtml(`${r.ecosystem}/${r.component}`)}</a></td>` +
         `<td class="nowrap">${cve}</td>` +
         `<td>${escapeHtml(r.severity)}</td>` +
         `<td>${escapeHtml(r.action)}</td>` +
