@@ -10,6 +10,10 @@ Kept forever. This table is the product's history, and the feed cursor (`since=`
 
 Kept forever. One row per `(source, source_id)`, with the same life as its advisory. No delete job.
 
+## advisory_cves
+
+Kept forever. One row per `(cve, advisory_id)`: every CVE id of an advisory, written by the upsert. Rows live and die with their advisory, and advisories are kept forever, so no row is ever orphaned. No delete job.
+
 ## sources
 
 A fixed set of rows (6 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-runtime`). It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. No delete job.

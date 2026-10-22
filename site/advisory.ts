@@ -15,17 +15,28 @@ export const cvePath = (cve: string) => `/cve/${encodeURIComponent(cve)}`;
 const UPGRADE: Record<string, (pkg: string, v: string) => string> = {
   npm: (p, v) => `npm i ${p}@${v}`,
   PyPI: (p, v) => `pip install ${p}==${v}`,
-  Go: (p, v) => `go get ${p}@${v}`,
+  // OSV stores Go versions without the "v" that go get needs.
+  Go: (p, v) => `go get ${p}@${v.startsWith("v") ? v : `v${v}`}`,
   Packagist: (p, v) => `composer require ${p}:${v}`,
-  "crates.io": (p) => `cargo update -p ${p}`,
+  "crates.io": (p, v) => `cargo update -p ${p} --precise ${v}`,
   RubyGems: (p) => `bundle update ${p}`,
 };
 
-// One command per fixed version, deduplicated (cargo and bundle take no version).
+// OSV's Go entries for the Go distribution itself: no module to go get.
+const isGoToolchain = (a: Advisory) =>
+  a.ecosystem === "Go" && (a.component === "stdlib" || a.component === "toolchain" || a.component.startsWith("cmd/"));
+
+// One command per fixed version, deduplicated (bundle takes no version).
 export function upgradeCommands(a: Advisory): string[] {
   const fn = UPGRADE[a.ecosystem];
-  if (!fn) return [];
+  if (!fn || isGoToolchain(a)) return [];
   return [...new Set(a.fixed_versions.map((v) => fn(a.component, v)))];
+}
+
+// A fix in the Go distribution is an upgrade of Go itself, not a command.
+function goToolchainLines(a: Advisory): string[] {
+  if (!isGoToolchain(a)) return [];
+  return [...new Set(a.fixed_versions.map((v) => `<p>Upgrade Go to ${escapeHtml(v.replace(/^v/, ""))}.</p>`))];
 }
 
 function severityText(a: Advisory): string {
@@ -86,7 +97,7 @@ export function advisorySection(a: Advisory, level: 1 | 2): string {
 <${h}>${heading}</${h}>
 <p>${escapeHtml(a.summary)}</p>
 <p><strong>Action:</strong> ${escapeHtml(a.action)}</p>
-${cmds.map(command).join("\n")}
+${[...cmds.map(command), ...goToolchainLines(a)].join("\n")}
 <${sub}>Affected</${sub}>
 ${affectedTable(a)}
 <${sub}>Fixed versions</${sub}>

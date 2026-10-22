@@ -21,7 +21,10 @@ beforeAll(async () => {
     cve: `CVE-2026-${50000 + (i % 1000)}`,
   }));
   await seed(rows);
-  await env.DB.prepare("ANALYZE").run();
+  const link = env.DB.prepare("INSERT INTO advisory_cves (cve, advisory_id) VALUES (?, ?)");
+  const links = rows.map((r) => link.bind(r.cve as string, r.id));
+  for (let i = 0; i < links.length; i += 500) await env.DB.batch(links.slice(i, i + 500));
+  // No ANALYZE: the plans must hold on the default planner statistics.
 });
 
 describe("advisory page query plans on 2,000 advisories", () => {
@@ -31,18 +34,20 @@ describe("advisory page query plans on 2,000 advisories", () => {
     expect(p).not.toMatch(/SCAN advisories/);
   });
 
-  it("the CVE read uses idx_advisories_cve_primary and is capped", async () => {
+  it("the CVE read searches the advisory_cves primary key, then advisories by id, and is capped", async () => {
     const p = await plan(ADVISORIES_BY_CVE_SQL, "CVE-2026-50007", CVE_PAGE_CAP);
-    expect(p).toContain("idx_advisories_cve_primary");
-    expect(p).not.toMatch(/SCAN advisories(?! USING)/);
+    expect(p).toMatch(/SEARCH c USING (COVERING )?INDEX sqlite_autoindex_advisory_cves_1 \(cve=\?\)/);
+    expect(p).toMatch(/SEARCH a USING INDEX sqlite_autoindex_advisories_1 \(id=\?\)/);
+    expect(p).not.toMatch(/SCAN/);
     expect(ADVISORIES_BY_CVE_SQL).toMatch(/LIMIT \?$/);
   });
 
   it("the sitemap reads walk idx_advisories_cursor with no sort step", async () => {
     const max = await plan(SITEMAP_MAX_SQL);
     expect(max).toContain("idx_advisories_cursor");
-    const chunk = await plan(SITEMAP_CHUNK_SQL, 340_000, 365_000);
-    expect(chunk).toMatch(/SEARCH advisories USING INDEX idx_advisories_cursor \(cursor>\? AND cursor<\?\)/);
+    const chunk = await plan(SITEMAP_CHUNK_SQL, 340_000, 360_000);
+    expect(chunk).toMatch(/SEARCH a USING INDEX idx_advisories_cursor \(cursor>\? AND cursor<\?\)/);
+    expect(chunk).toMatch(/SEARCH c USING (COVERING )?INDEX idx_advisory_cves_advisory_id \(advisory_id=\?\)/);
     expect(chunk).not.toContain("TEMP B-TREE");
   });
 });

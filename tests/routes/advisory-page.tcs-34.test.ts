@@ -37,6 +37,9 @@ async function seedDocs(prefix: string, n: number, mutate: (d: Advisory, i: numb
       ),
     ),
   );
+  const cve = env.DB.prepare("INSERT OR IGNORE INTO advisory_cves (cve, advisory_id) VALUES (?, ?)");
+  const links = docs.flatMap((d) => d.cve_ids.map((c) => cve.bind(c, d.id)));
+  if (links.length) await env.DB.batch(links);
   return docs;
 }
 
@@ -134,6 +137,58 @@ describe("GET /advisories/:id", () => {
     expect(res.headers.get("content-type")).toMatch(/^text\/html/);
   });
 
+  it("no Accept header and */* get HTML; application/json with a q-value gets JSON", async () => {
+    const [d] = await seedDocs("PNG", 1, npmDoc);
+    for (const h of [{}, { Accept: "*/*" }] as Record<string, string>[]) {
+      const res = await get(`/advisories/${d.id}`, ip, h);
+      expect(res.headers.get("content-type")).toMatch(/^text\/html/);
+    }
+    const q = await get(`/advisories/${d.id}`, ip, { Accept: "application/json;q=0.9" });
+    expect(q.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(await q.json()).toEqual(d);
+  });
+
+  it("an enrichment that rewrites doc_json but not modified_at changes the ETag", async () => {
+    const [d] = await seedDocs("PEN", 1, (x) => {
+      npmDoc(x);
+      x.exploited = false;
+    });
+    const first = await get(`/advisories/${d.id}`, ip);
+    const etag = first.headers.get("etag") as string;
+    expect(await first.text()).not.toContain("exploited");
+    // What the KEV ingester does: exploited = 1 and a new doc_json, modified_at untouched.
+    const enriched = { ...d, exploited: true };
+    await env.DB.prepare("UPDATE advisories SET exploited = 1, doc_json = ? WHERE id = ?").bind(JSON.stringify(enriched), d.id).run();
+    const stale = await get(`/advisories/${d.id}`, ip, { "If-None-Match": etag });
+    expect(stale.status).toBe(200);
+    expect(stale.headers.get("etag")).not.toBe(etag);
+    expect(await stale.text()).toContain("exploited");
+  });
+
+  it("Go: the command adds the v prefix; stdlib, toolchain and cmd/* get only the Go upgrade line", async () => {
+    const [mod, std, tool, cmd] = await seedDocs("PG0", 4, (x, i) => {
+      x.ecosystem = "Go";
+      x.component = ["golang.org/x/net", "stdlib", "toolchain", "cmd/go"][i];
+      x.fixed_versions = ["0.23.0", "1.22.2", "1.22.2", "1.22.2"].slice(i, i + 1);
+      x.action = `Upgrade ${x.component} to ${x.fixed_versions[0]} or later.`;
+    });
+    expect(await (await get(`/advisories/${mod.id}`, ip)).text()).toMatch(/data-copy="go get golang\.org\/x\/net@v0\.23\.0"/);
+    for (const d of [std, tool, cmd]) {
+      const html = await (await get(`/advisories/${d.id}`, ip)).text();
+      expect(html).not.toContain("data-copy=");
+      expect(html).toContain("Upgrade Go to 1.22.2");
+    }
+  });
+
+  it("crates.io: cargo update -p <crate> --precise <version>", async () => {
+    const [d] = await seedDocs("PCR", 1, (x) => {
+      x.ecosystem = "crates.io";
+      x.component = "serde";
+      x.fixed_versions = ["1.0.200"];
+    });
+    expect(await (await get(`/advisories/${d.id}`, ip)).text()).toMatch(/data-copy="cargo update -p serde --precise 1\.0\.200"/);
+  });
+
   it("round-trips the ETag to a 304, and a new modified_at changes it", async () => {
     const [d] = await seedDocs("PET", 1, npmDoc);
     const first = await get(`/advisories/${d.id}`, ip);
@@ -146,7 +201,8 @@ describe("GET /advisories/:id", () => {
     expect(await again.text()).toBe("");
     const asJson = await get(`/advisories/${d.id}`, ip, { Accept: "application/json" });
     expect(asJson.headers.get("etag")).not.toBe(etag);
-    await env.DB.prepare("UPDATE advisories SET modified_at = ? WHERE id = ?").bind("2026-10-22T00:00:00Z", d.id).run();
+    const next = { ...d, modified_at: "2026-10-22T00:00:00Z" };
+    await env.DB.prepare("UPDATE advisories SET modified_at = ?, doc_json = ? WHERE id = ?").bind(next.modified_at, JSON.stringify(next), d.id).run();
     const changed = await get(`/advisories/${d.id}`, ip, { "If-None-Match": etag as string });
     expect(changed.status).toBe(200);
     expect(changed.headers.get("etag")).not.toBe(etag);
@@ -190,6 +246,18 @@ describe("GET /cve/:cve", () => {
     expect(again.status).toBe(304);
   });
 
+  it("a second CVE on an advisory has its own page, and the advisory page links to it", async () => {
+    const [d] = await seedDocs("CV2", 1, (x) => {
+      npmDoc(x);
+      x.cve_ids = ["CVE-2026-340011", "CVE-2026-340012"];
+    });
+    const page = await (await get(`/advisories/${d.id}`, ip)).text();
+    expect(page).toContain('href="/cve/CVE-2026-340012"');
+    const res = await get("/cve/CVE-2026-340012", ip);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(`href="/advisories/${d.id}"`);
+  });
+
   it("answers an unknown or malformed CVE with a 404 HTML page", async () => {
     for (const p of ["/cve/CVE-2026-349999", "/cve/nope"]) {
       const res = await get(p, ip);
@@ -203,7 +271,7 @@ describe("GET /sitemap.xml", () => {
   it("lists the seeded advisory and CVE pages", async () => {
     const docs = await seedDocs("SMP", 2, (d, i) => {
       npmDoc(d);
-      d.cve_ids = [`CVE-2026-34100${i}`];
+      d.cve_ids = [`CVE-2026-34100${i}`, `CVE-2026-34101${i}`];
     });
     const res = await get("/sitemap.xml", ip);
     expect(res.status).toBe(200);
@@ -212,9 +280,11 @@ describe("GET /sitemap.xml", () => {
     expect(xml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');
     for (const d of docs) {
       expect(xml).toContain(`<loc>https://tocsin.sh/advisories/${d.id}</loc>`);
-      expect(xml).toContain(`<loc>https://tocsin.sh/cve/${d.cve_ids[0]}</loc>`);
+      for (const c of d.cve_ids) expect(xml).toContain(`<loc>https://tocsin.sh/cve/${c}</loc>`);
     }
-    expect(xml).toContain(`<lastmod>${docs[0].modified_at}</lastmod>`);
+    // No column records when an enrichment (EPSS, KEV, NVD) last changed a page,
+    // so the sitemap states no lastmod rather than a wrong one.
+    expect(xml).not.toContain("<lastmod>");
   });
 
   it("turns into a sitemap index past one chunk, and each chunk lists its pages", async () => {
