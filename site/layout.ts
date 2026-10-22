@@ -15,7 +15,7 @@ const CSS = `
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--fg); }
 body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 16px; line-height: 1.55; }
-main { max-width: 760px; margin: 0 auto; padding: 32px 20px 48px; }
+main { max-width: 1100px; margin: 0 auto; padding: 32px 20px 48px; }
 h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: 0.02em; }
 h2 { font-size: 20px; margin: 32px 0 8px; }
 h3 { font-size: 17px; margin: 24px 0 6px; }

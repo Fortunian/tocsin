@@ -1,6 +1,5 @@
 // CVSS v3.0 / v3.1 base score from a vector string, per the FIRST
 // specification. CVSS v4 and malformed vectors return undefined.
-import type { SeverityLabel } from "../schema/advisory";
 
 const WEIGHTS = {
   AV: { N: 0.85, A: 0.62, L: 0.55, P: 0.2 },
@@ -52,12 +51,5 @@ export function cvss3BaseScore(vector: string): number | undefined {
   return changed ? roundup(Math.min(1.08 * (impact + exploitability), 10)) : roundup(Math.min(impact + exploitability, 10));
 }
 
-// CVSS qualitative severity bands (spec section 5). A score of 0 is "None"
-// in CVSS; the advisory schema has no "none", so it maps to unknown.
-export function labelFromScore(score: number): SeverityLabel {
-  if (score >= 9.0) return "critical";
-  if (score >= 7.0) return "high";
-  if (score >= 4.0) return "medium";
-  if (score > 0) return "low";
-  return "unknown";
-}
+// The severity bands live in src/schema/severity.ts.
+export { labelFromScore } from "../schema/severity";

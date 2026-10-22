@@ -3,6 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2026-08-15"
 compatibility_flags = ["nodejs_compat"]
 
+# Custom domain: Cloudflare creates the DNS record and certificate on deploy.
+routes = [{ pattern = "tocsin.sh", custom_domain = true }]
+
 # The resource ids below are placeholders. An operator creates each resource
 # once and pastes the real id here:
 #   wrangler d1 create tocsin
@@ -11,12 +14,12 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "tocsin"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "0c4a3bd5-e93f-40b9-92c0-3df820557669"
 migrations_dir = "migrations"
 
 [[kv_namespaces]]
 binding = "CURSORS"
-id = "00000000000000000000000000000000"
+id = "2a4feb92a3ae44a4a8e12de868a2426a"
 
 [[queues.producers]]
 binding = "DELIVERIES"

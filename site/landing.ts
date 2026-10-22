@@ -43,7 +43,7 @@ ${body}
 export function renderLanding(rows: LatestRow[] | null): string {
   const body = `<h1>tocsin</h1>
 <p class="tag">Security advisories, built for agents.</p>
-<p>Your agent runs on Node, PHP, Python, Go. When one of them ships a critical
+<p>Your agent runs on Node, PHP, Python, Go, Rust, Ruby and the packages on top of them. When one of them ships a critical
 fix, nothing tells the agent. Tocsin does. One feed. One command.</p>
 ${command("npx tocsin connect")}
 <p>Wires Claude Code, Cursor, Claude Desktop and Codex to the feed in one run.</p>
@@ -56,6 +56,6 @@ ${command("npx tocsin check")}
 ${latestTable(rows)}
 <p>Free. No account to read. An API key (free) for watch lists and signed webhooks.</p>
 <p>Open source, Apache-2.0. <a href="https://github.com/Fortunian/tocsin">github.com/Fortunian/tocsin</a><br>
-<a href="https://cromford.ai">Built with Cromford</a>.</p>`;
+<a href="https://cromford.dev">Built with Cromford</a>.</p>`;
   return page("tocsin: security advisories, built for agents", body, { script: true });
 }

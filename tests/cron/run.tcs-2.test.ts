@@ -130,8 +130,8 @@ describe("runCron with the ingest registry", () => {
     expect(await status(disabled)).toEqual({ id: disabled, last_run_at: null, last_ok_at: null, last_error: null });
   });
 
-  it("case 3b: the default registry has exactly the osv, node-runtime and php-runtime ingesters (NVD, KEV and EPSS are out of scope)", () => {
-    expect(Object.keys(defaultRegistry)).toEqual(["osv", "node-runtime", "php-runtime"]);
+  it("case 3b: the default registry has exactly the osv, nvd, kev, epss, node-runtime and php-runtime ingesters", () => {
+    expect(Object.keys(defaultRegistry).sort()).toEqual(["epss", "kev", "node-runtime", "nvd", "osv", "php-runtime"]);
     for (const [key, ingester] of Object.entries(defaultRegistry)) expect(ingester.id).toBe(key);
   });
 

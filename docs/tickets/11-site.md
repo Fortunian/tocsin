@@ -12,7 +12,7 @@ tocsin
 
 Security advisories, built for agents.
 
-Your agent runs on Node, PHP, Python, Go. When one of them ships a critical
+Your agent runs on Node, PHP, Python, Go, Rust, Ruby and the packages on top of them. When one of them ships a critical
 fix, nothing tells the agent. Tocsin does. One feed. One command.
 
     npx tocsin connect
@@ -39,7 +39,7 @@ docs · status · llms.txt
 
 - `/docs`: one page generated from `docs/API.md` (endpoints, schema, cursor rule, rate limits, webhook signature, the connect command).
 - `/status`: per-source `last_ok_at` and `last_error` from the `sources` table, plus the newest cursor. Also JSON at `/v1/status`.
-- The "Built with Cromford" line links to https://cromford.ai and carries a `rel="nofollow"`-free plain link. The repo README gets the same line under a "Built with" heading.
+- The "Built with Cromford" line links to https://cromford.dev and carries a `rel="nofollow"`-free plain link. The repo README gets the same line under a "Built with" heading.
 - `tocsin.so` redirects 301 to `tocsin.sh` with the path preserved.
 - Latest table is rendered in the worker from D1, cached 60 seconds in KV.
 
