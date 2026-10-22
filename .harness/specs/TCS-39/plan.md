@@ -1,36 +1,58 @@
-# TCS-39 plan: Python runtime ingester (CPython advisories), /v1/check?python=
+# TCS-39 plan (r2): Python runtime ingester (CPython advisories), /v1/check?python=
 
-Ticket: Fortunian/tocsin#39. `Blocked-by: #6` is merged (e344048). Coordinator note (2026-10-22) approved the source change below and added three constraints (C1 to C3).
+Ticket: Fortunian/tocsin#39. `Blocked-by: #6` is merged (e344048). The coordinator approved the source change below on 2026-10-22. The coordinator also set constraints C1 to C3. The r2 changes come from the PR #47 review BLOCK (metered-API rule).
 
 ## Source change
-- `https://api.github.com/repos/python/cpython/security-advisories?state=published&per_page=5` answered `[]` on 2026-10-22, with and without a token. CPython publishes no GitHub repository advisories.
-- Source: the PSF advisory database, `https://api.github.com/repos/psf/advisory-database/contents/advisories/python` (listing) and `https://raw.githubusercontent.com/psf/advisory-database/main/advisories/python/PSF-YYYY-N.json` (records, OSV format). The PSF records carry only GIT commit ranges.
-- Fixed version per release line: the PSF CVE record, `https://cveawg.mitre.org/api/cve/<CVE>` (`containers.cna.affected[].versions[]`, `version` .. `lessThan`).
+- On 2026-10-22, `https://api.github.com/repos/python/cpython/security-advisories?state=published&per_page=5` returned `[]`, with and without a token. CPython publishes no GitHub repository advisories.
+- Source: the PSF advisory database.
+  - Listing: `https://api.github.com/repos/psf/advisory-database/contents/advisories/python`.
+  - Records: `https://raw.githubusercontent.com/psf/advisory-database/main/advisories/python/PSF-YYYY-N.json`, in OSV format, with GIT commit ranges only.
+- Fixed version per release line: the PSF CVE record, `https://cveawg.mitre.org/api/cve/<CVE>`.
 - Released check: `https://www.python.org/api/v2/downloads/release/?is_published=true`.
 
 ## Scope
-1. `src/ingest/python-runtime-client.ts`: the seam (listing with optional `GITHUB_TOKEN` and `If-None-Match`, PSF record, CVE record, releases). `PythonHttpError`.
-2. `src/ingest/python-runtime-normalize.ts`: pure parsers and `normalizePythonAdvisory`.
-3. `src/ingest/python-runtime.ts`: `pythonRuntime` ingester, `PY_DEFAULTS` (config fallbacks), KV keys, `PY_DEDUP_SQL`.
-4. `migrations/0009_python_runtime_source.sql`: `INSERT OR IGNORE` the `python-runtime` row, enabled, `'{}'`.
-5. `src/ingest/registry.ts`: the `python-runtime` entry. `/v1/check?python=` and the CLI `python --version` detection already exist (pep440 comparator, `PYPI_CANDIDATE_SQL` covers ecosystem `python`).
+1. `src/ingest/python-runtime-client.ts`: the seam.
+2. `src/ingest/python-runtime-normalize.ts`: the pure parsers, `normalizePythonAdvisory` and `publishedDoc`.
+3. `src/ingest/python-runtime-records.ts`: the ledger table reads and writes.
+4. `src/ingest/python-runtime.ts`: the ingester and `PY_DEFAULTS`.
+5. `migrations/0009_python_runtime_source.sql`: the source row.
+6. `migrations/0011_python_runtime_records.sql`: the ledger table and `idx_python_runtime_records_state_next (state, next_check_at)`. The coordinator reserved 0010 for another PR.
+7. `src/ingest/registry.ts`: the registry entry.
+8. `docs/RETENTION.md`: the retention entries.
 
 ## Decisions
-- D1. One advisory per PSF record (one CVE alias). `sources[0].source_id` = the PSF id, so the dedup seek on `(python-runtime, PSF id)` runs before the PSF record read and before the CVE record read (C1). The CVE is not known before the PSF record is read, so a CVE key cannot run first. Cross-source merge still uses `cve_primary`.
-- D2. Cursor: KV `cursor:python-runtime` = the last handled PSF id in (year, number) order. PSF ids are allocated in publish order. With no cursor, the ids of the years in the `backfill_days` window are read.
-- D3. Metered reads (C1): 1 GitHub listing per run, conditional on KV `python:listing-etag` (a 304 is free). The ETag is stored only when the run handled every new id. `max_records` (default 50) caps new records per run.
-- D4. Lines: `affected` entries with status `affected`, a final `lessThan` (x.y.z) and a release line >= `min_line` (default `3.9`). Pre-release fixes (3.15.0rc3) are dropped. No upper line cap: 3.15.x is already released on python.org.
-- D5. An unreleased fix (C2): KV `python:pending:<PSF id>` = `{psf, cve, unreleased, doc}`, TTL `pending_ttl_days` (7), refreshed on each re-check. The cursor moves past it. Later runs re-check only pending records (releases read only). No error: the source marks ok; `RunResult.deferred` = pending count, `incomplete` = true.
-- D6. Severity: CNA `cvssV4_0`, else `cvssV3_1`, else `cvssV3_0` (score + baseSeverity). Summary: CNA title. Timestamps: PSF `published` / `modified`.
-- D7. Terminal, no error: withdrawn PSF record, REJECTED CVE, no supported line. Errors: malformed record, no CVE alias, CVE record for another id.
+- D1. Ledger: there is one `python_runtime_records` row per PSF id. Its `state` is one of `ok`, `empty`, `pending` or `failed`.
+  - `ok` is written after the upsert.
+  - `empty` is terminal. It is written for a withdrawn record, a record with no CVE alias, a CVE record for another id, a REJECTED CVE, or a record with no release line. A data problem in this list is reported in `errors` one time.
+  - `failed` is written on each HTTP or parse error, with `attempts` + 1 and `next_check_at` = now + `retry_minutes` x attempts. When `attempts` reaches `max_attempts` (3), `next_check_at` is NULL and the record is terminal.
+  - While a terminal `failed` row exists, each run reports "N records failed terminally: PSF-…" in `errors`.
+  - One record never stops the run.
+- D2. No cursor. One batched primary-key read (`json_each`) checks each listed id against the ledger. The run then reads the ids with no row, plus the `failed` rows that are due. It reads newest first, at most `max_records`.
+- D3. Metered reads: each run makes 1 GitHub listing call, conditional on KV `python:listing-etag`. A 304 is free. The run keeps the ETag only when it read every new id. The python.org read happens once per run, before any record read, and only when there is work.
+- D4. Pending:
+  - The run publishes the released lines at once. The action names those lines and states each unreleased fix.
+  - The row is `pending`. `unreleased` holds `{doc, lines:[{fixed, since}], dropped}`, and `next_check_at` = now + `pending_recheck_minutes` (60).
+  - When a pending row is due, the run reads only python.org.
+  - A line that is still unreleased after `pending_max_days` (90) is dropped, with a `last_error` note. The row then ends `ok`, or `empty` if no line has a release.
+  - There is no KV TTL.
+- D5. If a GitHub listing has 1000 entries, the run records "listing truncated at 1000 entries" in `errors` and continues.
+- D6. Lines: a line needs a final `lessThan` and must be `min_line` (3.9) or newer. Pre-release fixes are dropped. There is no upper line cap.
+- D7. The dedup key is the PSF id. The CVE is known only after the PSF record is read. Each record has 1 CVE alias.
 
-## Acceptance tests (tests/ingest/python-runtime.tcs-39.test.ts)
-- 3 recorded advisories (PSF-2026-42..44) yield 3 advisories with the right lines, fixed versions, severity and action.
-- Second run: If-None-Match, 304, 0 record/CVE/releases reads. Cursor reset: `unchanged` 3 with 0 PSF or CVE reads.
-- `GET /v1/check?python=3.12.4` returns the 3, each `fixed_in` 3.12.15; `python=3.13.16` returns none of them.
-- `EXPLAIN QUERY PLAN` of `PY_DEDUP_SQL` seeks `sqlite_autoindex_advisory_sources_1` at 2000 rows.
-- Pending: a fix missing on python.org writes the pending key, stores the other 2, no error; the next run stores it with a 304 listing + 1 releases read; through `runIngesters` the source row is ok with `last_error` NULL.
-- `max_records` 2, backfill window, seam headers, token only on the listing, 403 throws and keeps the cursor.
+## Known gap
+- While a line is pending, the published advisory does not hold that line's range. So `/v1/check` reports a version on that line as not affected until python.org lists the fix. The coordinator chose this behavior ("publish the released lines").
+
+## Acceptance tests (tests/ingest/python-runtime.tcs-39.test.ts, 29 tests)
+- 3 recorded advisories yield 3 advisories with the right lines. A 304 second run makes 0 other reads. With no ETag, a second run also makes 0 reads because the ledger has every id.
+- With an empty ledger, all 5 ids are read, newest first. `max_records` 2 works. An out-of-order listing (45 before 44) still reads 44. A 1000-entry listing makes the run record the warning.
+- A 404 CVE record makes the row `failed` with attempts 1, and the run continues. After the third 404 the row is terminal: a fourth run makes 0 reads for it, and `errors` names it.
+- A record with no release line becomes `empty` and is not read again. A CVE record for another id becomes `empty` and is reported.
+- EXPLAIN QUERY PLAN at 2000 rows: the known-ids read uses the primary key, and the due read and the terminal read use `idx_python_runtime_records_state_next`.
+- Pending: the released line is published at once. The re-check reads only python.org. The 90-day drop writes its note. Through `runIngesters`, the source row is ok.
+- `GET /v1/check?python=3.12.4` and `python=3.13.16`.
 
 ## Pin tests extended (TEST-CHANGE)
-- `tests/cron/run.tcs-2.test.ts` case 3b, `tests/worker/migrations.tcs-1.test.ts` (0009, 7 sources), `tests/routes/site-plan.tcs-10.test.ts` (7 rows), `tests/routes/site.tcs-10.test.ts` (status source ids).
+- `tests/cron/run.tcs-2.test.ts` case 3b.
+- `tests/worker/migrations.tcs-1.test.ts` (0009, 0011, 7 sources).
+- `tests/routes/site-plan.tcs-10.test.ts` (7 rows).
+- `tests/routes/site.tcs-10.test.ts` (status source ids).

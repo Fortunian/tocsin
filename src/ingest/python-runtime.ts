@@ -5,26 +5,26 @@
 // record gives the fixed version per release line; python.org releases
 // confirm each fix is released. One advisory per PSF record (one CVE).
 //
-// Per run: 1 GitHub listing call (conditional on the stored ETag), then for
-// each new PSF id after the KV cursor, at most max_records: a D1 dedup seek,
-// the PSF record, the CVE record. A fix not on python.org yet is a pending KV
-// record (deferred, not an error), re-checked on later runs.
+// Per run: 1 GitHub listing call (conditional on the stored ETag). Every
+// listed id is checked against python_runtime_records in one batched read;
+// ids with no row, and failed rows that are due, are read (newest first, at
+// most max_records). Each record ends in a persisted state: ok, empty
+// (terminal), pending (a fix not on python.org yet) or failed (retried up to
+// max_attempts, then terminal). One record never stops the run.
 import { fetchCveRecord, fetchListing, fetchPsfRecord, fetchReleases } from "./python-runtime-client";
-import { comparePsfIds, normalizePythonAdvisory, parsePsfListing, parsePythonReleases, PSF_ID, readPsf } from "./python-runtime-normalize";
+import { comparePsfIds, normalizePythonAdvisory, parsePsfListing, parsePythonReleases, publishedDoc, readPsf } from "./python-runtime-normalize";
+import { attemptsOf, dueRows, knownIds, readPendingState, terminalFailedNote, writeRecord, type PendingState, type RecordRow } from "./python-runtime-records";
 import { readRuntimeConfig } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
 import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
 
-export { comparePsfIds, lineRanges, normalizePythonAdvisory, parsePsfListing, parsePythonReleases } from "./python-runtime-normalize";
+export { comparePsfIds, lineRanges, normalizePythonAdvisory, parsePsfListing, parsePythonReleases, publishedDoc } from "./python-runtime-normalize";
+export { RECORD_SQL } from "./python-runtime-records";
 
-// KV keys: the last handled PSF id, the listing ETag, one pending record per PSF id.
-export const PY_CURSOR_KEY = "cursor:python-runtime";
 export const PY_ETAG_KEY = "python:listing-etag";
-export const PY_PENDING_PREFIX = "python:pending:";
 const SOURCE = "python-runtime";
-
-// Dedup before any read of a record: one seek on the advisory_sources primary key.
-export const PY_DEDUP_SQL = "SELECT 1 AS hit FROM advisory_sources WHERE source = ? AND source_id = ?";
+// The GitHub contents API returns at most 1,000 entries for one directory.
+export const LISTING_LIMIT = 1000;
 
 // Code fallbacks for sources.config_json of row "python-runtime" (repo iron rule 5).
 export const PY_DEFAULTS = {
@@ -34,26 +34,25 @@ export const PY_DEFAULTS = {
   cve_api_base: "https://cveawg.mitre.org/api/cve",
   releases_url: "https://www.python.org/api/v2/downloads/release/?is_published=true",
   min_line: "3.9",
-  backfill_days: 120,
   max_records: 50,
-  pending_ttl_days: 7,
+  max_attempts: 3,
+  retry_minutes: 30,
+  pending_recheck_minutes: 60,
+  pending_max_days: 90,
 };
 type PyConfig = typeof PY_DEFAULTS;
-
-export interface PendingRecord {
-  psf: string;
-  cve: string;
-  unreleased: string[];
-  doc: AdvisoryInput;
-}
 
 interface RunState {
   ctx: IngestContext;
   cfg: PyConfig;
+  now: Date;
   result: RunResult;
-  released?: Set<string>;
-  deferred: number;
+  released: Set<string>;
+  pending: number;
 }
+
+const minutesFrom = (now: Date, minutes: number) => new Date(now.getTime() + minutes * 60_000).toISOString();
+const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : String(err));
 
 function readConfig(raw: Record<string, unknown>): PyConfig {
   const cfg = readRuntimeConfig(SOURCE, raw, PY_DEFAULTS);
@@ -61,111 +60,122 @@ function readConfig(raw: Record<string, unknown>): PyConfig {
   return cfg;
 }
 
-// The ids after the cursor; with no valid cursor, the ids of the backfill window's years.
-function newIds(ids: string[], cursor: string | null, now: Date, backfillDays: number): string[] {
-  if (cursor !== null && PSF_ID.test(cursor)) return ids.filter((id) => comparePsfIds(id, cursor) > 0);
-  const floor = new Date(now.getTime() - backfillDays * 86_400_000).getUTCFullYear();
-  return ids.filter((id) => Number(PSF_ID.exec(id)![1]) >= floor);
-}
-
-async function isStored(state: RunState, psfId: string): Promise<boolean> {
-  return (await state.ctx.env.DB.prepare(PY_DEDUP_SQL).bind(SOURCE, psfId).first()) !== null;
-}
-
-async function store(state: RunState, doc: AdvisoryInput): Promise<void> {
-  const key = doc.sources[0];
+async function store(state: RunState, doc: AdvisoryInput): Promise<boolean> {
   try {
-    const outcome = await upsertAdvisory(state.ctx.env.DB, doc, { source: SOURCE, source_id: key.source_id });
+    const outcome = await upsertAdvisory(state.ctx.env.DB, doc, { source: SOURCE, source_id: doc.sources[0].source_id });
     if (outcome === "unchanged") state.result.unchanged += 1;
     else state.result.upserted += 1;
+    return true;
   } catch (err) {
     if (!(err instanceof InvalidAdvisoryError)) throw err;
-    state.result.errors.push(`${key.source_id}: ${err.message}`);
+    state.result.errors.push(`${doc.sources[0].source_id}: ${err.message}`);
+    return false;
   }
 }
 
-// Stores the doc when every fixed version is released; else writes (or refreshes) its pending record.
-async function settle(state: RunState, psfId: string, doc: AdvisoryInput): Promise<void> {
-  const { ctx, cfg } = state;
-  state.released ??= parsePythonReleases(await fetchReleases(ctx.fetch, cfg.releases_url));
-  const unreleased = doc.fixed_versions.filter((v) => !state.released!.has(v));
-  const key = PY_PENDING_PREFIX + psfId;
-  if (unreleased.length === 0) {
-    await store(state, doc);
-    await ctx.env.CURSORS.delete(key);
-    return;
+// Publishes the released lines and writes the row: ok, pending (some lines wait) or empty.
+async function settle(state: RunState, psfId: string, p: PendingState): Promise<void> {
+  const { cfg, now } = state;
+  const db = state.ctx.env.DB;
+  const waiting = p.lines.filter((l) => !state.released.has(l.fixed));
+  const stale = waiting.filter((l) => now.getTime() - new Date(l.since).getTime() >= cfg.pending_max_days * 86_400_000);
+  const pending = { ...p, lines: waiting.filter((l) => !stale.includes(l)), dropped: [...p.dropped, ...stale.map((l) => l.fixed)] };
+  const open = new Set(pending.lines.map((l) => l.fixed));
+  const out = pending.dropped.filter((f) => !open.has(f));
+  const released = p.doc.affected.filter((r) => !open.has(r.fixed!) && !out.includes(r.fixed!));
+  const note = out.length === 0 ? undefined : `no python.org release after ${cfg.pending_max_days} days: ${out.join(", ")}`;
+  const cve = p.doc.cve_ids[0];
+  const stored = released.length === 0 || (await store(state, publishedDoc(p.doc, released, [...open])));
+  if (!stored) return writeRecord(db, { psf_id: psfId, state: "empty", attempts: 0, last_error: "advisory failed validation", cve }, now);
+  if (open.size > 0) {
+    state.pending += 1;
+    return writeRecord(db, { psf_id: psfId, state: "pending", attempts: 0, last_error: note, cve, unreleased: pending, next_check_at: minutesFrom(now, cfg.pending_recheck_minutes) }, now);
   }
-  const pending: PendingRecord = { psf: psfId, cve: doc.cve_ids[0], unreleased, doc };
-  await ctx.env.CURSORS.put(key, JSON.stringify(pending), { expirationTtl: cfg.pending_ttl_days * 86_400 });
-  state.deferred += 1;
+  await writeRecord(db, { psf_id: psfId, state: released.length > 0 ? "ok" : "empty", attempts: 0, last_error: note, cve }, now);
 }
 
-async function handleNew(state: RunState, psfId: string): Promise<void> {
-  const { ctx, cfg, result } = state;
-  if (await isStored(state, psfId)) {
-    result.unchanged += 1;
-    return;
-  }
-  const psf = await fetchPsfRecord(ctx.fetch, cfg.record_base, psfId);
-  result.fetched += 1;
-  const facts = readPsf(psfId, psf);
-  if (!facts.ok) {
-    if (facts.error) result.errors.push(facts.reason);
-    return;
-  }
-  const cve = await fetchCveRecord(ctx.fetch, cfg.cve_api_base, facts.cve);
-  const norm = normalizePythonAdvisory(psfId, psf, cve, { minLine: cfg.min_line, htmlBase: cfg.html_base });
-  if (norm.ok) await settle(state, psfId, norm.doc);
-  else if (norm.error) result.errors.push(norm.reason);
-}
-
-function readPending(text: string | null): PendingRecord | undefined {
-  if (text === null) return undefined;
+// Reads one PSF record and its CVE record. A read or parse error is a failed
+// attempt; a record that yields no advisory is terminal empty.
+async function handleRecord(state: RunState, psfId: string): Promise<void> {
+  const { ctx, cfg, now, result } = state;
+  const db = ctx.env.DB;
+  let norm: ReturnType<typeof normalizePythonAdvisory>;
   try {
-    const p = JSON.parse(text) as PendingRecord;
-    return typeof p?.psf === "string" && PSF_ID.test(p.psf) && p.doc !== null && typeof p.doc === "object" ? p : undefined;
-  } catch {
-    return undefined;
+    const psf = await fetchPsfRecord(ctx.fetch, cfg.record_base, psfId);
+    result.fetched += 1;
+    const facts = readPsf(psfId, psf);
+    norm = facts.ok ? normalizePythonAdvisory(psfId, psf, await fetchCveRecord(ctx.fetch, cfg.cve_api_base, facts.cve), { minLine: cfg.min_line, htmlBase: cfg.html_base }) : facts;
+  } catch (err) {
+    const attempts = (await attemptsOf(db, psfId)) + 1;
+    const terminal = attempts >= cfg.max_attempts;
+    const next_check_at = terminal ? undefined : minutesFrom(now, cfg.retry_minutes * attempts);
+    return writeRecord(db, { psf_id: psfId, state: "failed", attempts, last_error: errorText(err), next_check_at }, now);
   }
+  if (!norm.ok) {
+    if (norm.error) result.errors.push(norm.reason);
+    return writeRecord(db, { psf_id: psfId, state: "empty", attempts: 0, last_error: norm.reason }, now);
+  }
+  const since = now.toISOString();
+  await settle(state, psfId, { doc: norm.doc, lines: norm.doc.fixed_versions.map((fixed) => ({ fixed, since })), dropped: [] });
 }
 
-// Pending records need only the releases list: the doc is kept in the record.
-async function recheckPending(state: RunState): Promise<void> {
-  const kv = state.ctx.env.CURSORS;
-  for (const { name } of (await kv.list({ prefix: PY_PENDING_PREFIX })).keys) {
-    const pending = readPending(await kv.get(name));
-    if (pending === undefined || (await isStored(state, pending.psf))) {
-      if (pending === undefined) state.result.errors.push(`${name}: unreadable pending record, dropped`);
-      await kv.delete(name);
-      continue;
-    }
-    await settle(state, pending.psf, pending.doc);
-  }
+async function recheck(state: RunState, row: RecordRow): Promise<void> {
+  const p = readPendingState(row.unreleased);
+  if (p !== undefined) return settle(state, row.psf_id, p);
+  state.result.errors.push(`${row.psf_id}: unreadable pending state`);
+  await writeRecord(state.ctx.env.DB, { psf_id: row.psf_id, state: "empty", attempts: 0, last_error: "unreadable pending state" }, state.now);
+}
+
+interface Work {
+  records: string[];
+  pending: RecordRow[];
+  capped: boolean;
+}
+
+// New ids (no row) and due failed rows, newest first, capped; plus due pending rows.
+async function planWork(state: RunState, listed: string[]): Promise<Work> {
+  const { cfg, now } = state;
+  const db = state.ctx.env.DB;
+  const known = await knownIds(db, listed);
+  const retries = (await dueRows(db, "failed", now, cfg.max_records + 1)).map((r) => r.psf_id);
+  const all = [...new Set([...listed.filter((id) => !known.has(id)), ...retries])].sort(comparePsfIds).reverse();
+  const pending = await dueRows(db, "pending", now, cfg.max_records);
+  return { records: all.slice(0, cfg.max_records), pending, capped: all.length > cfg.max_records };
 }
 
 async function run(ctx: IngestContext): Promise<RunResult> {
   const cfg = readConfig(ctx.source.config);
   const kv = ctx.env.CURSORS;
-  const state: RunState = { ctx, cfg, result: { fetched: 0, upserted: 0, unchanged: 0, errors: [] }, deferred: 0 };
-  const [cursor, etag] = await Promise.all([kv.get(PY_CURSOR_KEY), kv.get(PY_ETAG_KEY)]);
-  // HTTP and D1 errors throw out of the run; the cursor holds the last handled id.
+  const now = ctx.now();
+  const state: RunState = { ctx, cfg, now, result: { fetched: 0, upserted: 0, unchanged: 0, errors: [] }, released: new Set(), pending: 0 };
+  const etag = await kv.get(PY_ETAG_KEY);
+  // A listing error throws out of the run: nothing was read, nothing changes.
   const listing = await fetchListing(ctx.fetch, cfg.listing_url, ctx.env.GITHUB_TOKEN, etag ?? undefined);
-  await recheckPending(state);
-  let capped = false;
+  let listed: string[] = [];
   if (!listing.notModified) {
-    const ids = newIds(parsePsfListing(listing.body), cursor, ctx.now(), cfg.backfill_days);
-    capped = ids.length > cfg.max_records;
-    for (const id of ids.slice(0, cfg.max_records)) {
-      await handleNew(state, id);
-      await kv.put(PY_CURSOR_KEY, id);
-    }
-    // The ETag is kept only when this run handled every new id, so a 304 never hides unread records.
+    if (Array.isArray(listing.body) && listing.body.length >= LISTING_LIMIT) state.result.errors.push(`listing truncated at ${LISTING_LIMIT} entries`);
+    listed = parsePsfListing(listing.body);
+  }
+  const work = await planWork(state, listed);
+  // One python.org read per run, before any record read; its error throws before any vendor spend.
+  if (work.records.length + work.pending.length > 0) state.released = parsePythonReleases(await fetchReleases(ctx.fetch, cfg.releases_url));
+  for (const id of work.records) await handleRecord(state, id);
+  for (const row of work.pending) await recheck(state, row);
+  await finish(state, listing, work.capped);
+  return state.result;
+}
+
+async function finish(state: RunState, listing: Awaited<ReturnType<typeof fetchListing>>, capped: boolean): Promise<void> {
+  const kv = state.ctx.env.CURSORS;
+  // The ETag is kept only when this run read every new id, so a 304 never hides unread records.
+  if (!listing.notModified) {
     if (capped || listing.etag === undefined) await kv.delete(PY_ETAG_KEY);
     else await kv.put(PY_ETAG_KEY, listing.etag);
   }
-  if (state.deferred > 0) state.result.deferred = state.deferred;
-  if (capped || state.deferred > 0) state.result.incomplete = true;
-  return state.result;
+  const note = await terminalFailedNote(state.ctx.env.DB);
+  if (note !== undefined) state.result.errors.push(note);
+  if (state.pending > 0) state.result.deferred = state.pending;
+  if (capped || state.pending > 0) state.result.incomplete = true;
 }
 
 export const pythonRuntime: Ingester = { id: SOURCE, run };

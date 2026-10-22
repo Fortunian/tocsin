@@ -12,7 +12,7 @@ Kept forever. One row per `(source, source_id)`, with the same life as its advis
 
 ## sources
 
-A fixed set of rows (6 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-runtime`). It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. No delete job.
+A fixed set of rows (7 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-runtime`, `python-runtime`). It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. No delete job.
 
 ## settings
 
@@ -33,3 +33,11 @@ One key each, overwritten in place. `cursor:nvd` is the NVD scan position (the l
 ## KV `site:latest:v1` key (CURSORS namespace)
 
 One key: the landing page's Latest rows as JSON. It is written with a TTL from the settings row `site.latest_cache_seconds` (default 60, never below 60), so KV expires it on its own. Losing it costs one D1 read. No delete job.
+
+## python_runtime_records
+
+The python-runtime ingest ledger. It has one row per PSF advisory id (`PSF-YYYY-N`), with the outcome (`ok`, `empty`, `pending`, `failed`), the attempt count and the next check time. Rows are kept forever, the same as `advisories`. If a row is deleted, the ingester reads that PSF record and its CVE record again. The PSF advisory database sets the limit on the row count: 195 records on 2026-10-22, with a few dozen new records each year. No delete job.
+
+## KV `python:listing-etag` (CURSORS namespace)
+
+One key: the ETag of the last full PSF listing. Each run overwrites it in place. No delete job.

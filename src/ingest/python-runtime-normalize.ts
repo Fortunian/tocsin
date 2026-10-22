@@ -2,7 +2,7 @@
 // A PSF advisory record (OSV format, GIT commit ranges only) names the CVE;
 // the PSF CVE record (CVE JSON 5) gives the affected range per release line.
 import { comparePep440 } from "../check/match/pep440";
-import type { SeverityLabel } from "../schema/advisory";
+import type { AffectedRange, SeverityLabel } from "../schema/advisory";
 import { isoUtc, oneLine } from "./runtime-text";
 import type { AdvisoryInput } from "./types";
 
@@ -131,6 +131,31 @@ function actionFor(lines: LineRange[]): string {
   const parts = lines.map((l) => `${l.fixed} (${l.line}.x)`);
   const text = `Upgrade python to ${parts.slice(0, -1).join(", ")} or ${parts[parts.length - 1]} or later.`;
   return text.length <= 200 ? text : `Upgrade python to ${lines[0].fixed} or later.`;
+}
+
+const lineOf = (fixed: string): string => fixed.split(".").slice(0, 2).join(".");
+
+// " The 3.14.x fix (3.14.9) is not released yet." for each pending line.
+function pendingTail(pendingFixed: string[]): string {
+  if (pendingFixed.length === 0) return "";
+  const parts = pendingFixed.map((f) => `${lineOf(f)}.x (${f})`).join(", ");
+  return pendingFixed.length === 1 ? ` The ${parts} fix is not released yet.` : ` The fixes for ${parts} are not released yet.`;
+}
+
+/**
+ * The advisory to publish while some lines wait for a python.org release:
+ * `affected`, `fixed_versions` and the action name only the released lines.
+ */
+export function publishedDoc(full: AdvisoryInput, released: AffectedRange[], pendingFixed: string[]): AdvisoryInput {
+  const lines = released.map((r) => ({ line: lineOf(r.fixed!), introduced: r.introduced!, fixed: r.fixed! }));
+  const base = actionFor(lines);
+  const tail = pendingTail(pendingFixed);
+  return {
+    ...full,
+    affected: released.map((r) => ({ introduced: r.introduced, fixed: r.fixed })),
+    fixed_versions: lines.map((l) => l.fixed),
+    action: (base + tail).length <= 200 ? base + tail : base,
+  };
 }
 
 function readCna(psfId: string, cve: string, raw: unknown): { ok: true; cna: Obj; published?: string } | Fail {
