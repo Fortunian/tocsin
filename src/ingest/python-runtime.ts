@@ -12,8 +12,9 @@
 // most max_records). Each record ends in a persisted state: ok, empty
 // (terminal), pending (a fix not on python.org yet) or failed (retried on
 // retry_schedule_minutes up to max_attempts reads, then terminal). One record
-// never stops the run; a terminal record is reported once, by the run that
-// makes it terminal, and is then visible only in the ledger.
+// never stops the run; a terminal record is reported once, as a warning of the
+// run that makes it terminal (sources.last_warning), and is then visible in
+// the ledger counts of /v1/status.
 import { fetchCveRecord, fetchListing, fetchPsfRecord } from "./python-runtime-client";
 import { comparePsfIds, normalizePythonAdvisory, parsePsfListing, publishedDoc, readPsf } from "./python-runtime-normalize";
 import { attemptsOf, dueRows, knownIds, readPendingState, writeRecord, type PendingState, type RecordRow } from "./python-runtime-records";
@@ -54,7 +55,7 @@ interface RunState {
   ctx: IngestContext;
   cfg: PyConfig;
   now: Date;
-  result: RunResult;
+  result: RunResult & { warnings: string[] };
   released: Set<string>;
   pending: number;
 }
@@ -125,8 +126,8 @@ async function handleRecord(state: RunState, psfId: string): Promise<void> {
   } catch (err) {
     const attempts = (await attemptsOf(db, psfId)) + 1;
     const terminal = attempts >= cfg.max_attempts;
-    // The one report of a terminal record: this run's errors. Later runs stay ok.
-    if (terminal) result.errors.push(`${psfId}: failed terminally after ${attempts} attempts: ${errorText(err)}`);
+    // The one report of a terminal record: this run's warnings. The run stays ok.
+    if (terminal) result.warnings.push(`${psfId}: failed terminally after ${attempts} attempts: ${errorText(err)}`);
     const next_check_at = terminal ? undefined : minutesFrom(now, retryWaitMinutes(cfg.retry_schedule_minutes, attempts));
     return writeRecord(db, { psf_id: psfId, state: "failed", attempts, last_error: errorText(err), next_check_at }, now);
   }
@@ -166,7 +167,7 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   const cfg = readConfig(ctx.source.config);
   const kv = ctx.env.CURSORS;
   const now = ctx.now();
-  const state: RunState = { ctx, cfg, now, result: { fetched: 0, upserted: 0, unchanged: 0, errors: [] }, released: new Set(), pending: 0 };
+  const state: RunState = { ctx, cfg, now, result: { fetched: 0, upserted: 0, unchanged: 0, errors: [], warnings: [] }, released: new Set(), pending: 0 };
   const etag = await kv.get(PY_ETAG_KEY);
   // A listing error throws out of the run: nothing was read, nothing changes.
   const listing = await fetchListing(ctx.fetch, cfg.listing_url, ctx.env.GITHUB_TOKEN, etag ?? undefined);

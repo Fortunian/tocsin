@@ -376,8 +376,10 @@ describe("failed and empty records (ledger)", () => {
     const res = await runAt(tenth, NOW);
     expect(readsOf(tenth, "PSF-2026-43", "CVE-2026-19445")).toBe(2);
     expect(await ledger("PSF-2026-43")).toMatchObject({ state: "failed", attempts: 10, next_check_at: null });
-    expect(res.errors).toHaveLength(1);
-    expect(res.errors[0]).toMatch(/^PSF-2026-43: failed terminally after 10 attempts: PythonHttpError: Python source HTTP 404/);
+    // TCS-50: the terminal note is a warning, not an error.
+    expect(res.errors).toEqual([]);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.warnings![0]).toMatch(/^PSF-2026-43: failed terminally after 10 attempts: PythonHttpError: Python source HTTP 404/);
     await env.CURSORS.delete(PY_ETAG_KEY);
     const after = createPyFake(routes(cve404));
     const res2 = await runAt(after, later(365 * DAY));

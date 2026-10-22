@@ -2,6 +2,7 @@ import type { Freshness } from "../../site/freshness";
 import type { LatestRow } from "../../site/landing";
 import type { StatusData, StatusSource } from "../../site/status";
 import type { Env } from "../env";
+import { LEDGER_TABLES, ledgerSql, toLedgerCounts, type LedgerRow } from "../ingest/ledgers";
 import { MAX_LIMIT } from "../feed/query";
 import { getSettingInt } from "../lib/settings";
 import type { Advisory } from "../schema/advisory";
@@ -18,7 +19,7 @@ const DEFAULT_TTL = 60;
 const MIN_TTL = 60;
 
 export const STATUS_SOURCES_SQL =
-  "SELECT id, kind, last_run_at, last_ok_at, last_error FROM sources WHERE enabled = 1 ORDER BY id";
+  "SELECT id, kind, last_run_at, last_ok_at, last_error, last_warning FROM sources WHERE enabled = 1 ORDER BY id";
 export const STATUS_CURSOR_SQL = "SELECT MAX(cursor) AS cursor FROM advisories";
 
 // The landing page data, cached as one KV value under LATEST_KEY (TCS-35).
@@ -125,8 +126,21 @@ export async function loadHome(env: Env): Promise<Home> {
 
 // One round trip: the enabled sources and the newest feed cursor. The cursor
 // is 0 only when no advisory exists (0 is the feed's start value for since=).
-export async function loadStatus(db: D1Database): Promise<StatusData> {
-  const [sources, cursor] = await db.batch([db.prepare(STATUS_SOURCES_SQL), db.prepare(STATUS_CURSOR_SQL)]);
+// With `ledger: true` the same batch also reads one grouped count per ledger
+// table (LEDGER_TABLES), attached to its source when that source is enabled.
+// Home and the badge call it without the option and make no ledger read.
+export async function loadStatus(db: D1Database, opts: { ledger?: boolean } = {}): Promise<StatusData> {
+  const ledgers = opts.ledger ? Object.entries(LEDGER_TABLES) : [];
+  const [sources, cursor, ...counts] = await db.batch([
+    db.prepare(STATUS_SOURCES_SQL),
+    db.prepare(STATUS_CURSOR_SQL),
+    ...ledgers.map(([, table]) => db.prepare(ledgerSql(table))),
+  ]);
   const max = (cursor.results[0] as { cursor: number | null } | undefined)?.cursor ?? null;
-  return { sources: sources.results as unknown as StatusSource[], cursor: max === null ? 0 : max };
+  const list = sources.results as unknown as StatusSource[];
+  ledgers.forEach(([id], i) => {
+    const s = list.find((x) => x.id === id);
+    if (s) s.ledger = toLedgerCounts(counts[i].results as unknown as LedgerRow[]);
+  });
+  return { sources: list, cursor: max === null ? 0 : max };
 }
