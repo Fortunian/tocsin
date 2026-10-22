@@ -267,10 +267,17 @@ const code = (s) => `\`${s}\``;
 /** @param {string} name @param {string | null | undefined} fixed */
 const safeForCommand = (name, fixed) => SAFE_NAME.test(name) && (fixed == null || SAFE_VERSION.test(fixed));
 
-/** @param {string | undefined} url */
-function advisoryHref(url) {
-  if (!url || !/^https?:\/\/[^\s]+$/.test(url)) return null;
-  return url.replace(/[()<>\[\]`"'\\|]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+/**
+ * The advisory link target, or null when the url is not http(s). Every
+ * character outside the unreserved set and / : ? = & % # is percent-encoded
+ * (UTF-8), so no url can end the link or split the table cell.
+ * @param {string | undefined} url
+ */
+export function advisoryHref(url) {
+  if (!url || !/^https?:\/\//.test(url)) return null;
+  return url.replace(/[^A-Za-z0-9\-._~/:?=&%#]/gu, (c) =>
+    [...new TextEncoder().encode(c)].map((b) => `%${b.toString(16).toUpperCase().padStart(2, "0")}`).join(""),
+  );
 }
 
 /** @param {Affected} a */
@@ -353,37 +360,72 @@ async function gh(io, inputs, method, path, body) {
   return res.json();
 }
 
+// A login GitHub returns: letters, digits and hyphens, with a "[bot]" suffix
+// for an app. Only such a login is ever written into the marker.
+const LOGIN = /^[A-Za-z0-9-]+(?:\[bot\])?$/;
+
 /**
- * Who the token posts as. A user or app token answers GET /user; the default
- * GITHUB_TOKEN cannot, and it posts as the github-actions[bot] Bot account.
+ * The marker line for comments by `login`. The default bot keeps the bare
+ * v1.0.0 marker; any other identity is named in it, so a later run whose
+ * token cannot read GET /user still knows the comment is its own.
+ * @param {string | null} login
+ */
+export function markerFor(login) {
+  return login === null || login === DEFAULT_BOT ? MARKER : `<!-- tocsin-check by:${login} -->`;
+}
+
+/**
+ * The marker on the FIRST line of a comment, or null when there is none.
+ * `by` is the login the marker names, or null for the bare marker.
+ * @param {string | undefined} body
+ * @returns {{ by: string | null } | null}
+ */
+export function parseMarker(body) {
+  const m = /^<!-- tocsin-check(?: by:([A-Za-z0-9-]+(?:\[bot\])?))? -->(?:\n|$)/.exec(body ?? "");
+  return m ? { by: m[1] ?? null } : null;
+}
+
+/**
+ * Who the token posts as, or null when GET /user does not answer. A user
+ * token answers; the default GITHUB_TOKEN and an App installation token get 403.
  * @param {Io} io @param {Inputs} inputs
- * @returns {Promise<{ login: string; bot: boolean }>}
+ * @returns {Promise<{ login: string } | null>}
  */
 async function viewer(io, inputs) {
   try {
     const u = await gh(io, inputs, "GET", "/user");
-    if (typeof u?.login === "string" && u.login) return { login: u.login, bot: false };
+    if (typeof u?.login === "string" && u.login) return { login: u.login };
   } catch {
-    // The default token: fall back to the bot identity below.
+    // The default token or an App token: identify by the comment's own marker below.
   }
-  return { login: DEFAULT_BOT, bot: true };
+  return null;
 }
 
 /**
- * The id of OUR marker comment on the PR, or null. A marker comment by anyone
- * else is ignored, so a PR author cannot make the bot edit their comment.
- * @param {Io} io @param {Inputs} inputs @param {string} issue
+ * OUR marker comment on the PR, or null. With a known viewer, a comment is
+ * ours when the viewer wrote it and its marker names nobody else. With an
+ * unknown viewer, a comment is ours when a Bot wrote it and its marker names
+ * that Bot (the bare marker names github-actions[bot]). A marker comment by
+ * anyone else is ignored, so a PR author cannot make the bot edit their comment.
+ * @param {Io} io @param {Inputs} inputs @param {string} issue @param {{ login: string } | null} me
+ * @returns {Promise<{ id: number; login: string } | null>}
  */
-async function findMarkerComment(io, inputs, issue) {
-  const me = await viewer(io, inputs);
+async function findMarkerComment(io, inputs, issue, me) {
   /** @param {{ body?: string; user?: { login?: string; type?: string } }} c */
-  const ours = (c) => (c.body ?? "").includes(MARKER) && c.user?.login === me.login && (!me.bot || c.user?.type === "Bot");
+  const ours = (c) => {
+    const m = parseMarker(c.body);
+    const author = c.user?.login;
+    if (!m || typeof author !== "string" || !author) return false;
+    const bot = c.user?.type === "Bot";
+    if (me) return author === me.login && (m.by === null || m.by === author) && (me.login !== DEFAULT_BOT || bot);
+    return bot && (m.by === author || (m.by === null && author === DEFAULT_BOT));
+  };
   for (let page = 1; page <= COMMENT_PAGES; page++) {
     const list = /** @type {{ id: number; body?: string; user?: { login?: string; type?: string } }[]} */ (
       await gh(io, inputs, "GET", `${issue}/comments?per_page=100&page=${page}`)
     );
     const hit = list.find(ours);
-    if (hit) return hit.id;
+    if (hit) return { id: hit.id, login: /** @type {string} */ (hit.user?.login) };
     if (list.length < 100) return null;
   }
   return null;
@@ -391,6 +433,8 @@ async function findMarkerComment(io, inputs, issue) {
 
 /**
  * Posts or updates the one marker comment. A clean run only updates an existing one.
+ * When GET /user does not answer, the author of the new comment (from the POST
+ * answer) is written into its marker with one more PATCH, so the next run finds it.
  * @param {Io} io @param {Inputs} inputs @param {string} markdown @param {boolean} clean
  */
 export async function upsertComment(io, inputs, markdown, clean) {
@@ -398,10 +442,26 @@ export async function upsertComment(io, inputs, markdown, clean) {
   const repo = io.env.GITHUB_REPOSITORY;
   if (pr === null || !repo) return;
   const issue = `/repos/${repo}/issues/${pr}`;
-  const id = await findMarkerComment(io, inputs, issue);
-  const body = `${MARKER}\n${markdown}`;
-  if (id !== null) await gh(io, inputs, "PATCH", `/repos/${repo}/issues/comments/${id}`, { body });
-  else if (!clean) await gh(io, inputs, "POST", `${issue}/comments`, { body });
+  const me = await viewer(io, inputs);
+  const hit = await findMarkerComment(io, inputs, issue, me);
+  if (hit !== null) {
+    await gh(io, inputs, "PATCH", `/repos/${repo}/issues/comments/${hit.id}`, { body: `${markerFor(hit.login)}\n${markdown}` });
+    return;
+  }
+  if (clean) return;
+  const posted = await gh(io, inputs, "POST", `${issue}/comments`, { body: `${markerFor(me?.login ?? null)}\n${markdown}` });
+  if (me) return;
+  const login = posted?.user?.login;
+  if (typeof login !== "string" || !LOGIN.test(login) || !Number.isInteger(posted?.id)) {
+    annotate(io, "warning", "posted the PR comment, but GitHub returned no comment id or no author login; the next run will post a new one");
+    return;
+  }
+  if (login === DEFAULT_BOT) return;
+  try {
+    await gh(io, inputs, "PATCH", `/repos/${repo}/issues/comments/${posted.id}`, { body: `${markerFor(login)}\n${markdown}` });
+  } catch (e) {
+    annotate(io, "warning", `posted the PR comment but could not tag its owner: ${message(e)}`);
+  }
 }
 
 // ---- run ------------------------------------------------------------------
