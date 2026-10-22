@@ -31,12 +31,15 @@ export const PYPI_CANDIDATE_SQL =
   "(SELECT json_extract(value, '$[1]'), json_extract(value, '$[0]') FROM json_each(?1))";
 
 // OSV `Go` rows on the toolchain (stdlib, toolchain, cmd/*), read for a `go`
-// runtime dependency. Three seeks on idx_advisories_component_ecosystem: two
-// equality seeks and one range seek ('cmd/' <= component < 'cmd0', '0' is the
-// character after '/'), each with ecosystem = 'Go' on the second index column.
-// Proof: tests/check/go-runtime.tcs-40.test.ts.
+// runtime dependency. The unary `+` makes the ecosystem term non-indexable, so
+// the planner never picks idx_advisories_ecosystem_cursor (ecosystem=?) and
+// reads every Go row. The plan is a MULTI-INDEX OR on
+// idx_advisories_component_ecosystem: one seek per IN value (component=?) and
+// one range seek (component>? AND component<?, where '0' is the character after
+// '/'). The ecosystem filter runs on those few rows only. It holds with and
+// without ANALYZE: tests/check/go-runtime.tcs-40.test.ts.
 export const GO_RUNTIME_CANDIDATE_SQL =
-  "SELECT doc_json FROM advisories WHERE ecosystem = 'Go' AND " +
+  "SELECT doc_json FROM advisories WHERE +ecosystem = 'Go' AND " +
   "(component IN ('stdlib', 'toolchain') OR (component >= 'cmd/' AND component < 'cmd0'))";
 
 export type CandidateKey = [ecosystem: string, component: string];

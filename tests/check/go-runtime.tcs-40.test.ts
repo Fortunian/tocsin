@@ -184,7 +184,20 @@ describe("POST /v1/check with runtimes.go (the CLI path)", () => {
 });
 
 describe("query plan", () => {
-  it("the Go runtime candidate query uses idx_advisories_component_ecosystem, never a bare scan", async () => {
+  // Production never runs ANALYZE, so the plan must hold without statistics.
+  // The ANALYZE case proves the plan also holds once statistics exist.
+  async function goRuntimePlan(): Promise<string> {
+    const { results } = await env.DB.prepare(`EXPLAIN QUERY PLAN ${GO_RUNTIME_CANDIDATE_SQL}`).all<{ detail: string }>();
+    return results.map((r) => r.detail).join("\n");
+  }
+
+  function expectComponentSeeks(plan: string): void {
+    expect(plan).toContain("idx_advisories_component_ecosystem");
+    expect(plan).not.toContain("idx_advisories_ecosystem_cursor");
+    expect(plan).not.toMatch(/SCAN advisories(?! USING)/);
+  }
+
+  beforeAll(async () => {
     const stmt = env.DB.prepare(
       "INSERT INTO advisories (id, ecosystem, component, published_at, modified_at, doc_json, cursor) VALUES (?, ?, ?, '2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z', '{}', ?)",
     );
@@ -193,10 +206,16 @@ describe("query plan", () => {
       stmt.bind(idFor("G40P", i), ecos[i % 4], i % 50 === 0 ? `cmd/tool${i}` : `pkg-fixture-${i % 400}`, 950_000 + i),
     );
     for (let i = 0; i < stmts.length; i += 500) await env.DB.batch(stmts.slice(i, i + 500));
+  });
+
+  it("without ANALYZE: seeks idx_advisories_component_ecosystem, never the ecosystem index or a bare scan", async () => {
+    const plan = await goRuntimePlan();
+    expectComponentSeeks(plan);
+  });
+
+  it("with ANALYZE: the same index seeks", async () => {
     await env.DB.prepare("ANALYZE").run();
-    const { results } = await env.DB.prepare(`EXPLAIN QUERY PLAN ${GO_RUNTIME_CANDIDATE_SQL}`).all<{ detail: string }>();
-    const plan = results.map((r) => r.detail).join("\n");
-    expect(plan).toContain("idx_advisories_component_ecosystem");
-    expect(plan).not.toMatch(/SCAN advisories(?! USING)/);
+    const plan = await goRuntimePlan();
+    expectComponentSeeks(plan);
   });
 });
