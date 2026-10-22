@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { CANDIDATE_SQL, FEED_CURSOR_SQL, candidateKeys } from "../../src/check/candidates";
+import { CANDIDATE_SQL, FEED_CURSOR_SQL, PYPI_CANDIDATE_SQL, candidateKeys } from "../../src/check/candidates";
 import { idFor, seed, type SeedRow } from "./seed.tcs-3";
 
 // EXPLAIN QUERY PLAN on the exact SQL the /v1/check route runs, over 2,000
@@ -28,7 +28,7 @@ beforeAll(async () => {
 describe("check query plans on 2,000 advisories", () => {
   it("the candidate query uses advisories(component, ecosystem), never a bare scan", async () => {
     const deps = Array.from({ length: 200 }, (_, i) => ({ ecosystem: "npm", name: `pkg-fixture-${i}`, version: "1.0.0" }));
-    const keys = candidateKeys(deps);
+    const keys = candidateKeys(deps).exact;
     expect(keys).toHaveLength(200);
     const p = await plan(CANDIDATE_SQL, [JSON.stringify(keys)]);
     expect(p).toContain("USING INDEX idx_advisories_component_ecosystem");
@@ -39,7 +39,7 @@ describe("check query plans on 2,000 advisories", () => {
     const keys = candidateKeys([
       { ecosystem: "npm", name: "pkg-fixture-2", version: "1.0.0" },
       { ecosystem: "node", name: "pkg-fixture-0", version: "1.0.0" },
-    ]);
+    ]).exact;
     const { results } = await env.DB.prepare(CANDIDATE_SQL).bind(JSON.stringify(keys)).all<{ doc_json: string }>();
     const docs = results.map((r) => JSON.parse(r.doc_json) as { ecosystem: string; component: string });
     expect(docs.length).toBeGreaterThan(0);
@@ -51,17 +51,41 @@ describe("check query plans on 2,000 advisories", () => {
     expect(docs.length).toBe(4);
   });
 
-  it("candidateKeys adds the normalized PyPI name and dedupes", () => {
+  it("the PyPI candidate query uses the normalized-name index, never a bare scan", async () => {
+    const deps = Array.from({ length: 200 }, (_, i) => ({ ecosystem: "PyPI", name: `Pkg_Fixture.${i}`, version: "1.0" }));
+    const keys = candidateKeys(deps).pypi;
+    expect(keys).toHaveLength(200);
+    const p = await plan(PYPI_CANDIDATE_SQL, [JSON.stringify(keys)]);
+    expect(p).toContain("USING INDEX idx_advisories_pypi_name");
+    expect(p).not.toMatch(/SCAN advisories(?! USING)/);
+  });
+
+  it("the PyPI candidate query finds rows stored with OSV casing and punctuation", async () => {
+    const ids = [idFor("C9PY", 0), idFor("C9PY", 1), idFor("C9PY", 2)];
+    await seed([
+      { id: ids[0], cursor: 5001, ecosystem: "PyPI", component: "Plan_Fixture..Name" },
+      { id: ids[1], cursor: 5002, ecosystem: "python", component: "PLAN-fixture-name" },
+      { id: ids[2], cursor: 5003, ecosystem: "npm", component: "plan-fixture-name" },
+    ]);
+    const { pypi } = candidateKeys([
+      { ecosystem: "PyPI", name: "plan.fixture__name", version: "1" },
+      { ecosystem: "python", name: "Plan-Fixture-Name", version: "1" },
+    ]);
+    const { results } = await env.DB.prepare(PYPI_CANDIDATE_SQL).bind(JSON.stringify(pypi)).all<{ doc_json: string }>();
+    const got = results.map((r) => (JSON.parse(r.doc_json) as { id: string }).id).sort();
+    expect(got).toEqual([ids[0], ids[1]].sort());
+  });
+
+  it("candidateKeys queries the normalized PyPI name, splits by query and dedupes", () => {
     const keys = candidateKeys([
       { ecosystem: "PyPI", name: "Zope.Interface", version: "1" },
-      { ecosystem: "PyPI", name: "Zope.Interface", version: "2" },
+      { ecosystem: "PyPI", name: "zope_interface", version: "2" },
       { ecosystem: "npm", name: "Zope.Interface", version: "1" },
     ]);
-    expect(keys).toEqual([
-      ["PyPI", "Zope.Interface"],
-      ["PyPI", "zope-interface"],
-      ["npm", "Zope.Interface"],
-    ]);
+    expect(keys).toEqual({
+      exact: [["npm", "Zope.Interface"]],
+      pypi: [["PyPI", "zope-interface"]],
+    });
   });
 
   it("the feed cursor read uses the cursor index", async () => {

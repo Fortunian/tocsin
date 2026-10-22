@@ -127,6 +127,8 @@ beforeAll(async () => {
   add({ ecosystem: "npm", component: "tcs9-bulk-420", affected: below("1.0.1"), label: "low" });
   // PyPI name normalization: the advisory component is the normalized name.
   add({ ecosystem: "PyPI", component: "django", affected: below("5.0.0"), label: "high" });
+  // OSV keeps the PyPI case and punctuation (Django, PyYAML): the stored component is not normalized.
+  add({ ecosystem: "PyPI", component: "Tcs9_PyYAML.Fixture", affected: below("6.0"), label: "high" });
   await insert(docs);
 });
 
@@ -168,6 +170,17 @@ describe("POST /v1/check (multipart lockfile)", () => {
     expect(item.action).toBe("Upgrade tcs9-vuln-fixture.");
     expect(item.url).toBe(`https://example.com/fixture/${idFor("C9", 2)}`);
     expect(typeof body.feed_cursor).toBe("number");
+  });
+
+  it("requirements.txt: a pin matches a PyPI advisory stored with OSV casing", async () => {
+    const form = new FormData();
+    form.append("requirements.txt", new File(["Tcs9-PyYAML-Fixture==5.4\n"], "requirements.txt", { type: "text/plain" }));
+    const body = await ok(await post("192.0.2.26", form));
+    expect(body.checked).toBe(1);
+    expect(body.skipped).toEqual([]);
+    expect(body.affected).toHaveLength(1);
+    expect(body.affected[0].dependency).toEqual({ ecosystem: "PyPI", name: "tcs9-pyyaml-fixture", version: "5.4" });
+    expect(body.affected[0].fixed_in).toBe("6.0");
   });
 
   it("unknown lockfile name answers 400 with the supported filenames", async () => {
@@ -307,6 +320,13 @@ describe("POST /v1/check (JSON body)", () => {
     );
     expect(body.affected).toHaveLength(1);
     expect(body.affected[0].fixed_in).toBe("5.0.0");
+  });
+
+  it("PyPI: a lower-case dependency matches an advisory stored with OSV casing", async () => {
+    const body = await ok(
+      await postJson("192.0.2.27", { dependencies: [{ ecosystem: "PyPI", name: "tcs9_pyyaml_fixture", version: "5.4" }] }),
+    );
+    expect(body.affected.map((a) => [a.dependency.name, a.fixed_in])).toEqual([["tcs9_pyyaml_fixture", "6.0"]]);
   });
 
   it("a same-named package in another ecosystem is not matched", async () => {

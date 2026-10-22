@@ -14,21 +14,44 @@ export const CANDIDATE_SQL =
 // Served by idx_advisories_cursor.
 export const FEED_CURSOR_SQL = "SELECT COALESCE(MAX(cursor), 0) AS c FROM advisories";
 
+// PEP 503 name in SQL: lowercase, `_` and `.` become `-`, then runs of `-`
+// collapse (4 passes collapse a run of up to 16). Served by the partial
+// expression index idx_advisories_pypi_name (migrations/0005); the text must
+// stay identical to the index expression.
+export const PYPI_NAME_EXPR =
+  "replace(replace(replace(replace(replace(replace(lower(trim(component)), '_', '-'), '.', '-'), '--', '-'), '--', '-'), '--', '-'), '--', '-')";
+
+// PyPI and python rows: OSV keeps the PyPI case (Django), so the match is on the normalized name.
+// The name-only IN is the index seek (SQLite does not seek an expression index
+// on a row-value IN); the pair IN then keeps only the asked ecosystem.
+export const PYPI_CANDIDATE_SQL =
+  "SELECT doc_json FROM advisories WHERE ecosystem IN ('PyPI', 'python') AND " +
+  `${PYPI_NAME_EXPR} IN (SELECT json_extract(value, '$[1]') FROM json_each(?1)) AND ` +
+  `(${PYPI_NAME_EXPR}, ecosystem) IN ` +
+  "(SELECT json_extract(value, '$[1]'), json_extract(value, '$[0]') FROM json_each(?1))";
+
 export type CandidateKey = [ecosystem: string, component: string];
 
-/** Distinct [ecosystem, name] pairs. PyPI and python also add the PEP 503 name, which the matcher compares. */
-export function candidateKeys(deps: Dependency[]): CandidateKey[] {
+export function isPypi(ecosystem: string): boolean {
+  return ecosystem === "PyPI" || ecosystem === "python";
+}
+
+/** The name a dependency or advisory is grouped and queried by: the PEP 503 name for PyPI and python. */
+export function lookupName(ecosystem: string, name: string): string {
+  return isPypi(ecosystem) ? normalizePypiName(name) : name;
+}
+
+/** Distinct [ecosystem, lookup name] pairs, split by the query that serves them. */
+export function candidateKeys(deps: Dependency[]): { exact: CandidateKey[]; pypi: CandidateKey[] } {
   const seen = new Set<string>();
-  const keys: CandidateKey[] = [];
-  const add = (ecosystem: string, name: string) => {
-    const k = `${ecosystem}\u0000${name}`;
-    if (seen.has(k)) return;
-    seen.add(k);
-    keys.push([ecosystem, name]);
-  };
+  const exact: CandidateKey[] = [];
+  const pypi: CandidateKey[] = [];
   for (const d of deps) {
-    add(d.ecosystem, d.name);
-    if (d.ecosystem === "PyPI" || d.ecosystem === "python") add(d.ecosystem, normalizePypiName(d.name));
+    const name = lookupName(d.ecosystem, d.name);
+    const k = `${d.ecosystem}\u0000${name}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    (isPypi(d.ecosystem) ? pypi : exact).push([d.ecosystem, name]);
   }
-  return keys;
+  return { exact, pypi };
 }

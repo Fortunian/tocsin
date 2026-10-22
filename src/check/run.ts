@@ -2,7 +2,7 @@
 // each dependency against them, and answer the affected ones in a fixed order.
 // Read-only over D1: one batch per check.
 import type { Advisory, SeverityLabel } from "../schema/advisory";
-import { CANDIDATE_SQL, CHUNK_SIZE, FEED_CURSOR_SQL, candidateKeys } from "./candidates";
+import { CANDIDATE_SQL, CHUNK_SIZE, FEED_CURSOR_SQL, PYPI_CANDIDATE_SQL, candidateKeys, lookupName } from "./candidates";
 import { matchAdvisory, supportsEcosystem } from "./match";
 import type { Dependency } from "./parsers";
 
@@ -38,10 +38,12 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
 
   // The cursor read goes first in the batch, so feed_cursor is never past an
   // advisory this check did not see.
-  const keys = candidateKeys(checkedDeps);
+  const { exact, pypi } = candidateKeys(checkedDeps);
   const stmts = [db.prepare(FEED_CURSOR_SQL)];
-  for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
-    stmts.push(db.prepare(CANDIDATE_SQL).bind(JSON.stringify(keys.slice(i, i + CHUNK_SIZE))));
+  for (const [sql, keys] of [[CANDIDATE_SQL, exact], [PYPI_CANDIDATE_SQL, pypi]] as const) {
+    for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+      stmts.push(db.prepare(sql).bind(JSON.stringify(keys.slice(i, i + CHUNK_SIZE))));
+    }
   }
   const [cursorRes, ...chunkRes] = await db.batch<{ c?: number; doc_json?: string }>(stmts);
   const feed_cursor = Number(cursorRes.results[0]?.c ?? 0);
@@ -53,7 +55,7 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
       const a = JSON.parse(row.doc_json as string) as Advisory;
       if (seenIds.has(a.id)) continue;
       seenIds.add(a.id);
-      const k = groupKey(a.ecosystem, a.component);
+      const k = groupKey(a.ecosystem, lookupName(a.ecosystem, a.component));
       const list = byKey.get(k);
       if (list) list.push(a);
       else byKey.set(k, [a]);
@@ -62,12 +64,9 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
 
   const affected: AffectedItem[] = [];
   for (const dep of checkedDeps) {
-    const candidates = new Map<string, Advisory>();
-    for (const [eco, name] of candidateKeys([dep])) {
-      for (const a of byKey.get(groupKey(eco, name)) ?? []) candidates.set(a.id, a);
-    }
+    const candidates = byKey.get(groupKey(dep.ecosystem, lookupName(dep.ecosystem, dep.name))) ?? [];
     const skippedIds = new Map<string, string[]>();
-    for (const a of candidates.values()) {
+    for (const a of candidates) {
       const r = matchAdvisory(dep, a);
       if (r.affected) {
         affected.push({
