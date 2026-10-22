@@ -51,9 +51,9 @@ async function seedAdvisories(prefix: string, count: number, cursorBase: number)
 }
 
 describe("migrations on a fresh local D1", () => {
-  it("applies 0001..0009 and 0011", async () => {
+  it("applies 0001..0012", async () => {
     const { results } = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id").all<{ name: string }>();
-    expect(results.map((r) => r.name)).toEqual(["0001_init.sql", "0002_seed_sources.sql", "0003_settings.sql", "0004_check_settings.sql", "0005_pypi_name_index.sql", "0006_site_settings.sql", "0007_nvd_pending_index.sql", "0008_published_at_index.sql", "0009_python_runtime_source.sql", "0010_advisory_cves.sql", "0011_python_runtime_records.sql"]);
+    expect(results.map((r) => r.name)).toEqual(["0001_init.sql", "0002_seed_sources.sql", "0003_settings.sql", "0004_check_settings.sql", "0005_pypi_name_index.sql", "0006_site_settings.sql", "0007_nvd_pending_index.sql", "0008_published_at_index.sql", "0009_python_runtime_source.sql", "0010_advisory_cves.sql", "0011_python_runtime_records.sql", "0012_source_last_warning.sql"]);
   });
 
   it("creates the 3 tables and the 5 named indexes", async () => {
