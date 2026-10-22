@@ -34,6 +34,8 @@ export const UPSERT_SQL = {
   update: `UPDATE advisories SET cve_primary = ?, ecosystem = ?, component = ?, severity_label = ?, severity_score = ?, exploited = ?, epss = ?, published_at = ?, modified_at = ?, doc_json = ?, cursor = ${NEXT_CURSOR} WHERE id = ?`,
   insert: `INSERT INTO advisories (cve_primary, ecosystem, component, severity_label, severity_score, exploited, epss, published_at, modified_at, doc_json, id, cursor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${NEXT_CURSOR})`,
   insertSource: "INSERT INTO advisory_sources (source, source_id, advisory_id) VALUES (?, ?, ?)",
+  // One row per CVE id of the advisory (migration 0010). A merge only adds CVE ids.
+  insertCve: "INSERT OR IGNORE INTO advisory_cves (cve, advisory_id) VALUES (?, ?)",
 } as const;
 
 function sortDeep(x: unknown): unknown {
@@ -115,6 +117,10 @@ function columns(doc: Advisory): unknown[] {
   ];
 }
 
+function cveRows(db: D1Database, doc: Advisory): D1PreparedStatement[] {
+  return doc.cve_ids.map((cve) => db.prepare(UPSERT_SQL.insertCve).bind(cve, doc.id));
+}
+
 export async function upsertAdvisory(db: D1Database, doc: AdvisoryInput, key: SourceKey): Promise<UpsertOutcome> {
   const existing = await db
     .prepare(UPSERT_SQL.findByPair)
@@ -125,7 +131,7 @@ export async function upsertAdvisory(db: D1Database, doc: AdvisoryInput, key: So
     const next = checked(merge(JSON.parse(existing.doc_json) as Advisory, doc, key));
     const json = canonicalJson(next);
     if (json === existing.doc_json) return "unchanged";
-    await db.prepare(UPSERT_SQL.update).bind(...columns(next), existing.advisory_id).run();
+    await db.batch([db.prepare(UPSERT_SQL.update).bind(...columns(next), existing.advisory_id), ...cveRows(db, next)]);
     return "updated";
   }
 
@@ -140,6 +146,7 @@ export async function upsertAdvisory(db: D1Database, doc: AdvisoryInput, key: So
       await db.batch([
         db.prepare(UPSERT_SQL.update).bind(...columns(next), match.id),
         db.prepare(UPSERT_SQL.insertSource).bind(key.source, key.source_id, match.id),
+        ...cveRows(db, next),
       ]);
       return "updated";
     }
@@ -153,6 +160,7 @@ export async function upsertAdvisory(db: D1Database, doc: AdvisoryInput, key: So
   await db.batch([
     db.prepare(UPSERT_SQL.insert).bind(...columns(fresh), fresh.id),
     db.prepare(UPSERT_SQL.insertSource).bind(key.source, key.source_id, fresh.id),
+    ...cveRows(db, fresh),
   ]);
   return "inserted";
 }

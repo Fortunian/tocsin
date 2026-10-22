@@ -51,7 +51,8 @@ const COPY_JS = `document.querySelectorAll("button[data-copy]").forEach(function
   });
 });`;
 
-export function page(title: string, body: string, opts: { script?: boolean } = {}): string {
+// `head` is trusted markup the caller built (canonical link, JSON-LD); it goes in as is.
+export function page(title: string, body: string, opts: { script?: boolean; head?: string } = {}): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -59,7 +60,7 @@ export function page(title: string, body: string, opts: { script?: boolean } = {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>${CSS}</style>
-</head>
+${opts.head ? `${opts.head}\n` : ""}</head>
 <body>
 <main>
 ${body}
