@@ -1,0 +1,7 @@
+# Dogfood: the repo checks its own lockfiles with its own Action on every pull request.
+on: pull_request
+permissions: { contents: read, pull-requests: write }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps: [{ uses: actions/checkout@v4 }, { uses: Fortunian/tocsin/action@v1 }]
