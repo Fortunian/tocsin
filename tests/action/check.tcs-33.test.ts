@@ -1,7 +1,7 @@
 import { copyFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MARKER, run, upgradeCommand } from "../../action/check.mjs";
+import { MARKER, run, upgradeCell, upgradeCommand } from "../../action/check.mjs";
 import { API, GH, json, world, type World } from "./helpers.tcs-33.js";
 
 const FIXTURE = new URL("../fixtures/cli/package-lock.json", import.meta.url);
@@ -238,10 +238,25 @@ describe("upgradeCommand", () => {
     ["Go", "golang.org/x/net", "0.23.0", "go get golang.org/x/net@v0.23.0"],
     ["Go", "golang.org/x/net", "v0.23.0", "go get golang.org/x/net@v0.23.0"],
     ["Packagist", "guzzlehttp/guzzle", "7.4.5", "composer require guzzlehttp/guzzle:7.4.5"],
-    ["crates.io", "tokio", "1.18.5", "cargo update -p tokio"],
+    ["crates.io", "tokio", "1.18.5", "cargo update -p tokio --precise 1.18.5"],
     ["RubyGems", "rails", "7.0.8", "bundle update rails"],
   ])("%s %s %s", (eco, name, fixed, cmd) => {
     expect(upgradeCommand(eco, name, fixed)).toBe(cmd);
+  });
+
+  it.each([["stdlib"], ["toolchain"], ["cmd/go"]])("Go %s: no go get command, only Upgrade Go to <version>", (name) => {
+    expect(upgradeCommand("Go", name, "1.21.12")).toBeNull();
+    expect(upgradeCell("Go", name, "1.21.12")).toBe("Upgrade Go to 1.21.12");
+    expect(upgradeCell("Go", name, "v1.21.12")).toBe("Upgrade Go to 1.21.12");
+  });
+
+  it("a Go stdlib row in the summary says Upgrade Go, never go get", async () => {
+    const stdlib = { ...AFFECTED, dependency: { ecosystem: "Go", name: "stdlib", version: "1.21.0" }, fixed_in: "1.21.12" };
+    const w = await setup({ ...DIRTY, affected: [stdlib] });
+    expect(await exec(w)).toBe(1);
+    const summary = await w.summary();
+    expect(summary).toContain("| Upgrade Go to 1.21.12 |");
+    expect(summary).not.toContain("go get");
   });
 
   it("no fixed version or an unknown ecosystem: no command", () => {

@@ -35,7 +35,8 @@ const UPGRADE = /** @type {Record<string, (name: string, v: string) => string>} 
   PyPI: (n, v) => `pip install ${n}==${v}`,
   Go: (n, v) => `go get ${n}@${v.startsWith("v") ? v : `v${v}`}`,
   Packagist: (n, v) => `composer require ${n}:${v}`,
-  "crates.io": (n) => `cargo update -p ${n}`,
+  // --precise: plain `cargo update -p` stays inside the Cargo.toml range and can stop below the fix.
+  "crates.io": (n, v) => `cargo update -p ${n} --precise ${v}`,
   RubyGems: (n) => `bundle update ${n}`,
 });
 
@@ -45,8 +46,25 @@ const UPGRADE = /** @type {Record<string, (name: string, v: string) => string>} 
  * @returns {string | null}
  */
 export function upgradeCommand(ecosystem, name, fixed) {
+  if (isGoToolchain(ecosystem, name)) return null;
   const f = Object.hasOwn(UPGRADE, ecosystem) ? UPGRADE[ecosystem] : undefined;
   return f && fixed ? f(name, fixed) : null;
+}
+
+/** Go's standard library and toolchain ship with Go itself: `go get` cannot upgrade them. @param {string} ecosystem @param {string} name */
+function isGoToolchain(ecosystem, name) {
+  return ecosystem === "Go" && (name === "stdlib" || name === "toolchain" || name.startsWith("cmd/"));
+}
+
+/**
+ * The Upgrade cell: a command in a code span, a plain instruction for the Go toolchain, or "-".
+ * @param {string} ecosystem @param {string} name @param {string | null | undefined} fixed
+ * @returns {string}
+ */
+export function upgradeCell(ecosystem, name, fixed) {
+  if (isGoToolchain(ecosystem, name)) return fixed ? cell(`Upgrade Go to ${fixed.replace(/^v/, "")}`) : "-";
+  const cmd = upgradeCommand(ecosystem, name, fixed);
+  return cmd ? code(cmd) : "-";
 }
 
 // ---- inputs -------------------------------------------------------------
@@ -179,8 +197,8 @@ function row(a) {
   const sev = (a.severity?.label ?? "unknown") + (a.exploited ? ", exploited" : "");
   const id = cell(a.advisory_id ?? "?");
   const link = a.url && /^https?:\/\//.test(a.url) ? `[${id}](${a.url.replace(/[()\s]/g, encodeURIComponent)})` : id;
-  const cmd = upgradeCommand(d.ecosystem ?? "", d.name ?? "", a.fixed_in);
-  return `| ${cell(sev)} | ${cell(d.name)} | ${cell(d.version)} | ${cell(a.fixed_in ?? "none yet")} | ${link} | ${cell(a.action)} | ${cmd ? code(cmd) : "-"} |`;
+  const upgrade = upgradeCell(d.ecosystem ?? "", d.name ?? "", a.fixed_in);
+  return `| ${cell(sev)} | ${cell(d.name)} | ${cell(d.version)} | ${cell(a.fixed_in ?? "none yet")} | ${link} | ${cell(a.action)} | ${upgrade} |`;
 }
 
 /** @param {Skipped} s */
