@@ -1,0 +1,27 @@
+{
+  "id": "tcs_01JA0000000000000000000000",
+  "cve_ids": ["CVE-2026-111497"],
+  "ecosystem": "node",
+  "component": "node",
+  "affected": [
+    { "introduced": "22.0.0", "fixed": "22.23.4" },
+    { "introduced": "24.0.0", "fixed": "24.22.1" },
+    { "introduced": "26.0.0", "fixed": "26.12.1" }
+  ],
+  "fixed_versions": ["22.23.4", "24.22.1", "26.12.1"],
+  "severity": { "score": 8.1, "label": "high" },
+  "exploited": false,
+  "epss": 0.0123,
+  "published_at": "2026-10-20T12:00:00Z",
+  "modified_at": "2026-10-21T08:30:00.000Z",
+  "summary": "Out-of-bounds write in the Brotli decoder, reachable via fetch().",
+  "action": "Upgrade node to 24.22.1 or later.",
+  "references": ["https://example.com/fixture/node-advisory"],
+  "sources": [
+    {
+      "source": "node-runtime",
+      "source_id": "CVE-2026-111497",
+      "url": "https://example.com/fixture/node-advisory"
+    }
+  ]
+}

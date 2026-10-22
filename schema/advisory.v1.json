@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tocsin.sh/schema/advisory.v1.json",
+  "title": "Tocsin advisory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "cve_ids",
+    "ecosystem",
+    "component",
+    "affected",
+    "fixed_versions",
+    "severity",
+    "exploited",
+    "published_at",
+    "modified_at",
+    "summary",
+    "action",
+    "references",
+    "sources"
+  ],
+  "properties": {
+    "id": {
+      "description": "Tocsin id: tcs_ + ULID (Crockford base32).",
+      "type": "string",
+      "pattern": "^tcs_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "cve_ids": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^CVE-\\d{4}-\\d{4,}$" }
+    },
+    "ghsa_id": {
+      "type": "string",
+      "pattern": "^GHSA(-[23456789cfghjmpqrvwx]{4}){3}$"
+    },
+    "ecosystem": {
+      "description": "OSV ecosystem name or runtime name.",
+      "type": "string",
+      "minLength": 1
+    },
+    "component": {
+      "description": "Package name or runtime name.",
+      "type": "string",
+      "minLength": 1
+    },
+    "affected": {
+      "description": "Affected version ranges, OSV shape.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "introduced": { "type": "string" },
+          "fixed": { "type": "string" },
+          "last_affected": { "type": "string" }
+        }
+      }
+    },
+    "fixed_versions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "severity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 10 },
+        "label": { "enum": ["critical", "high", "medium", "low", "unknown"] }
+      }
+    },
+    "exploited": {
+      "description": "Listed in CISA KEV.",
+      "type": "boolean"
+    },
+    "epss": { "type": "number", "minimum": 0, "maximum": 1 },
+    "published_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "modified_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "summary": {
+      "description": "One line, max 200 chars.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\r\\n]*$"
+    },
+    "action": {
+      "description": "One line, max 200 chars. Example: Upgrade node to 24.22.1 or later.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\r\\n]*$"
+    },
+    "references": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^https?://" }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "source_id", "url"],
+        "properties": {
+          "source": { "type": "string", "minLength": 1 },
+          "source_id": { "type": "string", "minLength": 1 },
+          "url": { "type": "string", "pattern": "^https?://" }
+        }
+      }
+    }
+  }
+}

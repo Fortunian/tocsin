@@ -1,0 +1,29 @@
+name = "tocsin"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+compatibility_flags = ["nodejs_compat"]
+
+# The resource ids below are placeholders. An operator creates each resource
+# once and pastes the real id here:
+#   wrangler d1 create tocsin
+#   wrangler kv namespace create CURSORS
+#   wrangler queues create deliveries
+[[d1_databases]]
+binding = "DB"
+database_name = "tocsin"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "CURSORS"
+id = "00000000000000000000000000000000"
+
+[[queues.producers]]
+binding = "DELIVERIES"
+queue = "deliveries"
+
+[[queues.consumers]]
+queue = "deliveries"
+
+[triggers]
+crons = ["*/10 * * * *"]
