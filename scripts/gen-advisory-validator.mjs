@@ -21,11 +21,15 @@ function generate(schemaRel) {
   const validate = ajv.compile(schema);
 
   // ajv's ESM output still pulls its runtime helpers with require(). Turn each
-  // one into an ESM import so the module loads in workerd.
+  // one into an ESM import so the module loads in workerd. The helpers are
+  // CommonJS (`exports.default = fn`, no __esModule flag). wrangler's esbuild
+  // bundle imports them in Node mode, so the default import is the exports
+  // object and the function is its `.default`; vite hands back the function
+  // itself. Unwrap both, or every validation in the deployed worker throws.
   const imports = [];
   const body = standaloneCode(ajv, validate).replace(/require\("([^"]+)"\)\.default/g, (_, mod) => {
     const name = `ajvRuntime${imports.length}`;
-    imports.push(`import ${name} from "${mod}.js";`);
+    imports.push(`import ${name}Module from "${mod}.js";`, `const ${name} = ${name}Module.default ?? ${name}Module;`);
     return name;
   });
   if (body.includes("require(")) {

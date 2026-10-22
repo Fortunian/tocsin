@@ -2,17 +2,30 @@
 
 Security advisories, built for agents.
 
-One normalized feed of runtime and package security advisories. An agent subscribes in one call, asks "am I affected?" with its lockfile, and gets a one-line action with the fixed version.
+One normalized feed of runtime and package security advisories. An agent subscribes in one call, asks "am I affected?" with its versions or lockfile, and gets a one-line action with the fixed version.
 
-The planned interface (not live yet):
+The three lines an agent needs:
 
 ```
 curl "https://tocsin.sh/v1/events?since=0&ecosystem=node,npm&min_severity=high"
 curl "https://tocsin.sh/v1/check?node=24.22.0&php=8.4.26"
-npx tocsin check
+https://mcp.tocsin.sh/mcp
 ```
 
+The first is the feed: new advisories after a cursor. The second answers "am I affected?" for runtime versions. The third is the remote MCP server.
+
+Connect your agent tools (Claude Code, Cursor, Claude Desktop, Codex) in one run:
+
+```
+npx tocsin connect
+```
+
+Every advisory has one shape, the open schema at https://tocsin.sh/schema/advisory.v1.json (source: `schema/advisory.v1.json`).
 Live status of each source: https://tocsin.sh/status (JSON at `/v1/status`). API reference: `docs/API.md`, served at https://tocsin.sh/docs.
+
+Self-host on your own Cloudflare account: `npm install && npx wrangler d1 migrations apply DB --remote && npx wrangler deploy`. Create the Cloudflare resources first (see "Deploy" below).
+
+Launch check: `bash scripts/launch-check.sh` reads https://tocsin.sh and exits 1 if a real advisory, the check endpoint, a source or `npx tocsin@latest connect` is wrong. The script header lists its checks and env vars.
 
 ## Run locally
 
@@ -26,7 +39,7 @@ curl localhost:8787/v1/health
 npm test
 ```
 
-`npm run typecheck` runs `tsc --noEmit`. The advisory schema lives in `schema/advisory.v1.json`. After you edit it, run `npm run gen:schema` to rebuild the validator; CI fails if the committed validator is stale (`npm run gen:schema -- --check`).
+`npm test` includes the `launch` project, which runs `scripts/launch-check.sh` against the worker in Miniflare; it needs `bash`, `curl` and `jq` on PATH. `npm run typecheck` runs `tsc --noEmit`. The advisory schema lives in `schema/advisory.v1.json`. After you edit it, run `npm run gen:schema` to rebuild the validator; CI fails if the committed validator is stale (`npm run gen:schema -- --check`).
 
 ## Deploy
 
@@ -85,6 +98,10 @@ npm run test:e2e
 
 ## Built with
 
-Built with [Cromford](https://cromford.ai).
+Built with [Cromford](https://cromford.ai). The Cromford factory planned, built, reviewed and merged this repo, one ticket at a time.
+
+## How it was built
+
+After the plan commits, every change came in through a pull request, and every PR title carries its ticket key (`TCS-1`, `TCS-2` and on). The merged PRs are the record: https://github.com/Fortunian/tocsin/pulls?q=is%3Apr+is%3Amerged.
 
 Apache-2.0. The hosted service runs at https://tocsin.sh.
