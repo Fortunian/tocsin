@@ -2,7 +2,6 @@ import { createExecutionContext, createScheduledController, waitOnExecutionConte
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../../src/index";
-import { NODE_CURSOR_KEY, NODE_PARSER_KEY, NODE_PARSER_REV } from "../../src/ingest/node-runtime";
 import { NODE_DIST_KEY } from "../../src/ingest/node-runtime-dist";
 import { PHP_CURSOR_KEY } from "../../src/ingest/php-runtime";
 import nodePost from "../fixtures/node-runtime/2026-10-21.html?raw";
@@ -11,6 +10,7 @@ import nodeFeed from "../fixtures/node-runtime/vulnerability.xml?raw";
 import phpNews from "../fixtures/php-runtime/2026-10-21.html?raw";
 import phpReleases from "../fixtures/php-runtime/releases.xml?raw";
 import phpList from "../fixtures/php-runtime/security-advisories.page1.json?raw";
+import { clearNodeLedger, markNodePostsRead, nodePostState } from "../ingest/node-ledger-seed.tcs-69";
 import { createRuntimeFake } from "../ingest/runtime-fake.tcs-6";
 
 // The production entry: worker.scheduled (src/index.ts) -> runCron -> defaultRegistry,
@@ -64,10 +64,11 @@ beforeEach(async () => {
   ).run();
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source IN ('node-runtime', 'php-runtime'))").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source IN ('node-runtime', 'php-runtime')").run();
-  await env.CURSORS.put(NODE_CURSOR_KEY, START);
-  // TCS-30: no cached dist index (KV is shared by this file's tests) and the current parser revision.
+  // TCS-69: every Node post before START has an ok ledger row (where it was a KV cursor and parser key).
+  await clearNodeLedger();
+  await markNodePostsRead(START);
+  // TCS-30: no cached dist index (KV is shared by this file's tests).
   await env.CURSORS.delete(NODE_DIST_KEY);
-  await env.CURSORS.put(NODE_PARSER_KEY, NODE_PARSER_REV);
   await env.CURSORS.put(PHP_CURSOR_KEY, START);
 });
 afterEach(() => {
@@ -90,7 +91,7 @@ describe("runtime ingesters through worker.scheduled", () => {
       { ecosystem: "php", n: 2 },
     ]);
     expect(new Set(fake.urls())).toEqual(new Set(Object.keys(ROUTES)));
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe("2026-10-21T22:00:00Z");
+    expect(await nodePostState("https://nodejs.org/en/blog/vulnerability/october-2026-security-releases")).toBe("ok");
     // TCS-29: the php cursor is the newest GHSA published_at.
     expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe("2026-10-21T13:34:25Z");
   });

@@ -85,11 +85,23 @@ workflow's `ecosystem` options, and run the workflow for it.
 The runtime sources need no workflow. Each one sets its own `sources.coverage_since` after one
 run that read its whole history:
 
-- `node-runtime`: migration 0015 sets `max_posts` 20 and `backfill_days` 4000 in its config row,
-  and the parser revision 3 moves the cursor back to the window start once. The cron then reads
-  the feed's Security Release posts 20 per run (48 posts on 2026-10-22: 3 runs). An old post
-  that is incomplete or gone (404) is reported in `last_error` and passed, so the read never
-  stops there (`retry_incomplete_days`, 365).
+- `node-runtime`: migration 0015 sets `max_posts` 20 and `backfill_days` 4000 in its config row.
+  The cron reads the feed's Security Release posts 20 per run (48 posts on 2026-10-22: 3 runs),
+  and the post ledger `node_runtime_posts` (TCS-69) records the outcome of each post. The walk
+  never stops on one post: each post gets its row and the run goes on to the next due post. A
+  note about one post goes to `last_warning`, never to `last_error`. An old post that is
+  incomplete or gone (404) is `failed` and terminal (`retry_incomplete_days`, 365). A recent post
+  that is incomplete or has no CVE heading (the 2026-01-13 post with no fixed version) is
+  `failed` and is read again on `retry_schedule_minutes` (1 h, 6 h, 24 h, then weekly), then is
+  `empty` after `max_attempts` (10) reads. An old post with no CVE heading (the 2019 "no updates"
+  post) is `empty`. A pre-announcement is `pending`, read again after `pending_recheck_minutes`
+  (60; old posts `pending_old_recheck_minutes`, 10080), and is `empty` after `max_attempts` reads.
+  The newest feed post in state `ok` or `empty` is read on every run, because Node edits a post in
+  place. coverage_since is set when every feed post of the window has a row and no post younger
+  than `retry_incomplete_days` is `failed`, `empty` with a note (an attempt cap), or `ok` with
+  CVE headings not emitted (`unemitted` > 0; a parser revision bump reads it again). An old
+  `empty` post with no note (the 2019 "no updates" post) does not hold it back. Then the
+  coverage signal never reports node as complete while a recent release post is not read in full.
 - `node-eol`: one advisory per Node.js release line past its end of life, from the nodejs/Release
   `schedule.json`. A version on such a line is never clean.
 - `deno-runtime`, `bun-runtime`: while `coverage_since` is NULL, a run ignores its KV cursor and

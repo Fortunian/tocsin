@@ -1,11 +1,12 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { NODE_CURSOR_KEY, NODE_DEFAULTS, NODE_PARSER_KEY, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
+import { NODE_DEFAULTS, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
 import { NODE_DIST_KEY } from "../../src/ingest/node-runtime-dist";
 import { defaultRegistry, runIngesters } from "../../src/ingest/registry";
 import migration0015 from "../../migrations/0015_node_history.sql?raw";
 import distIndex from "../fixtures/node-eol/index.json?raw";
 import feedXml from "../fixtures/node-runtime/vulnerability.xml?raw";
+import { clearNodeLedger, markNodePostsRead, nodePostRow } from "./node-ledger-seed.tcs-69";
 import { createRuntimeFake } from "./runtime-fake.tcs-6";
 
 // Node feed history (TCS-32). The recorded feed (77 items, 48 of them
@@ -60,7 +61,9 @@ beforeEach(async () => {
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source = 'node-runtime')").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'node-runtime'").run();
   await env.DB.prepare("UPDATE sources SET coverage_since = NULL, last_error = NULL WHERE id = 'node-runtime'").run();
-  for (const k of [NODE_CURSOR_KEY, NODE_PARSER_KEY, NODE_DIST_KEY]) await env.CURSORS.delete(k);
+  await env.CURSORS.delete(NODE_DIST_KEY);
+  // TCS-69: an empty post ledger, where it was no KV cursor and no parser key.
+  await clearNodeLedger();
 });
 
 describe("node-runtime history", () => {
@@ -78,11 +81,11 @@ describe("node-runtime history", () => {
     expect(r1).toEqual({ status: "ok", posts: 20 });
     expect(await coverage()).toBeNull();
     const r2 = await cron(routes());
-    // A post dated at the cursor is read again: post 20 opens run 2.
+    // TCS-69: the walk goes on from the ledger: posts 20 to 39 open run 2.
     expect(r2).toEqual({ status: "ok", posts: 20 });
     expect(await coverage()).toBeNull();
     const r3 = await cron(routes());
-    expect(r3).toEqual({ status: "ok", posts: 10 });
+    expect(r3).toEqual({ status: "ok", posts: 8 });
     expect(await nodeRows()).toBe(48);
     expect(await coverage()).toBe(POSTS[0].published);
 
@@ -92,12 +95,13 @@ describe("node-runtime history", () => {
     expect(await coverage()).toBe(POSTS[0].published);
   });
 
-  it("a box on the TCS-30 parser revision (\"2\") with its cursor at the newest post reads the history window again", async () => {
-    await env.CURSORS.put(NODE_CURSOR_KEY, POSTS[47].published);
-    await env.CURSORS.put(NODE_PARSER_KEY, "2");
+  it("a box on the TCS-30 parser revision (\"2\") with every post read reads the history window again", async () => {
+    // TCS-69: ok ledger rows read by parser revision 2, where it was a cursor at the newest post and parser key "2".
+    await markNodePostsRead("2099-01-01T00:00:00Z", "2");
     const r = await cron(routes());
     expect(r).toEqual({ status: "ok", posts: 20 });
-    expect(await env.CURSORS.get(NODE_PARSER_KEY)).toBe("3");
+    expect(await nodePostRow(POSTS[19].link)).toMatchObject({ state: "ok", parser_rev: "3" });
+    expect(await nodePostRow(POSTS[20].link)).toMatchObject({ state: "ok", parser_rev: "2" });
     expect(await nodeRows()).toBe(20);
   });
 
@@ -122,23 +126,29 @@ describe("node-runtime history", () => {
       now: () => NOW,
       fetch: createRuntimeFake(routes({ [old.link]: post(1, "4.99.99") })).fetch,
     });
-    expect(r.errors.join("\n")).toMatch(/post incomplete, older than 365 days, not read again/);
+    // TCS-69 round 2: the note of one post is a warning, never a run error.
+    expect(r.errors).toEqual([]);
+    expect((r.warnings ?? []).join("\n")).toMatch(/post incomplete, older than 365 days, not read again/);
     expect(await nodeRows()).toBe(47);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(POSTS[47].published);
+    expect(await nodePostRow(old.link)).toMatchObject({ state: "failed", next_check_at: null });
+    expect(await nodePostRow(POSTS[47].link)).toMatchObject({ state: "ok" });
   });
 
   it("an old post that answers 404 is reported and passed; a recent one still fails the run", async () => {
     const fake = createRuntimeFake({ ...routes(), [POSTS[2].link]: { status: 404 } });
     const ctx = { env, source: { id: "node-runtime", kind: "node-runtime", config: { max_posts: 100, backfill_days: 4000 }, coverage_since: null }, now: () => NOW, fetch: fake.fetch };
     const r = await nodeRuntime.run(ctx);
-    expect(r.errors.join("\n")).toContain("HTTP 404");
+    expect(r.errors).toEqual([]);
+    expect((r.warnings ?? []).join("\n")).toContain("HTTP 404");
     expect(await nodeRows()).toBe(47);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(POSTS[47].published);
+    expect(await nodePostRow(POSTS[2].link)).toMatchObject({ state: "failed", next_check_at: null });
+    expect(await nodePostRow(POSTS[47].link)).toMatchObject({ state: "ok" });
 
-    await env.CURSORS.put(NODE_CURSOR_KEY, POSTS[46].published);
+    // TCS-69: the newest post has no row (where the cursor was at post 46): a recent 404 throws and writes no row.
+    await env.DB.prepare("DELETE FROM node_runtime_posts WHERE url = ?").bind(POSTS[47].link).run();
     const recent = createRuntimeFake({ ...routes(), [POSTS[47].link]: { status: 404 } });
     await expect(nodeRuntime.run({ ...ctx, fetch: recent.fetch })).rejects.toThrow(/HTTP 404/);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(POSTS[46].published);
+    expect(await nodePostRow(POSTS[47].link)).toBeNull();
   });
 
   it("migration 0015 never overwrites an edited max_posts", async () => {
