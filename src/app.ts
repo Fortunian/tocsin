@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./env";
 import { jsonUtf8 } from "./lib/http";
+import { authIpRateLimit } from "./middleware/ratelimit";
 import advisory from "./routes/advisory";
 import check from "./routes/check";
 import discovery from "./routes/discovery";
@@ -31,6 +32,9 @@ app.route("/v1/check", check);
 app.route("/v1/status", status);
 // Bearer-gated write path of the OSV backfill (TCS-32). Not for browsers: CORS stays GET/HEAD/OPTIONS.
 app.route("/v1/internal/import", internalImport);
+// Per-IP gate before any key work (TCS-66). "/x/*" also matches "/x".
+app.use("/v1/keys/*", authIpRateLimit);
+app.use("/v1/watchlists/*", authIpRateLimit);
 app.route("/v1/keys", keys);
 app.route("/v1/watchlists", watchlists);
 app.route("/", discovery);
