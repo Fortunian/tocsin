@@ -83,19 +83,20 @@ export interface AdvOpts {
   component?: string;
   cursor?: number;
   publishedAt?: string;
+  cve?: string;
 }
 
 export async function seedAdvisory(o: AdvOpts = {}): Promise<{ id: string; cursor: number; doc_json: string }> {
   const id = "tcs_" + crypto.randomUUID().replace(/-/g, "").slice(0, 26).toUpperCase();
   const cursor = o.cursor ?? nextCursor();
-  const doc = docFor({ id, cursor, ecosystem: o.ecosystem ?? "npm", component: o.component ?? "left-pad" });
+  const doc = docFor({ id, cursor, ecosystem: o.ecosystem ?? "npm", component: o.component ?? "left-pad", cve: o.cve });
   doc.published_at = o.publishedAt ?? "2026-10-21T00:00:00Z";
   const doc_json = JSON.stringify(doc);
   await env.DB.prepare(
     `INSERT INTO advisories (id, cve_primary, ecosystem, component, severity_label, exploited, published_at, modified_at, doc_json, cursor)
-     VALUES (?, NULL, ?, ?, ?, 0, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
   )
-    .bind(id, doc.ecosystem, doc.component, doc.severity.label, doc.published_at, doc.modified_at, doc_json, cursor)
+    .bind(id, o.cve ?? null, doc.ecosystem, doc.component, doc.severity.label, doc.published_at, doc.modified_at, doc_json, cursor)
     .run();
   return { id, cursor, doc_json };
 }

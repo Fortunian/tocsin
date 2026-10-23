@@ -2,10 +2,28 @@ import { createExecutionContext, createScheduledController, waitOnExecutionConte
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCron } from "../../src/cron/run";
+import { kev } from "../../src/ingest/kev";
 import { enqueueDeliveries, sweepDeliveries } from "../../src/queue/enqueue";
+import kevFeed from "../fixtures/kev/feed.json";
+import { createKevFake, FAKE_KEV_URL } from "../ingest/enrich-fake.tcs-7";
 import { FakeQueue, deliveriesOf, envWith, insertDelivery, seedAdvisory, seedList, setKnob, uid } from "./helpers.tcs-11";
 
 const NOW = new Date("2026-10-23T04:00:00.000Z");
+
+let kevCveSeq = 830000;
+function newKevCve(): string {
+  kevCveSeq += 1;
+  return `CVE-2025-${kevCveSeq}`;
+}
+
+// Runs the real KEV ingester against the KEV fake (0 network calls).
+async function runKev(cves: string[]): Promise<void> {
+  const entry = kevFeed.vulnerabilities[1];
+  const fake = createKevFake({ body: { ...kevFeed, count: cves.length, vulnerabilities: cves.map((c) => ({ ...entry, cveID: c })) } });
+  const r = await kev.run({ env, source: { id: "kev", kind: "kev", config: { feed_url: FAKE_KEV_URL } }, now: () => NOW, fetch: fake.fetch });
+  expect(r.errors).toEqual([]);
+  expect(fake.calls).toEqual([FAKE_KEV_URL]);
+}
 
 beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -126,6 +144,40 @@ describe("enqueueDeliveries", () => {
       [fresh.id, "pending"],
     ]);
     expect(q.forList(list.id).map((m) => m.body.advisory_id)).toEqual([fresh.id]);
+  });
+
+  it("an exploited_only list gets the KEV flag on an old CVE as a pending row and one message", async () => {
+    const comp = uid("comp");
+    const cve = newKevCve();
+    const list = await seedList({ filter: { components: [comp], exploited_only: true }, createdAt: "2026-10-20T00:00:00.000Z" });
+    const adv = await seedAdvisory({ component: comp, cve, publishedAt: "2025-03-01T00:00:00Z" });
+    const q = new FakeQueue();
+
+    // Before the flag the advisory does not match the filter.
+    await enqueueDeliveries(envWith(q), NOW);
+    expect(await deliveriesOf(list.id)).toHaveLength(0);
+
+    await runKev([cve]);
+    const r = await enqueueDeliveries(envWith(q), NOW);
+
+    const rows = await deliveriesOf(list.id);
+    expect(rows.map((d) => [d.advisory_id, d.status])).toEqual([[adv.id, "pending"]]);
+    expect(rows[0].cursor).toBeGreaterThan(adv.cursor);
+    expect(q.forList(list.id).map((m) => m.body.advisory_id)).toEqual([adv.id]);
+    expect(r.skipped).toBe(0);
+  });
+
+  it("a backfill re-cursor of an old advisory that KEV flagged long ago is still skipped", async () => {
+    const comp = uid("comp");
+    const list = await seedList({ filter: { components: [comp], exploited_only: true }, createdAt: "2026-10-20T00:00:00.000Z" });
+    const adv = await seedAdvisory({ component: comp, publishedAt: "2021-06-01T00:00:00Z" });
+    await env.DB.prepare("UPDATE advisories SET exploited = 1, exploited_at = '2022-01-10T00:00:00.000Z' WHERE id = ?").bind(adv.id).run();
+    const q = new FakeQueue();
+
+    await enqueueDeliveries(envWith(q), NOW);
+
+    expect((await deliveriesOf(list.id)).map((d) => [d.advisory_id, d.status])).toEqual([[adv.id, "skipped"]]);
+    expect(q.forList(list.id)).toHaveLength(0);
   });
 
   it("caps the rows per list at webhooks.enqueue_per_list and drains the rest next run", async () => {

@@ -43,7 +43,7 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('webhooks.sweep_batch', '500
 INSERT OR IGNORE INTO settings (key, value) VALUES ('webhooks.enqueue_max_lists', '1000');
 -- Most new rows per list per enqueue run. Values over 100 (the queue sendBatch limit) are read as 100.
 INSERT OR IGNORE INTO settings (key, value) VALUES ('webhooks.enqueue_per_list', '100');
--- An advisory published this many days before the list was made gets a skipped row, not a POST (backfill, docs/BACKFILL.md).
+-- An advisory published and flagged exploited (exploited_at) this many days before the list was made gets a skipped row, not a POST (backfill, docs/BACKFILL.md).
 INSERT OR IGNORE INTO settings (key, value) VALUES ('webhooks.max_event_age_days', '30');
 -- Longest webhook_url accepted, in characters.
 INSERT OR IGNORE INTO settings (key, value) VALUES ('webhooks.max_url_length', '2048');

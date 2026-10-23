@@ -134,7 +134,7 @@ A watch list is polled by default. Set it to webhook delivery and Tocsin POSTs e
 - The answer that sets `webhook` carries `webhook_secret` (`whsec_` and 64 hex characters). It is in this answer only; no other route returns it. Each `PATCH` to `webhook` makes a new secret.
 - When your plan row has `webhooks` off, setting `webhook` answers 403 `{"error": "webhooks not enabled for this plan"}`. The free plan has it on.
 
-After each ingest run (every 10 minutes), Tocsin finds the advisories above the list's stored cursor that match its filter and sends each one once. Webhook delivery and `GET /v1/watchlists/{id}/events` move the same stored cursor, so an event read by one is not sent by the other. An advisory published more than 30 days before the list was made (backfilled history) is recorded as `skipped` and not sent.
+After each ingest run (every 10 minutes), Tocsin finds the advisories above the list's stored cursor that match its filter and sends each one once. Webhook delivery and `GET /v1/watchlists/{id}/events` move the same stored cursor, so an event read by one is not sent by the other. An advisory published more than 30 days before the list was made (backfilled history) is recorded as `skipped` and not sent. The exception is a CISA KEV flag: when KEV marks an old CVE as exploited, the event is sent, so an `exploited_only` list hears about it. Each (list, advisory) pair is sent at most once, so a pair already recorded is not sent again on a later flag.
 
 ### Webhook signature
 

@@ -38,7 +38,9 @@ export interface DeliveryMessage {
 //    matches the filter, oldest first, at most perList. INSERT OR IGNORE on the
 //    primary key is the exactly-once gate; RETURNING gives only the new rows.
 //    An advisory published before ageCutoff gets a 'skipped' row (backfill
-//    history, docs/BACKFILL.md) and no message.
+//    history, docs/BACKFILL.md) and no message, unless KEV flagged it after
+//    ageCutoff (exploited_at): a KEV flag on an old CVE is news, and an
+//    exploited_only list sees the advisory first at that flag.
 // 2. Move the list cursor to the highest cursor of the same scan. The scan is
 //    run again inside the transaction, so it sees the same rows; it is not read
 //    from deliveries.cursor, because a backfill can give an advisory that
@@ -55,9 +57,9 @@ export function buildEnqueueStatements(
   const scan = `FROM advisories WHERE ${where.join(" AND ")} ORDER BY cursor LIMIT ?`;
   return {
     insertSql: `INSERT OR IGNORE INTO deliveries (watchlist_id, advisory_id, cursor, attempt, status, next_at)
-      SELECT ?, id, cursor, 0, CASE WHEN published_at < ? THEN 'skipped' ELSE 'pending' END, ? ${scan}
+      SELECT ?, id, cursor, 0, CASE WHEN published_at < ? AND (exploited_at IS NULL OR exploited_at < ?) THEN 'skipped' ELSE 'pending' END, ? ${scan}
       RETURNING advisory_id, status`,
-    insertParams: [listId, ageCutoff, nowIso, ...params, perList],
+    insertParams: [listId, ageCutoff, ageCutoff, nowIso, ...params, perList],
     cursorSql: `UPDATE watchlists SET cursor = MAX(cursor, COALESCE((SELECT MAX(cursor) FROM (SELECT cursor ${scan})), cursor))
       WHERE id = ? AND delivery = 'webhook'`,
     cursorParams: [...params, perList, listId],
