@@ -1,12 +1,10 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import {
-  DELIVERED_RETENTION_SQL,
-  FAILED_RETENTION_SQL,
-  SKIPPED_RETENTION_SQL,
-} from "../../src/cron/deliveries-retention";
+import { FAILED_RETENTION_SQL, SKIPPED_RETENTION_SQL } from "../../src/cron/deliveries-retention";
+import { KEY_RETENTION_DELIVERIES_SQL } from "../../src/cron/retention";
 import { SWEEP_SQL, WEBHOOK_LISTS_SQL, buildEnqueueStatements } from "../../src/queue/enqueue";
-import { DELIVERIES_LIST_SQL } from "../../src/routes/watchlists";
+import { CLAIM_SQL, HEALTH_FAIL_SQL, HEALTH_OK_SQL } from "../../src/queue/run";
+import { DELIVERIES_LIST_SQL, GET_WATCHLIST_SQL, RESUME_WATCHLIST_SQL } from "../../src/routes/watchlists";
 import { call, newKey } from "./keys-helpers.tcs-8";
 
 async function plan(sql: string, ...params: unknown[]): Promise<string> {
@@ -41,7 +39,8 @@ async function seedRows(watchlistId: string, n: number, cursorBase: number): Pro
 describe("deliveries table", () => {
   it("has the named columns and the (watchlist_id, advisory_id) primary key", async () => {
     const { results } = await env.DB.prepare("PRAGMA table_info(deliveries)").all<{ name: string; pk: number }>();
-    expect(results.map((r) => r.name)).toEqual(["watchlist_id", "advisory_id", "cursor", "attempt", "status", "last_code", "next_at", "delivered_at"]);
+    // last_error: migrations/0023_watchlist_delivery_health.sql (round 2).
+    expect(results.map((r) => r.name)).toEqual(["watchlist_id", "advisory_id", "cursor", "attempt", "status", "last_code", "next_at", "delivered_at", "last_error"]);
     expect(results.filter((r) => r.pk > 0).map((r) => r.name)).toEqual(["watchlist_id", "advisory_id"]);
     await env.DB.prepare("INSERT INTO deliveries (watchlist_id, advisory_id, cursor, next_at) VALUES ('wl_pk', 'adv_pk', 1, 'x')").run();
     const dup = await env.DB.prepare("INSERT OR IGNORE INTO deliveries (watchlist_id, advisory_id, cursor, next_at) VALUES ('wl_pk', 'adv_pk', 2, 'y')").run();
@@ -150,16 +149,43 @@ describe("query plans on 5,000 deliveries and 1,000 watch lists", () => {
     }
   });
 
+  // Round 2: the pause checks, the health writes and the two new routes.
+  it("the claim, the health writes, GET /:id and resume use primary keys, never a bare SCAN", async () => {
+    const plans = [
+      await plan(CLAIM_SQL, "2026-10-23T00:01:00.000Z", "wl_plan11_0007", "adv_wl_plan11_0007_3", "2026-10-23T00:00:00.000Z"),
+      await plan(HEALTH_OK_SQL, "2026-10-23T00:00:00.000Z", 200, "wl_plan11_0007"),
+      await plan(HEALTH_FAIL_SQL, "2026-10-23T00:00:00.000Z", 500, 10, "wl_plan11_0007"),
+      await plan(GET_WATCHLIST_SQL, "wl_plan11_0007", "key_plan11_7"),
+      await plan(RESUME_WATCHLIST_SQL, "wl_plan11_0007", "key_plan11_7"),
+    ];
+    for (const p of plans) {
+      expect(p).not.toMatch(BARE_SCAN("deliveries"));
+      expect(p).not.toMatch(BARE_SCAN("watchlists"));
+    }
+    expect(plans[0]).toMatch(/SEARCH deliveries USING INDEX sqlite_autoindex_deliveries_1/);
+    expect(plans[0]).toMatch(/SEARCH w USING INDEX sqlite_autoindex_watchlists_1|SEARCH w USING (COVERING )?INDEX/);
+  });
+
+  it("the enqueue insert looks up existing rows by (watchlist_id, advisory_id)", async () => {
+    const s = buildEnqueueStatements({ ecosystems: [], components: [], runtimes: {}, min_severity: null, exploited_only: false }, "wl_plan11_0007", 0, 100, "2026-01-01T00:00:00.000Z", "2026-10-23T00:00:00.000Z");
+    const p = await plan(s.insertSql, ...s.insertParams);
+    expect(p).toMatch(/SEARCH d USING (COVERING )?INDEX sqlite_autoindex_deliveries_1 \(watchlist_id=\? AND advisory_id=\?\)/);
+    expect(p).not.toMatch(BARE_SCAN("d"));
+  });
+
   it("the webhook-list read uses idx_watchlists_delivery", async () => {
     const p = await plan(WEBHOOK_LISTS_SQL, "wl_plan11_0100", 1000);
     expect(p).toContain("idx_watchlists_delivery");
     expect(p).not.toMatch(BARE_SCAN("watchlists"));
   });
 
-  it("the three retention deletes use their status indexes", async () => {
-    const d = await plan(DELIVERED_RETENTION_SQL, "2026-03-01T00:00:00.000Z", 5000);
-    expect(d).toContain("idx_deliveries_status_delivered_at");
-    expect(d).not.toMatch(BARE_SCAN("deliveries"));
+  // Round 2: delivered rows are no longer deleted by age; the key retention
+  // deletes the rows of the lists it deletes, by a watchlist_id index.
+  it("the two retention deletes use their status index; the key retention delete searches deliveries by watchlist_id", async () => {
+    const k = await plan(KEY_RETENTION_DELIVERIES_SQL, "2026-03-01T00:00:00.000Z", 5000);
+    expect(k).toMatch(/SEARCH deliveries USING (COVERING )?INDEX \S+ \(watchlist_id=\?\)/);
+    expect(k).not.toMatch(BARE_SCAN("deliveries"));
+    expect(k).not.toMatch(BARE_SCAN("watchlists"));
     for (const sql of [FAILED_RETENTION_SQL, SKIPPED_RETENTION_SQL]) {
       const p = await plan(sql, "2026-03-01T00:00:00.000Z", 5000);
       expect(p).toContain("idx_deliveries_status_next_at");

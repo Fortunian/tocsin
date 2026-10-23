@@ -1,5 +1,6 @@
 import { isMinSeverity, type MinSeverity } from "../feed/query";
 import { DEFAULT_ECOSYSTEMS } from "../ingest/osv";
+import { checkWebhookUrl } from "./webhook-url";
 
 // Input caps. They bound one stored row and, with plans.max_watchlists, the
 // GET /v1/watchlists answer. The component count cap is plans.max_components.
@@ -31,8 +32,8 @@ export type ParsedWatchlist = { ok: true; name: string; filter: WatchlistFilter;
 export const FALLBACK_MAX_URL_LENGTH = 2048;
 
 // Reads delivery and webhook_url. delivery is "poll" (the default when absent)
-// or "webhook", exact case. webhook needs an https URL with no user or
-// password, at most maxUrlLength characters. webhook_url without
+// or "webhook", exact case. webhook needs a URL that passes checkWebhookUrl,
+// at most maxUrlLength characters. webhook_url without
 // delivery "webhook" is an error, never dropped.
 export function parseDelivery(b: Record<string, unknown>, maxUrlLength: number): { ok: true; value: DeliverySetting } | { ok: false; error: string } {
   const d = b.delivery === undefined ? "poll" : b.delivery;
@@ -44,14 +45,10 @@ export function parseDelivery(b: Record<string, unknown>, maxUrlLength: number):
   if (typeof b.webhook_url !== "string" || b.webhook_url.trim() === "") return { ok: false, error: "webhook_url is required for delivery webhook" };
   const raw = b.webhook_url.trim();
   if (raw.length > maxUrlLength) return { ok: false, error: `webhook_url must be at most ${maxUrlLength} characters` };
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    return { ok: false, error: "webhook_url must be a URL" };
-  }
-  if (u.protocol !== "https:") return { ok: false, error: "webhook_url must use https" };
-  if (u.username !== "" || u.password !== "") return { ok: false, error: "webhook_url must not hold a user name or password" };
+  // The SSRF rules (https, no user info, no IP literal, no localhost, Tocsin,
+  // workers.dev or .internal host). The send path checks them again.
+  const checked = checkWebhookUrl(raw);
+  if (!checked.ok) return { ok: false, error: checked.reason };
   return { ok: true, value: { delivery: "webhook", webhook_url: raw } };
 }
 

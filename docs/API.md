@@ -17,7 +17,9 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `POST /v1/check` | Which dependencies are affected, from lockfiles (multipart) or JSON. |
 | `POST /v1/keys` | Issues one API key per email. See [API keys and watch lists](#api-keys-and-watch-lists). |
 | `POST /v1/watchlists`, `GET /v1/watchlists`, `DELETE /v1/watchlists/{id}` | Create, list and delete your watch lists. Needs an API key. |
+| `GET /v1/watchlists/{id}` | One watch list with its filter and its webhook delivery health. Needs an API key. |
 | `PATCH /v1/watchlists/{id}` | Sets how a watch list is delivered: `poll` or `webhook`. Needs an API key. |
+| `POST /v1/watchlists/{id}/resume` | Starts webhook delivery again on a paused watch list. Needs an API key. |
 | `GET /v1/watchlists/{id}/events` | New events on one watch list, from its stored cursor. Needs an API key. |
 | `GET /v1/watchlists/{id}/deliveries` | The 100 newest webhook deliveries of one watch list, with status. Needs an API key. |
 | `GET /v1/status` | Each enabled source with `last_run_at`, `last_ok_at` and `last_error`, plus the newest feed `cursor`. |
@@ -133,29 +135,67 @@ A watch list is polled by default. Set it to webhook delivery and Tocsin POSTs e
 
 - On create: `POST /v1/watchlists` with `"delivery": "webhook", "webhook_url": "https://..."` added to the body.
 - On an existing list: `PATCH /v1/watchlists/{id}` with `{"delivery": "webhook", "webhook_url": "https://..."}`. `{"delivery": "poll"}` switches back and clears the URL and the secret.
-- `webhook_url` must be an `https` URL with no user name or password, at most 2,048 characters. Bad input answers 400.
+- `webhook_url` must be an `https` URL with no user name or password, at most 2,048 characters. The host must be a name, not an IP address. These hosts are refused: `localhost` and `*.localhost`, `tocsin.sh`, `*.tocsin.sh`, `tocsin.so`, `*.tocsin.so`, `*.workers.dev` and `*.internal`. Bad input answers 400 and the error names the rule.
 - The answer that sets `webhook` carries `webhook_secret` (`whsec_` and 64 hex characters). It is in this answer only; no other route returns it. Each `PATCH` to `webhook` makes a new secret.
 - When your plan row has `webhooks` off, setting `webhook` answers 403 `{"error": "webhooks not enabled for this plan"}`. The free plan has it on.
 
 After each ingest run (every 10 minutes), Tocsin finds the advisories above the list's stored cursor that match its filter and sends each one once. Webhook delivery and `GET /v1/watchlists/{id}/events` move the same stored cursor, so an event read by one is not sent by the other. An advisory published more than 30 days before the list was made (backfilled history) is recorded as `skipped` and not sent. The exception is a CISA KEV flag: when KEV marks an old CVE as exploited, the event is sent, so an `exploited_only` list hears about it. Each (list, advisory) pair is sent at most once, so a pair already recorded is not sent again on a later flag.
+
+Before each POST, Tocsin checks the URL against the same rules again and resolves the host with DNS over HTTPS. If any A or AAAA answer is a private, loopback, link-local (`169.254.0.0/16`, `fe80::/10`, which holds the cloud metadata address), CGNAT (`100.64.0.0/10`), unique local, multicast or reserved address, the delivery is marked `failed` with `last_error` `blocked_host` and nothing is sent. A DNS failure is a failed attempt with `last_error` `dns_failed`, and it is retried.
 
 ### Webhook signature
 
 Each delivery is a POST of the advisory JSON (the same document as `GET /v1/events/{id}`) with these headers:
 
 - `Tocsin-Event-Id`: `<watchlist_id>:<advisory_id>`. It is the same on every attempt of one delivery.
-- `Tocsin-Timestamp`: the send time in Unix seconds.
-- `Tocsin-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed with your webhook secret>`
+- `Tocsin-Timestamp`: the send time in Unix seconds. Each attempt has its own.
+- `Tocsin-Signature: v1=<hex>`: the HMAC-SHA256 of the string `<Tocsin-Timestamp>.<raw body>`, keyed with your webhook secret.
 
-Compute the HMAC over the raw body bytes and compare it with the header in constant time.
+The timestamp is part of the signed string, so a captured body and signature do not verify under a new timestamp.
+
+### Verify a delivery
+
+1. Read the raw body bytes as text. Do not parse and re-serialize the JSON first.
+2. Read `Tocsin-Timestamp` and `Tocsin-Signature`. If one is missing, refuse the request.
+3. If the timestamp is more than 5 minutes (300 seconds) from your clock, refuse the request. This stops a replay of an old capture.
+4. Compute `v1=` and the hex HMAC-SHA256 of `<timestamp>.<raw body>` with your webhook secret.
+5. Compare it with `Tocsin-Signature` in constant time. If they differ, refuse the request.
+6. Drop a repeat by `Tocsin-Event-Id`.
+
+This function does steps 2 to 5. It uses Web Crypto, so it runs in Node 18 and later, Deno, Bun and Cloudflare Workers. `headers` has lower-case names.
+
+```js
+async function verifyTocsinWebhook(secret, headers, rawBody, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const ts = headers["tocsin-timestamp"];
+  const sig = headers["tocsin-signature"];
+  if (!ts || !sig || !/^\d+$/.test(ts)) return false;
+  if (Math.abs(nowSeconds - Number(ts)) > 300) return false;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(`${ts}.${rawBody}`)));
+  const expected = "v1=" + [...mac].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (expected.length !== sig.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
+  return diff === 0;
+}
+```
 
 ### Retries
 
-Any 2xx answer is a delivery. Any other answer, a redirect (3xx is not followed), a network error or a 10-second timeout is a failed attempt. A failed attempt is retried after 1 minute, 5 minutes, 30 minutes, 2 hours and 12 hours. When the 6th attempt fails, the delivery is marked `failed` and is not sent again. A delivered event is never sent again by a retry. If your 2xx answer is lost before Tocsin records it, the event can come again with the same `Tocsin-Event-Id`: drop a repeat by that id.
+Any 2xx answer is a delivery. Any other answer, a redirect (3xx is not followed), a network error or a 10-second timeout is a failed attempt. A failed attempt is retried after 1 minute, 5 minutes, 30 minutes, 2 hours and 12 hours. When the 6th attempt fails, the delivery is marked `failed` and is not sent again. A delivered event is never sent again by a retry, a later ingest run or a backfill that moves the advisory to a new cursor. If your 2xx answer is lost before Tocsin records it, the event can come again with the same `Tocsin-Event-Id`: drop a repeat by that id.
+
+### Paused delivery
+
+Tocsin counts failed attempts in a row for each webhook list. After 10 (the settings row `webhooks.pause_after_failures`), the list is paused: no new deliveries are queued, and pending deliveries wait as `pending` without using an attempt. Any 2xx answer sets the count back to 0.
+
+`GET /v1/watchlists/{id}` answers the list (`id`, `name`, `filter`, `cursor`, `delivery`, `webhook_url`, `created_at`) and its health: `delivery_status` (`active` or `paused`), `consecutive_failures`, `paused_at`, `last_delivery_at` and `last_delivery_code` (`null` when the last attempt had no HTTP answer).
+
+Fix your endpoint, then send `POST /v1/watchlists/{id}/resume`. It answers the health fields with `delivery_status` `active`. The waiting deliveries are sent within about 10 minutes, and the events that came in while the list was paused follow. A `PATCH` that sets the delivery again also clears a pause. Another key's list answers 404.
 
 ### Delivery log
 
-`GET /v1/watchlists/{id}/deliveries` answers `{"deliveries": [...]}`, the 100 newest by feed cursor. Each item has `advisory_id`, `cursor`, `status` (`pending`, `sending`, `delivered`, `failed` or `skipped`), `attempt` (attempts made), `last_code` (the last HTTP status, `null` when there was no answer), `next_at` (the next attempt time, only for `pending`) and `delivered_at`. `DELETE /v1/watchlists/{id}` also deletes its deliveries. Delivered, failed and skipped rows are deleted after 90 days.
+`GET /v1/watchlists/{id}/deliveries` answers `{"deliveries": [...]}`, the 100 newest by feed cursor. Each item has `advisory_id`, `cursor`, `status` (`pending`, `sending`, `delivered`, `failed` or `skipped`), `attempt` (attempts made), `last_code` (the last HTTP status, `null` when there was no answer), `last_error` (`blocked_host`, `dns_failed` or `network` when there was no HTTP status), `next_at` (the next attempt time, only for `pending`) and `delivered_at`. `DELETE /v1/watchlists/{id}` also deletes its deliveries. Failed and skipped rows are deleted after 90 days. Delivered rows are kept while the watch list exists, because they are the record that stops a second send.
 
 ## Connect command
 

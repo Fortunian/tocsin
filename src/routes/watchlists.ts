@@ -32,9 +32,21 @@ export const LIST_WATCHLISTS_SQL =
   "SELECT id, name, filter_json, cursor, delivery, webhook_url, created_at FROM watchlists WHERE key_id = ? ORDER BY created_at, id LIMIT ?";
 
 // Scoped to the caller's key in the same statement. idx_deliveries_watchlist_cursor.
-export const DELIVERIES_LIST_SQL = `SELECT d.advisory_id, d.cursor, d.status, d.attempt, d.last_code, d.next_at, d.delivered_at
+export const DELIVERIES_LIST_SQL = `SELECT d.advisory_id, d.cursor, d.status, d.attempt, d.last_code, d.last_error, d.next_at, d.delivered_at
   FROM deliveries d JOIN watchlists w ON w.id = d.watchlist_id
   WHERE d.watchlist_id = ?1 AND w.key_id = ?2 ORDER BY d.cursor DESC LIMIT ?3`;
+
+// One list with its delivery health (migrations/0023). Never selects
+// webhook_secret. Primary key lookup, scoped to the caller's key.
+export const GET_WATCHLIST_SQL = `SELECT id, name, filter_json, cursor, delivery, webhook_url, created_at,
+  consecutive_failures, paused_at, last_delivery_at, last_delivery_code
+  FROM watchlists WHERE id = ? AND key_id = ?`;
+
+// Clears a pause and the failure count. The rows held while paused are sent by
+// the sweep after webhooks.sweep_grace_seconds; enqueue resumes from the
+// list cursor, which did not move while paused.
+export const RESUME_WATCHLIST_SQL = `UPDATE watchlists SET paused_at = NULL, consecutive_failures = 0
+  WHERE id = ? AND key_id = ? RETURNING id, consecutive_failures, paused_at, last_delivery_at, last_delivery_code`;
 
 const WEBHOOKS_OFF = { error: "webhooks not enabled for this plan" };
 
@@ -51,6 +63,19 @@ interface ListRow {
   delivery: string;
   webhook_url: string | null;
   created_at: string;
+}
+
+interface HealthRow {
+  consecutive_failures: number;
+  paused_at: string | null;
+  last_delivery_at: string | null;
+  last_delivery_code: number | null;
+}
+
+// The health fields as answered: the stored columns plus delivery_status.
+function healthView(h: HealthRow) {
+  const { consecutive_failures, paused_at, last_delivery_at, last_delivery_code } = h;
+  return { delivery_status: paused_at === null ? "active" : "paused", consecutive_failures, paused_at, last_delivery_at, last_delivery_code };
 }
 
 const watchlists = new Hono<AuthEnv>();
@@ -117,7 +142,10 @@ watchlists.patch("/:id", capBody, async (c) => {
 
   const id = c.req.param("id");
   const secret = parsed.value.delivery === "webhook" ? newWebhookSecret() : null;
-  const res = await c.env.DB.prepare("UPDATE watchlists SET delivery = ?, webhook_url = ?, webhook_secret = ? WHERE id = ? AND key_id = ?")
+  // A new delivery setting starts with a clean health record (no pause).
+  const res = await c.env.DB.prepare(
+    "UPDATE watchlists SET delivery = ?, webhook_url = ?, webhook_secret = ?, paused_at = NULL, consecutive_failures = 0 WHERE id = ? AND key_id = ?",
+  )
     .bind(parsed.value.delivery, parsed.value.webhook_url, secret, id, keyId)
     .run();
   if (res.meta.changes === 0) return answer(c, { error: "not found" }, 404);
@@ -130,6 +158,27 @@ watchlists.get("/", async (c) => {
   return answer(c, {
     watchlists: results.map(({ filter_json, ...r }) => ({ ...r, filter: JSON.parse(filter_json) as WatchlistFilter })),
   });
+});
+
+// One list with its filter and delivery health. 404 for another key's list.
+watchlists.get("/:id", async (c) => {
+  const row = await c.env.DB.prepare(GET_WATCHLIST_SQL)
+    .bind(c.req.param("id"), c.var.apiKey.id)
+    .first<ListRow & HealthRow>();
+  if (!row) return answer(c, { error: "not found" }, 404);
+  const { filter_json, consecutive_failures, paused_at, last_delivery_at, last_delivery_code, ...r } = row;
+  const health = healthView({ consecutive_failures, paused_at, last_delivery_at, last_delivery_code });
+  return answer(c, { ...r, filter: JSON.parse(filter_json) as WatchlistFilter, ...health });
+});
+
+// Clears a delivery pause (owner only; the per-key limit applies as on every
+// route here). Answers the health fields.
+watchlists.post("/:id/resume", async (c) => {
+  const row = await c.env.DB.prepare(RESUME_WATCHLIST_SQL)
+    .bind(c.req.param("id"), c.var.apiKey.id)
+    .first<HealthRow & { id: string }>();
+  if (!row) return answer(c, { error: "not found" }, 404);
+  return answer(c, { id: row.id, ...healthView(row) });
 });
 
 // One transaction: the list's deliveries rows (guarded by the key), then the list.
@@ -150,6 +199,7 @@ interface DeliveryListRow {
   status: string;
   attempt: number;
   last_code: number | null;
+  last_error: string | null;
   next_at: string;
   delivered_at: string | null;
 }

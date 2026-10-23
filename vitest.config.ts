@@ -1,7 +1,7 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
-// Five projects. `api` is the main worker (src/index.ts, D1).
+// Six projects. `api` is the main worker (src/index.ts, D1).
 // `mcp` is the MCP worker (workers/mcp), which has no D1 binding.
 // `cli` is the npm package in packages/cli; it runs in plain Node.
 // `action` is the GitHub Action in action/; it runs in plain Node too.
@@ -21,7 +21,7 @@ export default defineConfig(async () => {
           test: {
             name: "api",
             include: ["tests/**/*.test.ts"],
-            exclude: ["tests/mcp/**", "tests/cli/**", "tests/action/**", "tests/launch/**"],
+            exclude: ["tests/mcp/**", "tests/cli/**", "tests/action/**", "tests/launch/**", "tests/docs/**"],
             setupFiles: ["./tests/apply-migrations.ts"],
           },
         },
@@ -42,6 +42,14 @@ export default defineConfig(async () => {
             name: "cli",
             environment: "node",
             include: ["tests/cli/**/*.test.ts"],
+          },
+        },
+        {
+          // `docs` runs documented code blocks (docs/API.md) in plain Node.
+          test: {
+            name: "docs",
+            environment: "node",
+            include: ["tests/docs/**/*.test.ts"],
           },
         },
         {

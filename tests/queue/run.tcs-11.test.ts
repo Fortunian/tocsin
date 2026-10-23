@@ -2,6 +2,7 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../../src/index";
+import { dnsCacheKey } from "../../src/queue/resolve";
 import { runQueue } from "../../src/queue/run";
 import {
   FakeFetch,
@@ -56,8 +57,11 @@ describe("runQueue webhook consumer", () => {
     expect(call.body).toBe(adv.doc_json);
     expect(call.headers["tocsin-event-id"]).toBe(`${list.id}:${adv.id}`);
     expect(call.headers["tocsin-timestamp"]).toBe(String(Math.floor(T0.getTime() / 1000)));
-    expect(call.headers["tocsin-signature"]).toBe(`sha256=${await hmacHex(list.secret, call.body)}`);
-    expect(call.headers["tocsin-signature"]).not.toBe(`sha256=${await hmacHex("whsec_wrong_fixture", call.body)}`);
+    // Round 2 (replay): the MAC covers "<timestamp>.<body>", in the v1= scheme.
+    const signed = `${call.headers["tocsin-timestamp"]}.${call.body}`;
+    expect(call.headers["tocsin-signature"]).toBe(`v1=${await hmacHex(list.secret, signed)}`);
+    expect(call.headers["tocsin-signature"]).not.toBe(`v1=${await hmacHex("whsec_wrong_fixture", signed)}`);
+    expect(call.headers["tocsin-signature"]).not.toBe(`v1=${await hmacHex(list.secret, call.body)}`);
 
     const row = await deliveryRow(list.id, adv.id);
     expect(row).toMatchObject({ status: "delivered", delivered_at: T0.toISOString(), last_code: 200, attempt: 1 });
@@ -182,6 +186,7 @@ describe("runQueue webhook consumer", () => {
 describe("worker.queue (production entry)", () => {
   it("delivers through the src/index.ts queue handler with the global fetch", async () => {
     const { list, adv, msg } = await pendingPair({}, new Date(Date.now() - 1000));
+    await env.CURSORS.delete(dnsCacheKey(new URL(list.url).hostname));
     const f = new FakeFetch([200]);
     vi.spyOn(globalThis, "fetch").mockImplementation(f.fn);
     const batch = fakeBatch([msg]);
@@ -194,5 +199,7 @@ describe("worker.queue (production entry)", () => {
     expect(f.calls[0].url).toBe(list.url);
     expect((await deliveryRow(list.id, adv.id))!.status).toBe("delivered");
     expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+    // Round 2: the send-time DoH check goes through the same fetch seam (faked, 0 real calls).
+    expect(f.dohCalls).toHaveLength(2);
   });
 });
