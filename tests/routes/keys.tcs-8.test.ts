@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
-import { call, nextIp, sha256HexOf, uniqueEmail } from "./keys-helpers.tcs-8";
+import { call, newKey, nextIp, sha256HexOf, uniqueEmail } from "./keys-helpers.tcs-8";
 
 async function rowsFor(email: string): Promise<Record<string, unknown>[]> {
   const { results } = await env.DB.prepare("SELECT * FROM api_keys WHERE email = ?").bind(email).all<Record<string, unknown>>();
@@ -8,12 +8,16 @@ async function rowsFor(email: string): Promise<Record<string, unknown>[]> {
 }
 
 describe("POST /v1/keys", () => {
-  it("issues a tcs_ key once, answers the plaintext once, and stores only its sha256", async () => {
+  // TCS-64: the key is answered by the confirm link, not by this POST.
+  it("issues a tcs_ key through the confirm link, answers the plaintext once, and stores only its sha256", async () => {
     const email = uniqueEmail("once");
     const res = await call("POST", "/v1/keys", { body: { email } });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(202);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
-    const body = (await res.json()) as { key: string; key_id: string; plan: string; email: string };
+    expect(((await res.json()) as Record<string, unknown>).key).toBeUndefined();
+    expect(await rowsFor(email)).toHaveLength(0);
+
+    const body = (await newKey(email)) as { key: string; key_id: string; plan?: string; email: string };
     expect(body.key).toMatch(/^tcs_[0-9a-f]{64}$/);
     expect(body.plan).toBe("free");
     expect(body.email).toBe(email);
@@ -26,17 +30,18 @@ describe("POST /v1/keys", () => {
     for (const v of Object.values(rows[0])) expect(v).not.toBe(body.key);
   });
 
-  it("answers 409 with no key on a second call for the same email, also with other case and spaces", async () => {
+  // TCS-64 reverses the 409: a second call answers 202 with the same body as a
+  // first call, so the answer never tells whether the email has a key.
+  it("answers 202 with an identical body and no key on a second call for the same email, also with other case and spaces", async () => {
     const email = uniqueEmail("twice");
-    expect((await call("POST", "/v1/keys", { body: { email } })).status).toBe(201);
+    await newKey(email);
     const before = await rowsFor(email);
+    const first = await (await call("POST", "/v1/keys", { body: { email: uniqueEmail("first") } })).text();
 
     for (const variant of [email, `  ${email.toUpperCase()}  `]) {
       const res = await call("POST", "/v1/keys", { body: { email: variant } });
-      expect(res.status).toBe(409);
-      const body = (await res.json()) as Record<string, unknown>;
-      expect(body.key).toBeUndefined();
-      expect(body.error).toMatch(/already exists/);
+      expect(res.status).toBe(202);
+      expect(await res.text()).toBe(first);
     }
     const after = await rowsFor(email);
     expect(after).toHaveLength(1);
@@ -45,11 +50,11 @@ describe("POST /v1/keys", () => {
 
   it("stores a mixed-case email normalized, so the lower-case form is the same identity", async () => {
     const lower = uniqueEmail("case");
-    const res = await call("POST", "/v1/keys", { body: { email: ` ${lower.toUpperCase()} ` } });
-    expect(res.status).toBe(201);
-    expect(((await res.json()) as { email: string }).email).toBe(lower);
+    const body = await newKey(` ${lower.toUpperCase()} `);
+    expect(body.email).toBe(lower);
     expect(await rowsFor(lower)).toHaveLength(1);
-    expect((await call("POST", "/v1/keys", { body: { email: lower } })).status).toBe(409);
+    expect((await call("POST", "/v1/keys", { body: { email: lower } })).status).toBe(202);
+    expect(await rowsFor(lower)).toHaveLength(1);
   });
 
   it("answers 400 for a body that is not an email address, and 400 for a body that is not JSON", async () => {
@@ -70,7 +75,7 @@ describe("POST /v1/keys", () => {
       const ip = nextIp();
       const statuses: number[] = [];
       for (let i = 0; i < 3; i++) statuses.push((await call("POST", "/v1/keys", { ip, body: { email: uniqueEmail("rl") } })).status);
-      expect(statuses).toEqual([201, 201, 429]);
+      expect(statuses).toEqual([202, 202, 429]);
     } finally {
       vi.useRealTimers();
       await env.DB.prepare("UPDATE settings SET value = '5' WHERE key = 'keys.anon_rate_per_minute'").run();

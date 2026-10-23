@@ -9,4 +9,8 @@ export interface Env {
   NVD_API_KEY?: string;
   // Bearer token of POST /v1/internal/import (wrangler secret). Unset: the route answers 403.
   IMPORT_TOKEN?: string;
+  // MailChannels Email API key (wrangler secret). Unset: POST /v1/keys answers 503.
+  MAILCHANNELS_API_KEY?: string;
+  // "fake" selects the test mailer (src/mail/fake.ts). Set only in vitest.config.ts, never in wrangler.toml.
+  MAIL_TRANSPORT?: string;
 }

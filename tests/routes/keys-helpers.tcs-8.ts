@@ -1,4 +1,5 @@
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
+import { readFakeOutbox } from "../../src/mail/fake";
 
 // Every caller gets its own client IP (RFC 3849 documentation range), so the
 // per-IP rate limit on POST /v1/keys never couples two tests.
@@ -31,11 +32,17 @@ export function call(method: string, path: string, opts: CallOpts = {}): Promise
   return exports.default.fetch(`https://tocsin.test${path}`, { method, headers, body });
 }
 
+// TCS-64: POST /v1/keys mails a confirm link (the fake mailer in tests) and
+// the key is answered only when the link is opened.
 export async function newKey(email: string = uniqueEmail("k")): Promise<{ key: string; key_id: string; email: string }> {
   const res = await call("POST", "/v1/keys", { body: { email } });
-  if (res.status !== 201) throw new Error(`POST /v1/keys answered ${res.status}: ${await res.text()}`);
-  const body = (await res.json()) as { key: string; key_id: string; email: string };
-  return body;
+  if (res.status !== 202) throw new Error(`POST /v1/keys answered ${res.status}: ${await res.text()}`);
+  const mails = await readFakeOutbox(env.CURSORS, email.trim().toLowerCase());
+  const m = /token=(tct_[0-9a-f]{64})/.exec(mails[mails.length - 1]?.text ?? "");
+  if (!m) throw new Error(`no confirm link was mailed to ${email}`);
+  const ok = await call("GET", `/v1/keys/confirm?token=${m[1]}`);
+  if (ok.status !== 200) throw new Error(`GET /v1/keys/confirm answered ${ok.status}: ${await ok.text()}`);
+  return (await ok.json()) as { key: string; key_id: string; email: string };
 }
 
 export async function sha256HexOf(s: string): Promise<string> {
