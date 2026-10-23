@@ -1,0 +1,35 @@
+name: publish-mcp-registry
+
+# Publishes mcp/server.json to the official MCP registry as sh.tocsin/tocsin.
+# Run it by hand: Actions > publish-mcp-registry > Run workflow.
+# A sh.tocsin/* name needs DNS proof of tocsin.sh (GitHub OIDC login only grants
+# io.github.<owner>/*). Operator setup, once: README, "Directories".
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the DNS key secret
+        env:
+          MCP_REGISTRY_DNS_KEY: ${{ secrets.MCP_REGISTRY_DNS_KEY }}
+        run: |
+          if [ -z "$MCP_REGISTRY_DNS_KEY" ]; then
+            echo "::error::secret MCP_REGISTRY_DNS_KEY is not set (README, Directories)"
+            exit 1
+          fi
+      - name: Install mcp-publisher (pinned)
+        run: curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+      - name: Validate
+        run: ./mcp-publisher validate mcp/server.json
+      - name: Log in (DNS, tocsin.sh)
+        env:
+          MCP_REGISTRY_DNS_KEY: ${{ secrets.MCP_REGISTRY_DNS_KEY }}
+        run: ./mcp-publisher login dns --domain=tocsin.sh --private-key="$MCP_REGISTRY_DNS_KEY"
+      - name: Publish
+        run: ./mcp-publisher publish mcp/server.json
