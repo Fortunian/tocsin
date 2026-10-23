@@ -3,10 +3,11 @@ import type { Env } from "../env";
 import { jsonUtf8 } from "../lib/http";
 import { getSettingInt } from "../lib/settings";
 
-// Code fallbacks only. The live limits are settings.feed.anon_rate_per_minute
-// and settings.check.anon_rate_per_minute.
+// Code fallbacks only. The live limits are settings.feed.anon_rate_per_minute,
+// settings.check.anon_rate_per_minute and settings.keys.anon_rate_per_minute.
 export const FALLBACK_RATE_PER_MINUTE = 60;
 export const FALLBACK_CHECK_RATE_PER_MINUTE = 20;
+export const FALLBACK_KEYS_RATE_PER_MINUTE = 5;
 const WINDOW_MS = 60_000;
 
 interface RateLimitConfig {
@@ -59,4 +60,10 @@ export const checkRateLimit = makeRateLimit({
   settingKey: "check.anon_rate_per_minute",
   fallback: FALLBACK_CHECK_RATE_PER_MINUTE,
   scope: "check",
+});
+
+export const keysRateLimit = makeRateLimit({
+  settingKey: "keys.anon_rate_per_minute",
+  fallback: FALLBACK_KEYS_RATE_PER_MINUTE,
+  scope: "keys",
 });
