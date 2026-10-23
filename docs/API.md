@@ -9,7 +9,7 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `GET /v1/health` | `{ "ok": true, "version": "<x.y.z>" }` when the worker is up. |
 | `GET /v1/events` | One page of the feed: `{ "events": [...], "next_cursor": <int>, "has_more": <bool> }`. |
 | `GET /v1/events/{id}` | One advisory by its Tocsin id. 404 when it does not exist. |
-| `GET /v1/events/cve/{cve}` | The earliest advisory for a CVE id (`CVE-YYYY-NNNN`). 400 for a malformed id, 404 when none. |
+| `GET /v1/events/cve/{cve}` | The earliest advisory, by feed cursor, that lists the CVE id (`CVE-YYYY-NNNN`) in any of its `cve_ids`, not only the first one. `GET /cve/{cve}` with `Accept: application/json` lists every such advisory. 400 for a malformed id, 404 when none. |
 | `GET /advisories/{id}` | One advisory as an HTML page. HTML is the default: no `Accept` header, `*/*` and any `Accept` that names `text/html` get HTML. An `Accept` that names `application/json` (any q-value) and not `text/html` gets the advisory JSON. ETag with 304, `Cache-Control: public, max-age=300`. 404 when it does not exist. |
 | `GET /cve/{cve}` | Every advisory that carries a CVE id (any of its `cve_ids`), as one HTML page. `Accept: application/json` returns `{ "cve", "advisories": [...] }`. 404 when none. |
 | `GET /sitemap.xml` | Every advisory page and every CVE page, with no `lastmod`. Past one file (50,000 URLs at most) it is an index of `/sitemap-{n}.xml` files. |
