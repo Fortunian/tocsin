@@ -46,17 +46,22 @@ curl -H "Content-Type: application/json" -d '{"dependencies":[{"ecosystem":"npm"
 
 Runtime parameters are `node=`, `php=`, `python=`, `go=`, `deno=` and `bun=`. `go=` takes the Go toolchain version as `go version` prints it (`go=1.22.3` or `go=go1.22.3`). It matches the OSV `Go` advisories on the toolchain itself (package `stdlib`, `toolchain` or `cmd/<tool>`) by their OSV range events, and `fixed_in` is the lowest OSV `fixed` version above yours. Those advisories stay `Go` advisories for module matching; the runtime match does not add a second advisory. An affected item for `go=1.22.3` has `dependency` `{ "ecosystem": "go", "name": "go", "version": "1.22.3" }`. The version is echoed as given: `go=go1.22.3` answers `"version": "go1.22.3"`.
 
-The answer is `{ "checked": <int>, "affected": [...], "skipped": [...], "feed_cursor": <int> }`. Each affected item has `dependency`, `advisory_id`, `cve_ids`, `severity`, `exploited`, `fixed_in`, `action` and `url`, critical first, then exploited first. `skipped` lists what could not be checked; it is not a clean result. Send `feed_cursor` as `since=` to `/v1/events` to get every advisory published after the check.
+The answer is `{ "checked": <int>, "affected": [...], "skipped": [...], "feed_cursor": <int>, "coverage": [...] }`. Each affected item has `dependency`, `advisory_id`, `cve_ids`, `severity`, `exploited`, `fixed_in`, `action` and `url`, critical first, then exploited first. `skipped` lists what could not be checked; it is not a clean result. Send `feed_cursor` as `since=` to `/v1/events` to get every advisory published after the check.
+
+`coverage` has one item per ecosystem of the checked dependencies: `{ "ecosystem": "PyPI", "since": "2016-01-05T00:00:00Z", "complete": true }`. `since` is the oldest `published_at` Tocsin holds for it (null when not known), and `complete` says whether its whole history is loaded. A dependency with no finding in an ecosystem with `complete: false` is in `skipped` as `{ "dependency": {...}, "reason": "partial_coverage", "since": ... }`, never counted as clean. A dependency with a finding stays in `affected`.
+
+A Node.js version on a release line past its end of life (from the [nodejs/Release schedule](https://github.com/nodejs/Release)) is affected by one advisory for that line, severity `high`, `fixed_in` null: the line gets no security fixes, and the action names the lowest supported LTS line.
 
 ### Status
 
 `GET /v1/status` answers:
 
 ```
-{ "sources": [{ "id": "osv", "kind": "osv", "last_run_at": "...", "last_ok_at": "...", "last_error": null }], "cursor": 1234 }
+{ "sources": [{ "id": "osv", "kind": "osv", "last_run_at": "...", "last_ok_at": "...", "last_error": null, "coverage_since": null }], "cursor": 1234,
+  "coverage": [{ "ecosystem": "npm", "since": "2016-01-05T00:00:00Z", "complete": true, "imported": 200000 }] }
 ```
 
-`cursor` is the newest feed cursor, or 0 when the feed is empty. The same data is on the page [/status](/status).
+`cursor` is the newest feed cursor, or 0 when the feed is empty. `coverage_since` is the oldest `published_at` a source holds, null until its history is read in full. `coverage` has one item per enabled OSV ecosystem and per runtime; `imported` is the record count of the latest backfill run of an OSV ecosystem, null for a runtime. The same data is on the page [/status](/status).
 
 ## Advisory schema
 

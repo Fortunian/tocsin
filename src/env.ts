@@ -7,4 +7,6 @@ export interface Env {
   GITHUB_TOKEN?: string;
   // NVD API key (wrangler secret). Unset: the NVD ingester runs at the keyless limit.
   NVD_API_KEY?: string;
+  // Bearer token of POST /v1/internal/import (wrangler secret). Unset: the route answers 403.
+  IMPORT_TOKEN?: string;
 }

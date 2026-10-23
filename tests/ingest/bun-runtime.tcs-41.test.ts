@@ -70,6 +70,10 @@ beforeEach(async () => {
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = ?").bind(SOURCE).run();
   await env.CURSORS.delete(cursorKey(SOURCE));
   await env.CURSORS.delete(etagKey(SOURCE));
+  // TCS-32: a source with no coverage_since reads its whole history once
+  // (tests/ingest/github-runtime-coverage.tcs-32.test.ts). These tests pin the
+  // cursor and ETag rules of a covered source, so each one starts covered.
+  await env.DB.prepare("UPDATE sources SET coverage_since = '2020-01-01T00:00:00Z' WHERE id = ?").bind(SOURCE).run();
   fetchSpy.mockImplementation(throwing as never);
 });
 

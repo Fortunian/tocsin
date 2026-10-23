@@ -225,7 +225,8 @@ describe("pre-announcement (pre-announcement)", () => {
 
     // status shape: the loader behind GET /v1/status.
     const node = (await loadStatus(env.DB)).sources.find((s) => s.id === "node-runtime")!;
-    expect(Object.keys(node).sort()).toEqual(["id", "kind", "last_error", "last_ok_at", "last_run_at", "last_warning"]);
+    // TCS-32 added coverage_since to every status source.
+    expect(Object.keys(node).sort()).toEqual(["coverage_since", "id", "kind", "last_error", "last_ok_at", "last_run_at", "last_warning"]);
     expect(node.last_error).toBeNull();
   });
 });

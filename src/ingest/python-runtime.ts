@@ -20,6 +20,7 @@ import { comparePsfIds, normalizePythonAdvisory, parsePsfListing, publishedDoc, 
 import { attemptsOf, dueRows, knownIds, readPendingState, writeRecord, type PendingState, type RecordRow } from "./python-runtime-records";
 import { releasedVersions } from "./python-runtime-releases";
 import { readRuntimeConfig } from "./runtime-text";
+import { markCoverage } from "./coverage";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
 import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
 
@@ -163,6 +164,10 @@ async function planWork(state: RunState, listed: string[]): Promise<Work> {
   return { records: all.slice(0, cfg.max_records), pending, capped: all.length > cfg.max_records };
 }
 
+// A failed record that still retries: its advisory is not stored yet.
+// idx_python_runtime_records_state_next (state = 'failed' AND next_check_at > NULL).
+export const PY_RETRYING_SQL = "SELECT 1 AS hit FROM python_runtime_records WHERE state = 'failed' AND next_check_at IS NOT NULL LIMIT 1";
+
 async function run(ctx: IngestContext): Promise<RunResult> {
   const cfg = readConfig(ctx.source.config);
   const kv = ctx.env.CURSORS;
@@ -184,6 +189,11 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   for (const id of work.records) await handleRecord(state, id);
   for (const row of work.pending) await recheck(state, row);
   await finish(state, listing, work.capped);
+  // The listing is the whole PSF history: a run that read every new id, with
+  // no error and no record still retrying, has the full history (TCS-32).
+  if (!ctx.source.coverage_since && !work.capped && state.result.errors.length === 0 && !(await ctx.env.DB.prepare(PY_RETRYING_SQL).first())) {
+    await markCoverage(ctx.env.DB, SOURCE, now.toISOString());
+  }
   return state.result;
 }
 

@@ -62,7 +62,8 @@ export interface LocalWorker {
   dispose(): Promise<void>;
 }
 
-export async function startLocalWorker(): Promise<LocalWorker> {
+// `text` adds plain text bindings (TCS-32: IMPORT_TOKEN for the import route).
+export async function startLocalWorker(opts: { text?: Record<string, string> } = {}): Promise<LocalWorker> {
   const unknownUrls: string[] = [];
   // Miniflare 5 option shape: one worker with a config (manifest + env bindings) and dev options.
   const mf = new Miniflare({
@@ -79,6 +80,7 @@ export async function startLocalWorker(): Promise<LocalWorker> {
             DB: { type: "d1", id: "tocsin" },
             CURSORS: { type: "kv", id: "cursors" },
             DELIVERIES: { type: "queue", name: "deliveries" },
+            ...Object.fromEntries(Object.entries(opts.text ?? {}).map(([k, value]) => [k, { type: "text" as const, value }])),
           },
         },
         dev: {
@@ -103,6 +105,9 @@ export async function startLocalWorker(): Promise<LocalWorker> {
 
     // Seed: only the two runtime sources run, through the production cron path.
     await db.prepare(`UPDATE sources SET enabled = 0 WHERE id NOT IN ('node-runtime', 'php-runtime')`).run();
+    // The node-runtime window as before TCS-32 (migration 0015 seeds 4000 days and 20 posts
+    // for the full feed history), so the first-run re-read stays inside the fixture posts.
+    await db.prepare(`UPDATE sources SET config_json = json_set(config_json, '$.backfill_days', 120, '$.max_posts', 5) WHERE id = 'node-runtime'`).run();
     const kv = await mf.getKVNamespace("CURSORS");
     await kv.put("cursor:node-runtime", START);
     await kv.put("cursor:php-runtime", START);
