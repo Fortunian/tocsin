@@ -1,5 +1,6 @@
 import { type Context, Hono } from "hono";
 import { SITE_BASE, advisoryPath, cvePath } from "../../site/advisory";
+import { POST_PATH } from "../../site/post";
 import type { Env } from "../env";
 
 // /sitemap.xml: every advisory page and every CVE page (each CVE id of an
@@ -31,11 +32,15 @@ async function chunkCount(db: D1Database): Promise<number> {
   return Math.max(1, Math.ceil((row?.m ?? 0) / CURSORS_PER_CHUNK));
 }
 
-// Advisory pages first, then one URL per CVE in the chunk. A CVE whose
-// advisories span two chunks appears in both, which a crawler treats as one
-// URL. Past MAX_URLS the rest of the CVE URLs are dropped and logged.
-function urlset(rows: Row[]): string {
-  const pages = new Set<string>();
+// The static site pages that chunk 1 lists ahead of the advisories (TCS-14).
+export const STATIC_PATHS = [POST_PATH];
+
+// Static pages (chunk 1 only), then advisory pages, then one URL per CVE in the
+// chunk. A CVE whose advisories span two chunks appears in both, which a
+// crawler treats as one URL. Past MAX_URLS the rest of the CVE URLs are dropped
+// and logged.
+function urlset(rows: Row[], extra: string[] = []): string {
+  const pages = new Set<string>(extra);
   const cves = new Set<string>();
   for (const r of rows) {
     pages.add(advisoryPath(r.id));
@@ -57,7 +62,7 @@ function sitemapIndex(n: number): string {
 async function chunk(c: Ctx, n: number): Promise<Response> {
   const lo = (n - 1) * CURSORS_PER_CHUNK;
   const { results } = await c.env.DB.prepare(SITEMAP_CHUNK_SQL).bind(lo, lo + CURSORS_PER_CHUNK).all<Row>();
-  return c.body(urlset(results), 200, { "Content-Type": XML_TYPE, "Cache-Control": CACHE_CONTROL });
+  return c.body(urlset(results, n === 1 ? STATIC_PATHS : []), 200, { "Content-Type": XML_TYPE, "Cache-Control": CACHE_CONTROL });
 }
 
 const sitemap = new Hono<{ Bindings: Env }>();
