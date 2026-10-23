@@ -31,6 +31,9 @@ pre code { background: none; padding: 0; }
 .cmd pre { flex: 1 1 auto; min-width: 0; margin: 0; }
 button[data-copy] { flex: 0 0 auto; min-height: 40px; min-width: 64px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 6px; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
 button[data-copy]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.install { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.install-link { display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 6px; text-decoration: none; }
+.install-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .table { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }

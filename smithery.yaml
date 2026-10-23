@@ -1,0 +1,7 @@
+# Smithery manifest for the hosted Tocsin MCP server.
+# Server URL: https://mcp.tocsin.sh/mcp (streamable HTTP). No config, no key.
+# Smithery does not build or host this server. List it with the Smithery CLI:
+#   npx @smithery/cli mcp publish https://mcp.tocsin.sh/mcp -n <namespace>/tocsin
+# The CLI (4.11.1) reads `name` from this file when -n is not given.
+name: tocsin
+target: remote
