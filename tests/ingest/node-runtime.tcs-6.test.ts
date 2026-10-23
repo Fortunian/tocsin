@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { fetchFeed, fetchPost, NodeHttpError, NodeLinkError } from "../../src/ingest/node-runtime-client";
-import { NODE_CURSOR_KEY, normalizeNodePost, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
+import { NODE_CURSOR_KEY, NODE_PARSER_KEY, NODE_PARSER_REV, normalizeNodePost, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
+import { NODE_DIST_KEY } from "../../src/ingest/node-runtime-dist";
 import { decodeEntities, htmlSections } from "../../src/ingest/runtime-text";
 import type { IngestContext } from "../../src/ingest/types";
 import { validateAdvisory, type Advisory } from "../../src/schema/advisory";
@@ -92,7 +93,11 @@ afterAll(() => {
 });
 
 // Each test starts with no node-runtime rows and a cursor before the 2026-10-21 post.
+// TCS-30: KV is shared by the tests of this file, so each test also starts with no
+// cached dist index and the current parser revision (no one-time backfill).
 beforeEach(async () => {
+  await env.CURSORS.delete(NODE_DIST_KEY);
+  await env.CURSORS.put(NODE_PARSER_KEY, NODE_PARSER_REV);
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source = 'node-runtime')").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'node-runtime'").run();
   await env.CURSORS.put(NODE_CURSOR_KEY, "2026-10-01T00:00:00Z");
@@ -216,7 +221,8 @@ describe("nodeRuntime.run (run)", () => {
     expect(res.upserted).toBe(10);
     expect(res.unchanged).toBe(0);
     expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(PUB);
-    expect(fake.urls()).toEqual([FEED, INDEX, POST]);
+    // TCS-30: the dist index is read after the post that needs it.
+    expect(fake.urls()).toEqual([FEED, POST, INDEX]);
     const row = await env.DB.prepare(
       "SELECT a.ecosystem, a.component, a.severity_label FROM advisories a JOIN advisory_sources s ON s.advisory_id = a.id WHERE s.source = 'node-runtime' AND s.source_id = 'CVE-2026-111497'",
     ).first<{ ecosystem: string; component: string; severity_label: string }>();
@@ -300,7 +306,8 @@ describe("nodeRuntime.run (run)", () => {
     const fake = createRuntimeFake(routes({ [FEED]: feedWithExtraItem(evil, "Thu, 22 Oct 2026 01:00:00 GMT") }));
     const res = await nodeRuntime.run(ctxFor(fake.fetch));
     expect(fake.urls().filter((u) => u.includes("evil.example"))).toEqual([]);
-    expect(fake.urls()).toEqual([FEED, INDEX, POST]);
+    // TCS-30: the dist index is read after the post that needs it.
+    expect(fake.urls()).toEqual([FEED, POST, INDEX]);
     expect(res.errors).toHaveLength(1);
     expect(res.errors[0]).toContain(evil);
     expect(res.errors[0]).toContain("https://nodejs.org");

@@ -46,14 +46,23 @@ export async function fetchPost(fetchFn: typeof fetch, url: string, allowedOrigi
   return getText(fetchFn, url);
 }
 
+export type DistIndexResult = { notModified: true } | { notModified: false; versions: Set<string>; etag?: string };
+
 // The release index: the set of published versions, with their "v" prefix.
-export async function fetchDistIndex(fetchFn: typeof fetch, url: string): Promise<Set<string>> {
-  const body: unknown = JSON.parse(await getText(fetchFn, url));
+// `etag` makes the request conditional: a 304 answer has no body.
+export async function fetchDistIndex(fetchFn: typeof fetch, url: string, etag?: string): Promise<DistIndexResult> {
+  const headers: Record<string, string> = { "User-Agent": "tocsin.sh" };
+  if (etag !== undefined) headers["If-None-Match"] = etag;
+  const res = await fetchFn(url, { headers });
+  if (res.status === 304) return { notModified: true };
+  if (!res.ok) throw new NodeHttpError(res.status, url);
+  const body: unknown = JSON.parse(await res.text());
   if (!Array.isArray(body)) throw new Error(`nodejs.org dist index at ${url} is not a JSON array`);
   const versions = new Set<string>();
   for (const e of body) {
     const v = (e as { version?: unknown } | null)?.version;
     if (typeof v === "string") versions.add(v);
   }
-  return versions;
+  const tag = res.headers.get("ETag");
+  return tag === null ? { notModified: false, versions } : { notModified: false, versions, etag: tag };
 }

@@ -15,6 +15,10 @@ export interface RunResult {
   // Notes an operator must see that do not fail the run (sources.last_warning).
   // Absent or empty keeps the stored last_warning.
   warnings?: string[];
+  // One short line per item the run read (node-runtime: one per post). On a
+  // failed run it goes before the error detail in sources.last_error, so the
+  // 1000-char cap never hides the items that went well.
+  summary?: string;
 }
 
 // The `sources` row the ingester runs for, with `config_json` parsed.
