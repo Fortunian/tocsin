@@ -65,6 +65,8 @@ beforeEach(async () => {
   await env.DB.prepare("DELETE FROM backfill").run();
   // These tests cut 990 records with a server cap of 500 (the seed is 100).
   await env.DB.prepare("UPDATE settings SET value = '500' WHERE key = 'import.max_batch'").run();
+  // TCS-38: a request also caps its release docs (import.max_docs, seed 200); one doc per record here.
+  await env.DB.prepare("UPDATE settings SET value = '500' WHERE key = 'import.max_docs'").run();
   // Each test starts with none of this file's advisories stored.
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source = 'osv' AND source_id LIKE 'RUSTSEC-202%')").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'osv' AND source_id LIKE 'RUSTSEC-202%'").run();
@@ -72,6 +74,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await env.DB.prepare("UPDATE settings SET value = '100' WHERE key = 'import.max_batch'").run();
+  await env.DB.prepare("UPDATE settings SET value = '200' WHERE key = 'import.max_docs'").run();
 });
 
 const backfillRow = () => env.DB.prepare("SELECT * FROM backfill WHERE ecosystem = ?").bind(ECO).first<Record<string, unknown>>();

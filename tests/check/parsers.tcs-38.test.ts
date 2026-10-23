@@ -21,6 +21,7 @@ import dpkgQuery from "../fixtures/lockfiles/dpkg-query.txt?raw";
 import gradleLockfile from "../fixtures/lockfiles/gradle.lockfile?raw";
 import mixLock from "../fixtures/lockfiles/mix.lock?raw";
 import packagesLock from "../fixtures/lockfiles/packages.lock.json?raw";
+import pomDoubling from "../fixtures/lockfiles/pom-doubling.xml?raw";
 import pomXml from "../fixtures/lockfiles/pom.xml?raw";
 import pubspecLock from "../fixtures/lockfiles/pubspec.lock?raw";
 
@@ -66,8 +67,48 @@ describe("pom.xml (Maven)", () => {
       { ecosystem: "Maven", name: "org.example:core", version: "2.0.1" },
       { ecosystem: "Maven", name: "org.example:lib", version: "1.2.3" },
     ]);
-    expect(reasons(r)).toEqual(["no version (managed by a parent)", "unresolved property", "version range"]);
+    expect(reasons(r)).toEqual(["no version (managed by a parent)", "unresolved_property", "version range"]);
     expect(r.dependencies.some((d) => d.name.startsWith("commented"))).toBe(false);
+  });
+
+  // Round 2 review: ${p} expansion is bounded. A resolved value is at most 256
+  // characters and a document resolves at most 200 properties; past either cap
+  // the dependency is skipped (unresolved_property), never read as clean.
+  const pomWith = (props: string, deps: string) =>
+    `<project><groupId>x</groupId><artifactId>x</artifactId><version>1</version><properties>${props}</properties><dependencies>${deps}</dependencies></project>`;
+  const dep = (a: string, v: string) => `<dependency><groupId>org.example</groupId><artifactId>${a}</artifactId><version>${v}</version></dependency>`;
+
+  it("a 30-level doubling property chain (tests/fixtures/lockfiles/pom-doubling.xml) parses in under 50 ms and is a skip", () => {
+    const t0 = performance.now();
+    const r = parsePomXml(pomDoubling);
+    const ms = performance.now() - t0;
+    expect(ms).toBeLessThan(50);
+    expect(r.dependencies).toEqual([]);
+    expect(reasons(r)).toEqual(["unresolved_property"]);
+  }, 120_000);
+
+  it("a resolved value over 256 characters is a skip", () => {
+    const long = "1".repeat(257);
+    const r = parsePomXml(pomWith(`<big>${long}</big><ok>${"1".repeat(256)}</ok>`, dep("big", "${big}") + dep("ok", "${ok}") + dep("lit", long)));
+    expect(r.dependencies.map((d) => d.name)).toEqual(["org.example:ok"]);
+    expect(reasons(r)).toEqual(["unresolved_property", "unresolved_property"]);
+  });
+
+  it("a document that needs more than 200 property expansions is a skip; 200 still resolve", () => {
+    const chain = (n: number) => ["<c0>1.0</c0>", ...Array.from({ length: n }, (_, i) => `<c${i + 1}>\${c${i}}</c${i + 1}>`)].join("");
+    const over = parsePomXml(pomWith(chain(200), dep("deep", "${c200}")));
+    expect(over.dependencies).toEqual([]);
+    expect(reasons(over)).toEqual(["unresolved_property"]);
+    const at = parsePomXml(pomWith(chain(199), dep("deep", "${c199}")));
+    expect(at.dependencies).toEqual([{ ecosystem: "Maven", name: "org.example:deep", version: "1.0" }]);
+  });
+
+  it("two levels of properties resolve, and 300 references to one property count it once", () => {
+    const deps = Array.from({ length: 300 }, (_, i) => dep(`m${i}`, "${spring.version}")).join("");
+    const r = parsePomXml(pomWith("<base.version>5.3.39</base.version><spring.version>${base.version}</spring.version>", deps));
+    expect(r.dependencies).toHaveLength(300);
+    expect(r.dependencies.every((d) => d.version === "5.3.39")).toBe(true);
+    expect(r.skipped).toEqual([]);
   });
 
   it("a file with no <project> tag is a LockfileParseError", () => {
@@ -164,15 +205,21 @@ describe("OS package lists", () => {
     expect(has(r, { ecosystem: "Debian:12", name: "apt", version: "1.6.11" })).toBe(true);
   });
 
-  it("dpkg -l: installed lines only, binary name without :arch, header lines ignored", () => {
+  // Round 2 review: dpkg -l prints binary package names (libaudit1, perl-base);
+  // OSV Debian names source packages (audit, perl). The parser has no
+  // binary-to-source map, so every dpkg -l row is skipped, never read as clean.
+  it("dpkg -l: every installed row is skipped as binary_package_name, header lines ignored", () => {
     const r = parseOsPackages("debian", "12.5", dpkgL);
-    expect(r.dependencies).toHaveLength(6);
-    expect(has(r, { ecosystem: "Debian:12", name: "perl-base", version: "5.22.1-9ubuntu0.9" })).toBe(true);
-    expect(has(r, { ecosystem: "Debian:12", name: "libaudit1", version: "1:2.8.2-1ubuntu1" })).toBe(true);
-    expect(r.skipped).toEqual([]);
+    expect(r.dependencies).toEqual([]);
+    expect(reasons(r)).toEqual(Array(6).fill("binary_package_name"));
+    expect(r.skipped[0]).toMatchObject({ line: 6, reason: "binary_package_name" });
+    expect(r.skipped[0].raw.startsWith("ii  libapt-pkg5.0")).toBe(true);
     const extra = parseOsPackages("debian", "12", "ii  libc6:amd64  2.36-9+deb12u4  amd64  GNU C Library\nrc  oldpkg  1.0-1  amd64  removed\n");
-    expect(extra.dependencies).toEqual([{ ecosystem: "Debian:12", name: "libc6", version: "2.36-9+deb12u4" }]);
-    expect(extra.skipped).toEqual([{ line: 2, raw: "rc  oldpkg  1.0-1  amd64  removed", reason: "not installed" }]);
+    expect(extra.dependencies).toEqual([]);
+    expect(extra.skipped).toEqual([
+      { line: 1, raw: "ii  libc6:amd64  2.36-9+deb12u4  amd64  GNU C Library", reason: "binary_package_name" },
+      { line: 2, raw: "rc  oldpkg  1.0-1  amd64  removed", reason: "not installed" },
+    ]);
   });
 
   it("normalizes the release; a bad release, an empty list or a list with no package line is a LockfileParseError", () => {

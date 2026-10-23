@@ -27,3 +27,10 @@ WHERE id = 'osv' AND NOT EXISTS (SELECT 1 FROM json_each(sources.config_json, '$
 
 UPDATE sources SET config_json = json_insert(config_json, '$.ecosystems[#]', 'Debian')
 WHERE id = 'osv' AND NOT EXISTS (SELECT 1 FROM json_each(sources.config_json, '$.ecosystems') WHERE value = 'Debian');
+
+-- Release docs per POST /v1/internal/import request (TCS-38 round 2). A Debian
+-- OSV record holds up to 66 release docs (2.7 on average), and each doc costs
+-- about 3 D1 queries against the limit of 1,000 per Worker invocation. A batch
+-- over the cap answers 413 with the cap; the import script halves its batch.
+-- INSERT OR IGNORE never overwrites an edited value.
+INSERT OR IGNORE INTO settings (key, value) VALUES ('import.max_docs', '200');

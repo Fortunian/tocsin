@@ -103,12 +103,15 @@ describe("POST /v1/check JSON with an OS package list", () => {
     expect(a.affected.map((x) => [x.dependency, x.fixed_in])).toEqual([[{ ecosystem: "Debian:12", name: "audit", version: "1:2.8.2-1ubuntu1" }, "1:2.8.2-1ubuntu2"]]);
   });
 
-  it("dpkg -l binary form matches a doc on the binary name; node and debian together; debian is not an unknown runtime", async () => {
+  it("dpkg -l binary form is skipped as binary_package_name, never clean; node and debian together; debian is not an unknown runtime", async () => {
     const a = await ok(await postJson("192.0.2.204", { runtimes: { debian: "12.5", node: "24.22.0" }, os_packages: dpkgL }));
-    expect(a.checked).toBe(7);
-    expect(a.affected.map((x) => x.dependency)).toContainEqual({ ecosystem: "Debian:12", name: "perl-base", version: "5.22.1-9ubuntu0.9" });
+    expect(a.checked).toBe(1);
+    expect(a.affected.filter((x) => x.dependency.ecosystem === "Debian:12")).toEqual([]);
+    const binary = a.skipped.filter((s) => s.reason === "binary_package_name");
+    expect(binary).toHaveLength(6);
+    expect(binary.every((s) => s.file === "os_packages")).toBe(true);
     expect(a.skipped.filter((s) => s.reason === "unknown runtime")).toEqual([]);
-    expect(a.coverage.map((c) => c.ecosystem)).toEqual(["Debian:12", "node"]);
+    expect(a.coverage.map((c) => c.ecosystem)).toEqual(["node"]);
   });
 
   it("a bare Debian dependency in dependencies[] is unsupported_ecosystem, never clean", async () => {

@@ -115,7 +115,7 @@ export async function runBackfill({ zip, ecosystem, post, get, batch = 100, log 
   const z = await readZip(zip);
   const row = await get();
   const resume = row.last_id !== null && row.done_at === null ? row.last_id : null;
-  const size = Math.max(1, Math.min(batch, row.max_batch ?? batch));
+  let size = Math.max(1, Math.min(batch, row.max_batch ?? batch));
   const skipPrefixes = row.skip_id_prefixes ?? ["MAL-"];
   const files = z.entries.filter((e) => e.name.endsWith(".json")).sort((a, b) => (idOf(a.name) < idOf(b.name) ? -1 : idOf(a.name) > idOf(b.name) ? 1 : 0));
   const dec = new TextDecoder();
@@ -125,19 +125,40 @@ export async function runBackfill({ zip, ecosystem, post, get, batch = 100, log 
   let lastId = resume;
   let start = resume === null;
 
-  const send = async (final) => {
-    const body = { ecosystem, records, skipped, last_id: lastId ?? "", final, ...(start ? { start: true } : {}) };
-    const a = await post(body);
+  // One POST. A 413 (the server's import.max_docs or body cap) refuses the
+  // whole batch before any write, so the script halves the batch size and
+  // sends the same records again in two parts. The first part's last_id is its
+  // own last record, so the watermark never passes a record not yet written;
+  // the skipped count and final flag go with the last part. One record over
+  // the cap fails the run.
+  const postPart = async (recs, skip, last, final) => {
+    const body = { ecosystem, records: recs, skipped: skip, last_id: last, final, ...(start ? { start: true } : {}) };
+    let a;
+    try {
+      a = await post(body);
+    } catch (err) {
+      if (err?.status !== 413 || recs.length <= 1) throw err;
+      const half = Math.ceil(recs.length / 2);
+      size = Math.min(size, half);
+      log(`${ecosystem}: ${recs.length} records refused (413): batch size now ${size}`);
+      await postPart(recs.slice(0, half), 0, recs[half - 1].id, false);
+      await postPart(recs.slice(half), skip, last, final);
+      return;
+    }
     totals.imported += a.imported;
     totals.unchanged += a.unchanged;
     totals.skipped += a.skipped;
     totals.errors += a.errors.length;
     totals.posts += 1;
     if (final) totals.done_at = a.done_at;
-    log(`${ecosystem}: batch ${totals.posts}: ${records.length} records, ${a.imported} imported, ${a.unchanged} unchanged, ${a.skipped} skipped, ${a.errors.length} errors, last_id ${a.last_id}${final ? ", done" : ""}`);
+    log(`${ecosystem}: batch ${totals.posts}: ${recs.length} records, ${a.imported} imported, ${a.unchanged} unchanged, ${a.skipped} skipped, ${a.errors.length} errors, last_id ${a.last_id}${final ? ", done" : ""}`);
+    start = false;
+  };
+
+  const send = async (final) => {
+    await postPart(records, skipped, lastId ?? "", final);
     records = [];
     skipped = 0;
-    start = false;
   };
 
   for (const entry of files) {
@@ -154,7 +175,7 @@ export async function runBackfill({ zip, ecosystem, post, get, batch = 100, log 
       continue;
     }
     records.push(rec);
-    if (records.length === size) await send(false);
+    if (records.length >= size) await send(false);
   }
   if (lastId === null) throw new Error(`${ecosystem}: the zip has no record`);
   await send(true);

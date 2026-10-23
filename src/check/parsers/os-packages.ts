@@ -18,13 +18,19 @@ export function osEcosystem(os: OsName, release: string): string | null {
 const APK_LINE = /^(\S+)-(\d[^\s-]*-r\d+)\s+\S+\s+\{([^}]+)\}/;
 // dpkg -l: a 2-3 letter state (desired, status, error), then name, version, arch.
 const DPKG_L_LINE = /^([uihrp][ncHUFWti]R?)\s+(\S+)\s+(\S+)\s+\S+/;
+// dpkg -l prints binary package names (libssl3); OSV Debian names source
+// packages (openssl). The parser has no binary-to-source map, so a dpkg -l row
+// is skipped with this reason, never read as clean. dpkg-query with
+// ${source:Package} gives the source name.
+export const BINARY_NAME = "binary_package_name";
 // dpkg-query -W -f='${source:Package} ${Version}\n': two columns.
 const DPKG_QUERY_LINE = /^([a-z0-9][a-z0-9+.-]*)\s+(\S+)$/;
 
 /**
  * An OS package list: `apk list --installed` text for Alpine (the name is the
- * origin, the aports source package OSV names), `dpkg -l` text or
- * `dpkg-query -W` two-column text for Debian. Dependencies carry the release
+ * origin, the aports source package OSV names), `dpkg-query -W` two-column
+ * source-name text for Debian. A `dpkg -l` row is read but skipped
+ * (BINARY_NAME): it names the binary package. Dependencies carry the release
  * in their ecosystem (Alpine:v3.18, Debian:12).
  */
 export function parseOsPackages(os: OsName, release: string, text: string): ParseResult {
@@ -49,8 +55,7 @@ export function parseOsPackages(os: OsName, release: string, text: string): Pars
     const l = DPKG_L_LINE.exec(line);
     if (l) {
       packages++;
-      if (l[1][1] !== "i") out.skip(line.slice(0, 200), "not installed", i + 1);
-      else out.add(ecosystem, l[2].replace(/:[a-z0-9-]+$/, ""), l[3]);
+      out.skip(line.slice(0, 200), l[1][1] !== "i" ? "not installed" : BINARY_NAME, i + 1);
       return;
     }
     const q = DPKG_QUERY_LINE.exec(line);
