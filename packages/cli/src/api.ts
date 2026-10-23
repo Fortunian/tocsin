@@ -50,6 +50,31 @@ export class Api {
     return this.send(`${this.base}/v1/events?${q}`, { method: "GET", headers });
   }
 
+  /** The key's watch lists: `{ watchlists: [{ id, name, ... }] }`. */
+  listWatchlists(): Promise<ApiResult> {
+    return this.send(`${this.base}/v1/watchlists`, { method: "GET", headers: this.headers() });
+  }
+
+  /** A new watch list with the default filter and poll delivery. */
+  createWatchlist(name: string): Promise<ApiResult> {
+    return this.send(`${this.base}/v1/watchlists`, {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  getWatchlist(id: string): Promise<ApiResult> {
+    return this.send(`${this.base}/v1/watchlists/${encodeURIComponent(id)}`, { method: "GET", headers: this.headers() });
+  }
+
+  /** One multipart POST with every lockfile, as checkLockfiles. The server replaces the list's dependency set. */
+  uploadLockfiles(id: string, files: { name: string; text: string }[]): Promise<ApiResult> {
+    const form = new FormData();
+    for (const f of files) form.append(f.name, new Blob([f.text], { type: "text/plain" }), f.name);
+    return this.send(`${this.base}/v1/watchlists/${encodeURIComponent(id)}/lockfile`, { method: "POST", headers: this.headers(), body: form });
+  }
+
   private async send(url: string, init: RequestInit): Promise<ApiResult> {
     let res: Response;
     try {

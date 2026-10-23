@@ -18,6 +18,11 @@ export const KEY_RETENTION_SELECT_SQL = "SELECT id FROM api_keys WHERE last_used
 export const KEY_RETENTION_DELIVERIES_SQL = `DELETE FROM deliveries WHERE watchlist_id IN
   (SELECT id FROM watchlists WHERE key_id IN (${KEY_RETENTION_SELECT_SQL}))`;
 
+// The dependency rows of the lists one run deletes (TCS-37). ?1 cutoff, ?2 batch.
+// idx_watchlist_dependencies_watchlist.
+export const KEY_RETENTION_DEPENDENCIES_SQL = `DELETE FROM watchlist_dependencies WHERE watchlist_id IN
+  (SELECT id FROM watchlists WHERE key_id IN (${KEY_RETENTION_SELECT_SQL}))`;
+
 export interface RetentionAudit {
   ran_at: string;
   cutoff: string;
@@ -28,8 +33,9 @@ export interface RetentionAudit {
 }
 
 // Deletes API keys unused for retention.api_key_unused_days, their watch
-// lists and those lists' deliveries rows, in one transaction. The audit record is written only after the
-// delete commits; a failed delete rethrows and writes no record.
+// lists and those lists' deliveries and dependency rows, in one transaction.
+// The audit record is written only after the delete commits; a failed delete
+// rethrows and writes no record.
 export async function runKeyRetention(env: Env, now: Date): Promise<RetentionAudit> {
   const [days, batch, dryRun] = await Promise.all([
     getSettingInt(env.DB, "retention.api_key_unused_days", FALLBACK_UNUSED_DAYS),
@@ -55,10 +61,11 @@ export async function runKeyRetention(env: Env, now: Date): Promise<RetentionAud
     if (!r) throw new Error("retention dry-run count returned no row");
     audit = { ran_at: now.toISOString(), cutoff, dry_run: true, keys: r.keys, watchlists: r.watchlists, has_more: r.keys > batch };
   } else {
-    // The deliveries of those lists first (deliveries primary key, leading
-    // watchlist_id), so no delivered row outlives its list.
-    const [, lists, keys] = await env.DB.batch([
+    // The deliveries and dependency rows of those lists first (both indexes
+    // lead with watchlist_id), so no such row outlives its list.
+    const [, , lists, keys] = await env.DB.batch([
       env.DB.prepare(KEY_RETENTION_DELIVERIES_SQL).bind(cutoff, batch),
+      env.DB.prepare(KEY_RETENTION_DEPENDENCIES_SQL).bind(cutoff, batch),
       env.DB.prepare(`DELETE FROM watchlists WHERE key_id IN (${KEY_RETENTION_SELECT_SQL})`).bind(cutoff, batch),
       env.DB.prepare(`DELETE FROM api_keys WHERE id IN (${KEY_RETENTION_SELECT_SQL})`).bind(cutoff, batch),
     ]);

@@ -40,7 +40,8 @@ describe("deliveries table", () => {
   it("has the named columns and the (watchlist_id, advisory_id) primary key", async () => {
     const { results } = await env.DB.prepare("PRAGMA table_info(deliveries)").all<{ name: string; pk: number }>();
     // last_error: migrations/0023_watchlist_delivery_health.sql (round 2).
-    expect(results.map((r) => r.name)).toEqual(["watchlist_id", "advisory_id", "cursor", "attempt", "status", "last_code", "next_at", "delivered_at", "last_error"]);
+    // affected_json: migrations/0028_watchlist_dependencies.sql (TCS-37).
+    expect(results.map((r) => r.name)).toEqual(["watchlist_id", "advisory_id", "cursor", "attempt", "status", "last_code", "next_at", "delivered_at", "last_error", "affected_json"]);
     expect(results.filter((r) => r.pk > 0).map((r) => r.name)).toEqual(["watchlist_id", "advisory_id"]);
     await env.DB.prepare("INSERT INTO deliveries (watchlist_id, advisory_id, cursor, next_at) VALUES ('wl_pk', 'adv_pk', 1, 'x')").run();
     const dup = await env.DB.prepare("INSERT OR IGNORE INTO deliveries (watchlist_id, advisory_id, cursor, next_at) VALUES ('wl_pk', 'adv_pk', 2, 'y')").run();

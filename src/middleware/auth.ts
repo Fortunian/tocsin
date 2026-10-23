@@ -10,6 +10,9 @@ export interface PlanLimits {
   max_watchlists: number;
   webhooks: number;
   max_components: number;
+  // plans.max_watch_dependencies (TCS-37). NULL in the row is null here: the
+  // upload route fails closed on it, every other route does not read it.
+  max_watch_dependencies: number | null;
 }
 
 export interface ApiKey {
@@ -22,7 +25,7 @@ export type AuthEnv = { Bindings: Env; Variables: { apiKey: ApiKey } };
 
 // Key and plan in one statement (idx_api_keys_key_hash). LEFT JOIN so a key
 // whose plan row is missing is told apart from an unknown key.
-export const AUTH_SQL = `SELECT k.id, k.plan, k.last_used_at, p.id AS plan_id, p.max_watchlists, p.webhooks, p.max_components
+export const AUTH_SQL = `SELECT k.id, k.plan, k.last_used_at, p.id AS plan_id, p.max_watchlists, p.webhooks, p.max_components, p.max_watch_dependencies
   FROM api_keys k LEFT JOIN plans p ON p.id = k.plan WHERE k.key_hash = ?`;
 
 const BEARER_RE = /^\s*bearer\s+(tcs_\S+)\s*$/i;
@@ -35,6 +38,7 @@ interface AuthRow {
   max_watchlists: number | null;
   webhooks: number | null;
   max_components: number | null;
+  max_watch_dependencies: number | null;
 }
 
 export function toHex(bytes: Uint8Array): string {
@@ -80,7 +84,12 @@ export const requireApiKey: MiddlewareHandler<AuthEnv> = async (c, next) => {
   c.set("apiKey", {
     id: row.id,
     plan: row.plan,
-    limits: { max_watchlists: row.max_watchlists, webhooks: row.webhooks, max_components: row.max_components },
+    limits: {
+      max_watchlists: row.max_watchlists,
+      webhooks: row.webhooks,
+      max_components: row.max_components,
+      max_watch_dependencies: row.max_watch_dependencies,
+    },
   });
   await next();
 };

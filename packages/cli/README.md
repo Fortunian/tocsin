@@ -64,14 +64,29 @@ goes to stderr. `--json` prints the raw API page.
 Polls the feed every 5 minutes and prints each new advisory. Without `--since` it starts at the
 newest advisory. Press Ctrl-C to stop it.
 
+With `TOCSIN_API_KEY` set, `watch` first prints one status line on stderr for the key's default
+watch list (the list named `default`), for example
+`watching 312 dependencies, last delivery at 2026-10-01T00:00:00.000Z` (`never` when nothing was
+delivered yet). If the status read fails, it prints one stderr line and polls as usual.
+
+### `npx tocsin watch --upload`
+
+Reads the lockfiles in this directory (the same files as `check`) and uploads them to the key's
+default watch list. It creates that list (poll delivery) when the key has none. The upload replaces
+the list's dependency set. When a new advisory matches a dependency, the list delivers it; set a
+webhook with `PATCH /v1/watchlists/<id>`. It prints
+`uploaded N dependencies to watch list default (<id>), M affected now`, then the status line, and
+exits. It needs `TOCSIN_API_KEY`. Over the plan's dependency limit the API answers 413, and the
+stderr line names the limit.
+
 ## Exit codes
 
 | Code | `check` | `connect` | `latest` / `watch` |
 |---|---|---|---|
 | 0 | clean | every tool connected or already connected | ok |
 | 1 | one or more dependencies affected | a file could not be read, parsed or written | |
-| 2 | usage error, or no lockfile and no runtime | usage error | usage error |
-| 3 | the API call failed, or nothing is affected but a checked ecosystem has partial coverage (neither is a clean result) | | the API call failed (`latest`) |
+| 2 | usage error, or no lockfile and no runtime | usage error | usage error, or `--upload` with no key or no lockfile |
+| 3 | the API call failed, or nothing is affected but a checked ecosystem has partial coverage (neither is a clean result) | | the API call failed (`latest`, `watch --upload`) |
 
 `watch` keeps polling after an API error. It prints one line on stderr per error.
 
