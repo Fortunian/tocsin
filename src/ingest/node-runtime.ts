@@ -6,7 +6,7 @@
 import { markCoverage } from "./coverage";
 import { fetchFeed, fetchPost, NodeHttpError, NodeLinkError } from "./node-runtime-client";
 import { loadNodeDistIndex, type DistIndex } from "./node-runtime-dist";
-import { readLedger, writePost, type Ledger, type PostRow, type PostWrite } from "./node-runtime-posts";
+import { hasUnreadRecent, readLedger, writePost, type Ledger, type PostRow, type PostWrite } from "./node-runtime-posts";
 import { compareVersions } from "./osv";
 import { htmlSections, htmlText, isoUtc, oneLine, readRuntimeConfig, RETRY_SCHEDULE, retryWaitMinutes, xmlBlocks, xmlText } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
@@ -413,12 +413,15 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   for (const d of posts) await readOne(w, d);
   if (w.summary.length > 0) result.summary = w.summary.join("; ");
   if (w.warnings.length > 0) result.warnings = w.warnings;
-  // The history is read in full when every feed post of the window has a row
-  // (any outcome, a failed post with its backoff included) and the window
-  // reaches the oldest release post of the feed.
+  // The history is read in full when every feed post of the window has a row,
+  // the window reaches the oldest release post of the feed, and no post
+  // younger than retry_incomplete_days is unread (failed, or empty at an
+  // attempt cap): a release line the parser could not read is never "complete".
   const oldest = releases.reduce<string | null>((m, p) => (m === null || p.published < m ? p.published : m), null);
   const allRead = feed.every((p) => ledger.known.has(p.link) || w.written.has(p.link));
-  if (!ctx.source.coverage_since && allRead && oldest !== null && inWindow(oldest)) await markCoverage(ctx.env.DB, SOURCE, oldest);
+  if (ctx.source.coverage_since || !allRead || oldest === null || !inWindow(oldest)) return result;
+  const recentSince = new Date(now.getTime() - cfg.retry_incomplete_days * 86_400_000).toISOString();
+  if (!(await hasUnreadRecent(ctx.env.DB, recentSince))) await markCoverage(ctx.env.DB, SOURCE, oldest);
   return result;
 }
 

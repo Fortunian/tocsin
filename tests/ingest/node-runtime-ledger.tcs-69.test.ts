@@ -403,23 +403,47 @@ describe("read selection (selection)", () => {
 });
 
 describe("coverage (coverage)", () => {
-  // TCS-69 round 2: every feed post has a row with a known outcome, a failed
-  // post with its backoff included, so the history is read (the reviewer's
-  // walk: the December 2025 post must not hold coverage_since back for weeks).
-  it("coverage: a failed row with its backoff counts as read; a feed post with no row holds coverage_since back", async () => {
-    const p = POSTS[7];
-    const cov = async () => (await env.DB.prepare("SELECT coverage_since FROM sources WHERE id = 'node-runtime'").first<{ coverage_since: string | null }>())!.coverage_since;
-    await readAllBut(p.link, OCT);
+  // TCS-69 round 3: coverage_since is a "complete" signal in a security check,
+  // so a post younger than retry_incomplete_days that the parser did not read
+  // in full (failed, or empty with a note at an attempt cap) holds it back. An
+  // old empty post with no note (the 2019 no-updates post) and an old terminal
+  // failed post do not.
+  const cov = async () => (await env.DB.prepare("SELECT coverage_since FROM sources WHERE id = 'node-runtime'").first<{ coverage_since: string | null }>())!.coverage_since;
+
+  it("coverage: a recent failed row holds coverage_since back; once it is ok, the next run sets it", async () => {
+    await readAllBut(JULY);
+    await seedNodePosts([{ url: JULY, published: pubOf(JULY), state: "failed", attempts: 2, next_check_at: iso(NOW + 30 * MIN) }]);
+    const f1 = createRuntimeFake(routes());
+    await nodeRuntime.run(ctxAt(f1.fetch, NOW));
+    expect(f1.count(JULY)).toBe(0);
+    expect(await cov()).toBeNull();
+    const f2 = createRuntimeFake(routes());
+    await nodeRuntime.run(ctxAt(f2.fetch, NOW + 31 * MIN));
+    expect(f2.count(JULY)).toBe(1);
+    expect(await nodePostState(JULY)).toBe("ok");
+    expect(await cov()).not.toBeNull();
+  });
+
+  it("coverage: a recent empty row with a note holds coverage_since back; an old empty row with no note and an old terminal failed row do not", async () => {
+    await readAllBut(JULY, NO_UPDATES, POSTS[3].link);
+    await seedNodePosts([
+      { url: JULY, published: pubOf(JULY), state: "empty", attempts: 10 },
+      { url: NO_UPDATES, published: pubOf(NO_UPDATES), state: "empty" },
+      { url: POSTS[3].link, published: POSTS[3].published, state: "failed", attempts: 1, next_check_at: null },
+    ]);
+    await env.DB.prepare("UPDATE node_runtime_posts SET last_error = 'post incomplete after 10 reads' WHERE url IN (?, ?)").bind(JULY, POSTS[3].link).run();
+    await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW));
+    expect(await cov()).toBeNull();
+    await env.DB.prepare("UPDATE node_runtime_posts SET last_error = NULL WHERE url = ?").bind(JULY).run();
+    await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW));
+    expect(await cov()).not.toBeNull();
+  });
+
+  it("coverage: a feed post with no row holds coverage_since back", async () => {
+    await readAllBut(POSTS[7].link, OCT);
     await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW, { ...CONFIG, max_posts: 1 }));
     expect(await nodePostRow(OCT)).toBeNull();
     expect(await cov()).toBeNull();
-    await seedNodePosts([{ url: p.link, published: p.published, state: "failed", attempts: 2, next_check_at: iso(NOW + 30 * MIN) }]);
-    const f2 = createRuntimeFake(routes());
-    await nodeRuntime.run(ctxAt(f2.fetch, NOW));
-    expect(f2.count(p.link)).toBe(0);
-    expect(await nodePostRow(p.link)).toMatchObject({ state: "failed", next_check_at: iso(NOW + 30 * MIN) });
-    // markCoverage stores the oldest advisory held (here: the synthetic post the first run read).
-    expect(await cov()).not.toBeNull();
   });
 });
 
@@ -480,6 +504,9 @@ describe("query plans (EXPLAIN)", () => {
     const known = await plan(POST_SQL.known, JSON.stringify([`${BASE}tcs-69-explain-1`, `${BASE}tcs-69-explain-2`]));
     expect(known).toMatch(/SEARCH node_runtime_posts USING INDEX sqlite_autoindex_node_runtime_posts_1 \(url=\?\)/);
     expect(known).not.toMatch(/SCAN node_runtime_posts(?! USING)/);
+    const unread = await plan(POST_SQL.unread, iso(NOW - 365 * DAY));
+    expect(unread).toContain("idx_node_runtime_posts_state_next");
+    expect(unread).not.toMatch(/SCAN node_runtime_posts(?! USING)/);
     const grouped = await plan(ledgerSql("node_runtime_posts"));
     expect(grouped).toContain("idx_node_runtime_posts_state_next");
     expect(grouped).not.toMatch(/SCAN node_runtime_posts(?! USING)/);

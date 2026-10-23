@@ -43,7 +43,7 @@ function synthetic(i: number): string {
 <h2>Downloads and release details</h2><ul><li>Node.js v4.9.1</li></ul></main>`;
 }
 
-function routes(): Record<string, FakeAnswer> {
+function routes(over: Record<string, FakeAnswer> = {}): Record<string, FakeAnswer> {
   const versions = [...(JSON.parse(indexOct) as unknown[]), ...(JSON.parse(indexJuly) as unknown[]), ...(JSON.parse(distIndex) as unknown[])];
   const r: Record<string, FakeAnswer> = { [FEED]: feedXml, [INDEX]: JSON.stringify(versions) };
   POSTS.forEach((p, i) => (r[p.link] = synthetic(i)));
@@ -51,7 +51,15 @@ function routes(): Record<string, FakeAnswer> {
   r[PRE_2019] = pre2019Html;
   r[INCOMPLETE] = incompleteHtml;
   r[OCT] = octHtml;
-  return r;
+  return { ...r, ...over };
+}
+
+// Three runs from an empty ledger, 10 minutes apart (the walk of 48 posts, 20 per run).
+const RUNS = [NOW, NOW + 10 * MIN, NOW + 20 * MIN];
+async function walk(fake: ReturnType<typeof createRuntimeFake>): Promise<SourceOutcome[]> {
+  const outcomes: SourceOutcome[] = [];
+  for (const at of RUNS) outcomes.push(await viaRegistry(fake.fetch, at));
+  return outcomes;
 }
 
 let fetchSpy: MockInstance;
@@ -98,15 +106,16 @@ describe("walk from an empty ledger (walk)", () => {
     expect(POSTS).toHaveLength(48);
     expect(OCT_CVES).toHaveLength(10);
     const fake = createRuntimeFake(routes());
-    const runs = [NOW, NOW + 10 * MIN, NOW + 20 * MIN];
-    const outcomes: SourceOutcome[] = [];
-    for (const at of runs) outcomes.push(await viaRegistry(fake.fetch, at));
+    const runs = RUNS;
+    const outcomes = await walk(fake);
 
     expect(outcomes.map((o) => o.status)).toEqual(["ok", "ok", "ok"]);
     const row = await sourceRow();
     expect(row?.last_error).toBeNull();
     expect(row?.last_ok_at).toBe(iso(runs[2]));
-    expect(row?.coverage_since).not.toBeNull();
+    // Round 3: the December 2025 post (20.x, 22.x, 24.x) is not read in full,
+    // so the history is not complete (no false clean).
+    expect(row?.coverage_since).toBeNull();
     expect(row?.last_warning).toContain("december-2025-security-releases");
 
     expect(await nodePostRow(INCOMPLETE)).toMatchObject({ state: "failed", attempts: 1, next_check_at: iso(runs[2] + 60 * MIN) });
@@ -129,5 +138,20 @@ describe("walk from an empty ledger (walk)", () => {
     expect(fake.count(INCOMPLETE)).toBe(1);
     expect((await sourceRow())?.last_error).toBeNull();
     expect((await nodePostRow(INCOMPLETE))?.attempts).toBe(1);
+    expect((await sourceRow())?.coverage_since).toBeNull();
+  });
+
+  it("walk: coverage_since is set once the incomplete post is ok; the empty 2019 no-updates post does not hold it back", async () => {
+    await walk(createRuntimeFake(routes()));
+    expect((await sourceRow())?.coverage_since).toBeNull();
+    expect(await nodePostRow(NO_UPDATES)).toMatchObject({ state: "empty", last_error: null });
+    // After the 1-hour backoff the post answers a complete page: a SYNTHETIC
+    // page (in-test edit, source: assumed), the shape of node-history.tcs-32.
+    const fixed = createRuntimeFake(routes({ [INCOMPLETE]: synthetic(999) }));
+    const o = await viaRegistry(fixed.fetch, RUNS[2] + 61 * MIN);
+    expect(o.status).toBe("ok");
+    expect(fixed.count(INCOMPLETE)).toBe(1);
+    expect(await nodePostRow(INCOMPLETE)).toMatchObject({ state: "ok" });
+    expect((await sourceRow())?.coverage_since).not.toBeNull();
   });
 });

@@ -25,6 +25,11 @@ export const POST_SQL = {
   known: `SELECT ${COLS} FROM node_runtime_posts WHERE url IN (SELECT value FROM json_each(?))`,
   // idx_node_runtime_posts_state_next.
   due: `SELECT ${COLS} FROM node_runtime_posts WHERE state = ? AND next_check_at <= ? ORDER BY next_check_at LIMIT ?`,
+  // idx_node_runtime_posts_state_next (state IN): a recent post (published >= ?)
+  // the parser did not read in full holds coverage_since back: a failed row, or
+  // an empty row with a note (an attempt cap). An empty row with no note (no
+  // CVE headings in an old post) does not.
+  unread: "SELECT 1 AS r FROM node_runtime_posts WHERE state IN ('failed', 'empty') AND published >= ? AND (state = 'failed' OR last_error IS NOT NULL) LIMIT 1",
   write:
     "INSERT INTO node_runtime_posts (url, published, state, attempts, last_error, parser_rev, next_check_at, updated_at, title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
     "ON CONFLICT(url) DO UPDATE SET published = excluded.published, state = excluded.state, attempts = excluded.attempts, last_error = excluded.last_error, " +
@@ -58,6 +63,11 @@ export async function readLedger(db: D1Database, urls: string[], now: Date, limi
     db.prepare(POST_SQL.due).bind("failed", at, limit),
   ]);
   return { known: new Map(known.results.map((r) => [r.url, r])), due: [...pending.results, ...failed.results] };
+}
+
+// True when a post published at or after `sinceIso` holds coverage_since back (POST_SQL.unread).
+export async function hasUnreadRecent(db: D1Database, sinceIso: string): Promise<boolean> {
+  return (await db.prepare(POST_SQL.unread).bind(sinceIso).first<{ r: number }>()) !== null;
 }
 
 export async function writePost(db: D1Database, w: PostWrite, now: Date): Promise<void> {

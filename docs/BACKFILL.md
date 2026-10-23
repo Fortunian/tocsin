@@ -97,7 +97,10 @@ run that read its whole history:
   post) is `empty`. A pre-announcement is `pending`, read again after `pending_recheck_minutes`
   (60; old posts `pending_old_recheck_minutes`, 10080), and is `empty` after `max_attempts` reads.
   The newest feed post in state `ok` or `empty` is read on every run, because Node edits a post in
-  place. coverage_since is set when every feed post of the window has a row.
+  place. coverage_since is set when every feed post of the window has a row and no post younger
+  than `retry_incomplete_days` is `failed`, or `empty` with a note (an attempt cap). An old
+  `empty` post with no note (the 2019 "no updates" post) does not hold it back. Then the
+  coverage signal never reports node as complete while a recent release post is not read in full.
 - `node-eol`: one advisory per Node.js release line past its end of life, from the nodejs/Release
   `schedule.json`. A version on such a line is never clean.
 - `deno-runtime`, `bun-runtime`: while `coverage_since` is NULL, a run ignores its KV cursor and
