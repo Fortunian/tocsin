@@ -14,6 +14,10 @@ export const RETENTION_AUDIT_KEY = "retention:api_keys:last";
 // at most batch (idx_api_keys_last_used_at).
 export const KEY_RETENTION_SELECT_SQL = "SELECT id FROM api_keys WHERE last_used_at < ? ORDER BY last_used_at, id LIMIT ?";
 
+// The deliveries rows of the lists one run deletes. ?1 cutoff, ?2 batch.
+export const KEY_RETENTION_DELIVERIES_SQL = `DELETE FROM deliveries WHERE watchlist_id IN
+  (SELECT id FROM watchlists WHERE key_id IN (${KEY_RETENTION_SELECT_SQL}))`;
+
 export interface RetentionAudit {
   ran_at: string;
   cutoff: string;
@@ -23,8 +27,8 @@ export interface RetentionAudit {
   has_more: boolean;
 }
 
-// Deletes API keys unused for retention.api_key_unused_days and their watch
-// lists, in one transaction. The audit record is written only after the
+// Deletes API keys unused for retention.api_key_unused_days, their watch
+// lists and those lists' deliveries rows, in one transaction. The audit record is written only after the
 // delete commits; a failed delete rethrows and writes no record.
 export async function runKeyRetention(env: Env, now: Date): Promise<RetentionAudit> {
   const [days, batch, dryRun] = await Promise.all([
@@ -51,7 +55,10 @@ export async function runKeyRetention(env: Env, now: Date): Promise<RetentionAud
     if (!r) throw new Error("retention dry-run count returned no row");
     audit = { ran_at: now.toISOString(), cutoff, dry_run: true, keys: r.keys, watchlists: r.watchlists, has_more: r.keys > batch };
   } else {
-    const [lists, keys] = await env.DB.batch([
+    // The deliveries of those lists first (deliveries primary key, leading
+    // watchlist_id), so no delivered row outlives its list.
+    const [, lists, keys] = await env.DB.batch([
+      env.DB.prepare(KEY_RETENTION_DELIVERIES_SQL).bind(cutoff, batch),
       env.DB.prepare(`DELETE FROM watchlists WHERE key_id IN (${KEY_RETENTION_SELECT_SQL})`).bind(cutoff, batch),
       env.DB.prepare(`DELETE FROM api_keys WHERE id IN (${KEY_RETENTION_SELECT_SQL})`).bind(cutoff, batch),
     ]);

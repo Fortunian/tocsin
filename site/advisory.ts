@@ -109,7 +109,7 @@ ${sourcesList(a)}
 }
 
 // JSON-LD in a <script>: escape "<" so no value can close the element.
-function jsonLd(data: object): string {
+export function jsonLd(data: object): string {
   return `<script type="application/ld+json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
 }
 

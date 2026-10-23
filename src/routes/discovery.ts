@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import advisorySchema from "../../schema/advisory.v1.json";
+import { POST_URL } from "../../site/post";
 import type { Env } from "../env";
 import { jsonUtf8 } from "../lib/http";
 
@@ -120,6 +121,10 @@ tocsin_watchlist_events needs the header Authorization: Bearer <your API key> on
 The other tools need no key.
 
 Discovery: ${BASE}/.well-known/tocsin.json
+
+## Blog
+
+- ${POST_URL}   why Tocsin exists: the October 21 Node and PHP fixes
 `;
 
 const discovery = new Hono<{ Bindings: Env }>();

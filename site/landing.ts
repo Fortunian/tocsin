@@ -1,6 +1,7 @@
 import { type Freshness, renderFreshness } from "./freshness";
 import { installLinks } from "./install";
 import { command, escapeHtml, page } from "./layout";
+import { POST_PATH } from "./post";
 
 // One row of the Latest table, as src/site/data.ts builds and caches it.
 export interface LatestRow {
@@ -48,6 +49,7 @@ export function renderLanding(rows: LatestRow[] | null, freshness: Freshness | n
 <p class="tag">Security advisories, built for agents.</p>
 <p>Your agent runs on Node, PHP, Python, Go, Rust, Ruby, Java, .NET, Elixir, Dart, Alpine, Debian and the packages on top of
 them. When one of them ships a critical fix, nothing tells the agent. Tocsin does. One feed. One command.</p>
+<p><a href="${POST_PATH}">${escapeHtml("Why: your agent's fetch() was exploitable on October 21 and nothing told it.")}</a></p>
 ${command("npx tocsin connect")}
 ${installLinks()}
 <p>Wires Claude Code, Cursor, Claude Desktop and Codex to the feed in one run.</p>

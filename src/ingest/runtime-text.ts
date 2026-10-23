@@ -82,6 +82,15 @@ export function readRuntimeConfig<T extends Record<string, string | number>>(sou
   return cfg as T;
 }
 
+// A retry schedule knob: a comma list of positive integers (minutes).
+export const RETRY_SCHEDULE = /^[1-9]\d*(,[1-9]\d*)*$/;
+
+// The wait after failed attempt n (1-based) on the retry schedule; the last value repeats.
+export function retryWaitMinutes(schedule: string, attempt: number): number {
+  const waits = schedule.split(",").map(Number);
+  return waits[Math.min(attempt, waits.length) - 1];
+}
+
 // The start of the read window: the stored cursor, else now - backfill_days.
 export async function readSince(kv: KVNamespace, key: string, now: Date, backfillDays: number): Promise<{ stored: string | null; sinceMs: number }> {
   const stored = await kv.get(key);
