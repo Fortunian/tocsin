@@ -70,8 +70,8 @@ Or JSON:
 
 curl -H "Content-Type: application/json" -d '{"dependencies":[{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}],"runtimes":{"node":"24.22.0"}}' ${BASE}/v1/check
 
-An OS package list (Alpine or Debian): the release plus the list text, from apk list --installed,
-dpkg -l or dpkg-query -W -f='\${source:Package} \${Version}\\n':
+An OS package list (Alpine or Debian): the release plus the list text, from apk list --installed
+(Alpine) or dpkg-query -W -f='\${source:Package} \${Version}\\n' (Debian, source package names):
 
 curl -F debian=12 --form-string "os_packages=$(dpkg-query -W -f='\${source:Package} \${Version}\\n')" ${BASE}/v1/check
 
