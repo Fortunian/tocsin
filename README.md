@@ -89,6 +89,8 @@ Tocsin runs on Cloudflare Workers with D1, KV and Queues. Fork the repo, create 
 
 The deploy job applies the D1 migrations (`wrangler d1 migrations apply DB --remote`), deploys the main worker, then deploys the MCP worker (`wrangler deploy -c workers/mcp/wrangler.toml`). The optional secret `NVD_API_KEY` raises the NVD rate limit.
 
+API key sign-up mails a link. The one-time mail setup (secret, DNS records, settings rows and a launch check) is in [docs/OPERATING.md](docs/OPERATING.md).
+
 ## Run locally
 
 Needs Node 22.

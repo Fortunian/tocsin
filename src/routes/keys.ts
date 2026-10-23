@@ -6,6 +6,7 @@ import { jsonUtf8 } from "../lib/http";
 import { getSettingInt } from "../lib/settings";
 import { getSettingText } from "../lib/settings-text";
 import { getMailer } from "../mail/send";
+import { refundSend, reserveSend } from "../mail/send-caps";
 import { sha256Hex, toHex } from "../middleware/auth";
 import { keysRateLimit } from "../middleware/ratelimit";
 
@@ -72,16 +73,6 @@ function logError(fields: Record<string, unknown>): void {
   console.error(JSON.stringify({ lane: "mail", ...fields }));
 }
 
-// Counter puts after a send that went out. A KV fault is logged, not raised:
-// the mail is sent, so the answer must still be 202.
-async function bump(kv: KVNamespace, counters: [string, number, number][]): Promise<void> {
-  try {
-    await Promise.all(counters.map(([key, value, ttl]) => kv.put(key, String(value + 1), { expirationTtl: ttl })));
-  } catch (err) {
-    logError({ err: err instanceof Error ? `${err.name}: ${err.message}` : String(err), step: "counters" });
-  }
-}
-
 // POST /v1/keys and POST /v1/keys/rotate. The answer never depends on whether
 // the email has a key: 202 with one fixed body, or a refusal that is the same
 // for every email. A registered email always gets a replace link.
@@ -102,13 +93,12 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
   const hour = Math.floor(now / HOUR_MS);
   const day = new Date(now).toISOString().slice(0, 10);
   const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
-  const ipKey = `rl:v1:keyssend:ip:${ip}:${hour}`;
-  const emailKey = `rl:v1:keyssend:em:${await sha256Hex(email)}:${hour}`;
-  const dayKey = `mail:sent:${day}`;
+  // The send_counters windows (src/mail/send-caps.ts).
+  const windows = { ip: `ip:${ip}:${hour}`, email: `em:${await sha256Hex(email)}:${hour}`, day: `day:${day}` };
   const db = c.env.DB;
   const kv = c.env.CURSORS;
 
-  const [ttlRaw, ipCap, emailCap, dayCap, provider, from, baseUrl, ipRaw, emailRaw, dayRaw] = await Promise.all([
+  const [ttlRaw, ipCap, emailCap, dayCap, provider, from, baseUrl] = await Promise.all([
     getSettingInt(db, "keys.confirm_ttl_seconds", FALLBACK_CONFIRM_TTL_SECONDS),
     getSettingInt(db, "keys.ip_sends_per_hour", FALLBACK_IP_SENDS_PER_HOUR),
     getSettingInt(db, "keys.email_sends_per_hour", FALLBACK_EMAIL_SENDS_PER_HOUR),
@@ -116,9 +106,6 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
     getSettingText(db, "mail.provider", FALLBACK_MAIL_PROVIDER),
     getSettingText(db, "mail.from_address", FALLBACK_FROM_ADDRESS),
     getSettingText(db, "keys.confirm_base_url", FALLBACK_CONFIRM_BASE_URL),
-    kv.get(ipKey),
-    kv.get(emailKey),
-    kv.get(dayKey),
   ]);
   const ttl = Math.max(KV_MIN_TTL_SECONDS, ttlRaw);
 
@@ -128,17 +115,15 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
     return jsonUtf8(c, { error: "key sign-up is not available right now" }, 503, NO_STORE);
   }
 
-  const ipCount = Number(ipRaw) || 0;
-  const emailCount = Number(emailRaw) || 0;
-  if (ipCount >= ipCap || emailCount >= emailCap) {
-    const retryAfter = Math.max(1, Math.ceil(((hour + 1) * HOUR_MS - now) / 1000));
-    return jsonUtf8(c, { error: "rate limited" }, 429, { ...NO_STORE, "Retry-After": String(retryAfter) });
-  }
-
-  // Dedup before spend: the persisted day counter is read before the metered send.
-  const sent = Number(dayRaw) || 0;
-  if (sent >= dayCap) {
-    logError({ alert: "daily_send_cap_hit", sent, cap: dayCap });
+  // Dedup before spend: the three caps are reserved in D1, in one
+  // transaction, before the metered send. A refusal reserves nothing.
+  const reserve = await reserveSend(db, windows, { ip: ipCap, email: emailCap, day: dayCap }, new Date(now).toISOString());
+  if (!reserve.reserved) {
+    if (reserve.ipOrEmailFull) {
+      const retryAfter = Math.max(1, Math.ceil(((hour + 1) * HOUR_MS - now) / 1000));
+      return jsonUtf8(c, { error: "rate limited" }, 429, { ...NO_STORE, "Retry-After": String(retryAfter) });
+    }
+    if (reserve.dayFull) logError({ alert: "daily_send_cap_hit", sent: reserve.daySent, cap: dayCap });
     const retryAfter = Math.max(1, Math.ceil(((Math.floor(now / DAY_MS) + 1) * DAY_MS - now) / 1000));
     return jsonUtf8(c, { error: "key sign-up is not available right now" }, 503, { ...NO_STORE, "Retry-After": String(retryAfter) });
   }
@@ -155,6 +140,8 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
     await mailer.send({ to: email, from, subject: MAIL_SUBJECT, text: mailText(link, Math.round(ttl / 60), existing !== null) });
   } catch (err) {
     await kv.delete(tokenKey(tokenHash)).catch(() => undefined);
+    // The mail did not go out, so its three slots go back.
+    await refundSend(db, windows);
     logError({
       err: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
       status: (err as { status?: unknown }).status ?? null,
@@ -162,11 +149,6 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
     return jsonUtf8(c, { error: "could not send the email, try again" }, 502, NO_STORE);
   }
 
-  await bump(kv, [
-    [ipKey, ipCount, 2 * HOUR_MS / 1000],
-    [emailKey, emailCount, 2 * HOUR_MS / 1000],
-    [dayKey, sent, 2 * DAY_MS / 1000],
-  ]);
   return jsonUtf8(c, { status: "sent", expires_in_seconds: ttl }, 202, NO_STORE);
 }
 
