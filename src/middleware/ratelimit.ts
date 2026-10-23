@@ -5,12 +5,13 @@ import { jsonUtf8 } from "../lib/http";
 import { getSettingInt } from "../lib/settings";
 
 // Code fallbacks only. The live limits are settings.feed.anon_rate_per_minute,
-// settings.check.anon_rate_per_minute, settings.keys.anon_rate_per_minute and
-// settings.watchlists.key_rate_per_minute.
+// settings.check.anon_rate_per_minute, settings.keys.anon_rate_per_minute,
+// settings.watchlists.key_rate_per_minute and settings.watchlists.ip_rate_per_minute.
 export const FALLBACK_RATE_PER_MINUTE = 60;
 export const FALLBACK_CHECK_RATE_PER_MINUTE = 20;
 export const FALLBACK_KEYS_RATE_PER_MINUTE = 5;
 export const FALLBACK_KEY_RATE_PER_MINUTE = 120;
+export const FALLBACK_IP_AUTH_RATE_PER_MINUTE = 300;
 const WINDOW_MS = 60_000;
 
 interface RateLimitConfig {
@@ -77,4 +78,13 @@ export const keysRateLimit = makeRateLimit({
   settingKey: "keys.anon_rate_per_minute",
   fallback: FALLBACK_KEYS_RATE_PER_MINUTE,
   scope: "keys",
+});
+
+// Per client IP, before requireApiKey on /v1/watchlists/* and before
+// keysRateLimit on /v1/keys: an unknown-key flood stops here, with no SHA-256
+// and no read of api_keys. One budget per IP for both routes.
+export const authIpRateLimit = makeRateLimit({
+  settingKey: "watchlists.ip_rate_per_minute",
+  fallback: FALLBACK_IP_AUTH_RATE_PER_MINUTE,
+  scope: "auth",
 });
