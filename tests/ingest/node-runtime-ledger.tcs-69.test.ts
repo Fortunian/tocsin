@@ -9,7 +9,6 @@ import type { IngestContext } from "../../src/ingest/types";
 import migration0020 from "../../migrations/0020_node_runtime_posts.sql?raw";
 import distIndex from "../fixtures/node-eol/index.json?raw";
 import noUpdatesHtml from "../fixtures/node-runtime/2019-09-12-no-updates.html?raw";
-import juneHtml from "../fixtures/node-runtime/2026-06-18.html?raw";
 import julyHtml from "../fixtures/node-runtime/2026-07-29.html?raw";
 import preHtml from "../fixtures/node-runtime/2026-10-14-pre.html?raw";
 import octHtml from "../fixtures/node-runtime/2026-10-21.html?raw";
@@ -442,12 +441,16 @@ describe("coverage (coverage)", () => {
   });
 
   // TCS-69 round 4: an ok read that left CVE headings not emitted is not a
-  // complete read. The RECORDED June 2026 post (README.tcs-69.md) has 12 rated
-  // CVE headings and no "affects" line the parser reads, so 0 advisories.
-  it("coverage: the recorded June 2026 post is ok with unemitted 12 and holds coverage_since back; a re-read of a complete page clears it", async () => {
+  // complete read. TCS-76 made the parser read the recorded June 2026 post in
+  // full (tests/ingest/node-runtime-posts-2025-2026.tcs-76.test.ts pins it), so
+  // June answers a SYNTHETIC page here: 12 rated CVE headings with no line the
+  // parser reads (source: assumed, in-test edit), the shape the recorded June
+  // post had for parser revision 3.
+  it("coverage: a June post that is ok with unemitted 12 holds coverage_since back; a re-read of a complete page clears it", async () => {
     const unemitted = async () => (await env.DB.prepare("SELECT unemitted FROM node_runtime_posts WHERE url = ?").bind(JUNE).first<{ unemitted: number }>())?.unemitted;
+    const juneNoLines = `<main>${Array.from({ length: 12 }, (_, i) => `<h2>Fixture issue ${i} (CVE-2026-${String(99000 + i)}) - (medium)</h2><p>This vulnerability affects all users</p>`).join("")}</main>`;
     await readAllBut(JUNE);
-    const f1 = createRuntimeFake(routes({ [JUNE]: juneHtml }));
+    const f1 = createRuntimeFake(routes({ [JUNE]: juneNoLines }));
     const r1 = await nodeRuntime.run(ctxAt(f1.fetch, NOW));
     expect(r1.errors).toEqual([]);
     expect(f1.count(JUNE)).toBe(1);
@@ -455,7 +458,7 @@ describe("coverage (coverage)", () => {
     expect(await unemitted()).toBe(12);
     expect(await cov()).toBeNull();
     // A later run with no re-read of June keeps coverage back.
-    await nodeRuntime.run(ctxAt(createRuntimeFake(routes({ [JUNE]: juneHtml })).fetch, NOW + 61 * MIN));
+    await nodeRuntime.run(ctxAt(createRuntimeFake(routes({ [JUNE]: juneNoLines })).fetch, NOW + 61 * MIN));
     expect(await cov()).toBeNull();
 
     // A parser revision bump (ticket #76) re-reads the row: here its stored

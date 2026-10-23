@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { NODE_DEFAULTS, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
+import { NODE_DEFAULTS, NODE_PARSER_REV, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
 import { NODE_DIST_KEY } from "../../src/ingest/node-runtime-dist";
 import { defaultRegistry, runIngesters } from "../../src/ingest/registry";
 import migration0015 from "../../migrations/0015_node_history.sql?raw";
@@ -100,7 +100,7 @@ describe("node-runtime history", () => {
     await markNodePostsRead("2099-01-01T00:00:00Z", "2");
     const r = await cron(routes());
     expect(r).toEqual({ status: "ok", posts: 20 });
-    expect(await nodePostRow(POSTS[19].link)).toMatchObject({ state: "ok", parser_rev: "3" });
+    expect(await nodePostRow(POSTS[19].link)).toMatchObject({ state: "ok", parser_rev: NODE_PARSER_REV });
     expect(await nodePostRow(POSTS[20].link)).toMatchObject({ state: "ok", parser_rev: "2" });
     expect(await nodeRows()).toBe(20);
   });
