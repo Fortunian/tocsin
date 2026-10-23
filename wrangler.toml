@@ -30,4 +30,5 @@ queue = "deliveries"
 queue = "deliveries"
 
 [triggers]
-crons = ["*/10 * * * *"]
+# */10: ingest. 17 3 1 * *: monthly API key retention (src/cron/run.ts RETENTION_CRON).
+crons = ["*/10 * * * *", "17 3 1 * *"]
