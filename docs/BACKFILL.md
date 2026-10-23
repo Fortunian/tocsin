@@ -69,6 +69,12 @@ Each record that the backfill inserts or updates gets a new feed cursor. A consu
 run. Use `published_at` to tell old advisories from new ones. A later delivery feature must not
 treat backfill events as new advisories.
 
+Webhook lists (TCS-82): enqueue passes every re-cursored advisory that a list already has a
+deliveries row for in SQL, up to `webhooks.enqueue_scan_rows` (default 100,000) matching rows per
+list per run, so a list reaches a new event behind a 48,000-row re-cursor in one run. A list still
+more than `webhooks.lag_alert_rows` (default 5,000) matching rows behind after a run logs
+`{"lane":"enqueue","alert":"lag",...}`.
+
 The batch size is capped by the settings row `import.max_batch` (default 100). One new record
 costs about 5 D1 queries, and a Worker invocation may run 1,000 D1 queries (paid plan). Do not
 set the row or the `batch` input above 150. If the worker answers 500 on a batch because of the

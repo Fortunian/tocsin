@@ -4,11 +4,15 @@ import type { WatchlistFilter } from "../watchlists/filter";
 import { watchlistWhere } from "../watchlists/query";
 
 // Code fallbacks only. The live values are the settings rows
-// webhooks.enqueue_max_lists, webhooks.enqueue_per_list,
-// webhooks.max_event_age_days, webhooks.sweep_grace_seconds and
-// webhooks.sweep_batch (migrations/0021_deliveries.sql).
+// webhooks.enqueue_max_lists, webhooks.max_event_age_days,
+// webhooks.sweep_grace_seconds, webhooks.sweep_batch
+// (migrations/0021_deliveries.sql), webhooks.enqueue_per_list,
+// webhooks.enqueue_scan_rows and webhooks.lag_alert_rows
+// (migrations/0025_webhooks_enqueue_catchup.sql).
 export const FALLBACK_ENQUEUE_MAX_LISTS = 1000;
-export const FALLBACK_ENQUEUE_PER_LIST = 100;
+export const FALLBACK_ENQUEUE_PER_LIST = 1000;
+export const FALLBACK_ENQUEUE_SCAN_ROWS = 100_000;
+export const FALLBACK_LAG_ALERT_ROWS = 5000;
 export const FALLBACK_MAX_EVENT_AGE_DAYS = 30;
 export const FALLBACK_SWEEP_GRACE_SECONDS = 600;
 export const FALLBACK_SWEEP_BATCH = 500;
@@ -37,23 +41,30 @@ export interface DeliveryMessage {
   advisory_id: string;
 }
 
-// The two statements one list runs in one transaction (env.DB.batch):
-// 1. Insert a deliveries row for each advisory above the list cursor that
-//    matches the filter and has no row for this list yet, oldest first, at
-//    most perList. The pair (watchlist_id, advisory_id) is the key whatever the
-//    cursor: a backfill that moves an advisory to a new cursor finds its row
-//    (NOT EXISTS) and is not queued again. INSERT OR IGNORE on the primary key
-//    is the backstop; RETURNING gives only the new rows.
+// The two statements one list runs in one transaction (env.DB.batch), in this
+// order:
+// 1. Move the list cursor. The window is the first scanRows advisories above
+//    the cursor that match the filter; `end` is its last cursor. `stop` is the
+//    cursor of the perList-th advisory in the window that has no deliveries
+//    row for this list (fresh), or NULL when the window holds fewer. The
+//    cursor moves to `stop`, else to `end`. So it passes, in SQL, every
+//    advisory that already has a row (a backfill re-cursor of 50,000 delivered
+//    rows costs one run), and never passes a fresh advisory that statement 2
+//    does not take. It runs first, so it sees the deliveries rows from before
+//    this run.
+// 2. Insert a deliveries row for each fresh advisory in the window, oldest
+//    first, at most perList. since is a bound parameter, so the cursor move of
+//    statement 1 does not change what this scans. The pair (watchlist_id,
+//    advisory_id) is the key whatever the cursor: a backfill that moves an
+//    advisory to a new cursor finds its row (NOT EXISTS) and is not queued
+//    again. INSERT OR IGNORE on the primary key is the backstop; RETURNING
+//    gives only the new rows.
 //    An advisory published before ageCutoff gets a 'skipped' row (backfill
 //    history, docs/BACKFILL.md) and no message, unless KEV flagged it after
 //    ageCutoff (exploited_at): a KEV flag on an old CVE is news, and an
 //    exploited_only list sees the advisory first at that flag.
-// 2. Move the list cursor to the highest cursor of the same scan. The scan is
-//    run again inside the transaction, so it sees the same rows; it is not read
-//    from deliveries.cursor, because a backfill can give an advisory that
-//    already has a row a new, higher feed cursor. It has no NOT EXISTS, so it
-//    never passes a new row the insert did not take (the insert's page of new
-//    rows holds every new row in the cursor scan's page).
+// Both statements read at most scanRows index entries of advisories, plus one
+// primary-key probe of deliveries per entry.
 export function buildEnqueueStatements(
   f: WatchlistFilter,
   listId: string,
@@ -61,20 +72,31 @@ export function buildEnqueueStatements(
   perList: number,
   ageCutoff: string,
   nowIso: string,
+  scanRows: number = FALLBACK_ENQUEUE_SCAN_ROWS,
 ): { insertSql: string; insertParams: unknown[]; cursorSql: string; cursorParams: unknown[] } {
   const { where, params } = watchlistWhere(f, since);
   const filter = `FROM advisories WHERE ${where.join(" AND ")}`;
-  const scan = `${filter} ORDER BY cursor LIMIT ?`;
-  const fresh = `${filter} AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.watchlist_id = ? AND d.advisory_id = advisories.id) ORDER BY cursor LIMIT ?`;
+  const end = `(SELECT MAX(cursor) FROM (SELECT cursor ${filter} ORDER BY cursor LIMIT ?))`;
+  const endParams = [...params, scanRows];
+  const fresh = `${filter} AND cursor <= ${end} AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.watchlist_id = ? AND d.advisory_id = advisories.id)`;
+  const freshParams = [...params, ...endParams, listId];
+  const stop = `(SELECT cursor ${fresh} ORDER BY cursor LIMIT 1 OFFSET ?)`;
   return {
     insertSql: `INSERT OR IGNORE INTO deliveries (watchlist_id, advisory_id, cursor, attempt, status, next_at)
-      SELECT ?, id, cursor, 0, CASE WHEN published_at < ? AND (exploited_at IS NULL OR exploited_at < ?) THEN 'skipped' ELSE 'pending' END, ? ${fresh}
+      SELECT ?, id, cursor, 0, CASE WHEN published_at < ? AND (exploited_at IS NULL OR exploited_at < ?) THEN 'skipped' ELSE 'pending' END, ? ${fresh} ORDER BY cursor LIMIT ?
       RETURNING advisory_id, status`,
-    insertParams: [listId, ageCutoff, ageCutoff, nowIso, ...params, listId, perList],
-    cursorSql: `UPDATE watchlists SET cursor = MAX(cursor, COALESCE((SELECT MAX(cursor) FROM (SELECT cursor ${scan})), cursor))
-      WHERE id = ? AND delivery = 'webhook'`,
-    cursorParams: [...params, perList, listId],
+    insertParams: [listId, ageCutoff, ageCutoff, nowIso, ...freshParams, perList],
+    cursorSql: `UPDATE watchlists SET cursor = MAX(cursor, COALESCE(${stop}, ${end}, cursor))
+      WHERE id = ? AND delivery = 'webhook' RETURNING cursor`,
+    cursorParams: [...freshParams, perList - 1, ...endParams, listId],
   };
+}
+
+// The lag of a list: the matching advisories above its cursor, counted up to
+// cap (a bounded read, served by the same cursor index as the feed).
+export function buildLagCountStatement(f: WatchlistFilter, cursor: number, cap: number): { sql: string; params: unknown[] } {
+  const { where, params } = watchlistWhere(f, cursor);
+  return { sql: `SELECT COUNT(*) AS n FROM (SELECT 1 FROM advisories WHERE ${where.join(" AND ")} LIMIT ?)`, params: [...params, cap] };
 }
 
 export interface EnqueueResult {
@@ -84,6 +106,8 @@ export interface EnqueueResult {
   sent: number;
   send_errors: number;
   list_errors: number;
+  // Lists still more than webhooks.lag_alert_rows rows behind after this run.
+  lagging_lists: number;
 }
 
 function errText(err: unknown): string {
@@ -95,21 +119,24 @@ function errText(err: unknown): string {
 // The row commits BEFORE the send; a lost send leaves the row pending, and
 // sweepDeliveries sends it after webhooks.sweep_grace_seconds.
 export async function enqueueDeliveries(env: Env, now: Date): Promise<EnqueueResult> {
-  const [maxLists, perListRaw, maxAgeDays, after] = await Promise.all([
+  const [maxLists, perList, scanRowsRaw, lagAlert, maxAgeDays, after] = await Promise.all([
     getSettingInt(env.DB, "webhooks.enqueue_max_lists", FALLBACK_ENQUEUE_MAX_LISTS),
     getSettingInt(env.DB, "webhooks.enqueue_per_list", FALLBACK_ENQUEUE_PER_LIST),
+    getSettingInt(env.DB, "webhooks.enqueue_scan_rows", FALLBACK_ENQUEUE_SCAN_ROWS),
+    getSettingInt(env.DB, "webhooks.lag_alert_rows", FALLBACK_LAG_ALERT_ROWS),
     getSettingInt(env.DB, "webhooks.max_event_age_days", FALLBACK_MAX_EVENT_AGE_DAYS),
     env.CURSORS.get(ENQUEUE_AFTER_KEY),
   ]);
-  let perList = perListRaw;
-  if (perList > QUEUE_SEND_BATCH_MAX) {
-    console.error(JSON.stringify({ lane: "enqueue", err: `webhooks.enqueue_per_list=${perList} is over the sendBatch limit, using ${QUEUE_SEND_BATCH_MAX}` }));
-    perList = QUEUE_SEND_BATCH_MAX;
-  }
-  const res: EnqueueResult = { lists: 0, inserted: 0, skipped: 0, sent: 0, send_errors: 0, list_errors: 0 };
+  const res: EnqueueResult = { lists: 0, inserted: 0, skipped: 0, sent: 0, send_errors: 0, list_errors: 0, lagging_lists: 0 };
   if (maxLists < 1 || perList < 1) {
     console.error(JSON.stringify({ lane: "enqueue", err: `knobs out of range: enqueue_max_lists=${maxLists}, enqueue_per_list=${perList}` }));
     return res;
+  }
+  // A window smaller than the per-run cap could never fill the cap.
+  let scanRows = scanRowsRaw;
+  if (scanRows < perList) {
+    console.error(JSON.stringify({ lane: "enqueue", err: `webhooks.enqueue_scan_rows=${scanRows} is under webhooks.enqueue_per_list=${perList}, using ${perList}` }));
+    scanRows = perList;
   }
 
   const { results: lists } = await env.DB.prepare(WEBHOOK_LISTS_SQL)
@@ -122,15 +149,18 @@ export async function enqueueDeliveries(env: Env, now: Date): Promise<EnqueueRes
   for (const list of lists) {
     res.lists += 1;
     let fresh: DeliveryMessage[];
+    let filter: WatchlistFilter;
+    let cursor: number;
     try {
-      const filter = JSON.parse(list.filter_json) as WatchlistFilter;
+      filter = JSON.parse(list.filter_json) as WatchlistFilter;
       const created = Date.parse(list.created_at);
       const ageCutoff = new Date((Number.isNaN(created) ? now.getTime() : created) - maxAgeDays * 86_400_000).toISOString();
-      const s = buildEnqueueStatements(filter, list.id, list.cursor, perList, ageCutoff, nowIso);
-      const [ins] = await env.DB.batch([
-        env.DB.prepare(s.insertSql).bind(...s.insertParams),
+      const s = buildEnqueueStatements(filter, list.id, list.cursor, perList, ageCutoff, nowIso, scanRows);
+      const [moved, ins] = await env.DB.batch([
         env.DB.prepare(s.cursorSql).bind(...s.cursorParams),
+        env.DB.prepare(s.insertSql).bind(...s.insertParams),
       ]);
+      cursor = (moved.results[0] as { cursor: number } | undefined)?.cursor ?? list.cursor;
       const rows = ins.results as Array<{ advisory_id: string; status: string }>;
       res.inserted += rows.length;
       fresh = rows.filter((r) => r.status === "pending").map((r) => ({ watchlist_id: list.id, advisory_id: r.advisory_id }));
@@ -140,13 +170,30 @@ export async function enqueueDeliveries(env: Env, now: Date): Promise<EnqueueRes
       console.error(JSON.stringify({ lane: "enqueue", watchlist_id: list.id, err: errText(err) }));
       continue;
     }
-    if (fresh.length === 0) continue;
-    try {
-      await env.DELIVERIES.sendBatch(fresh.map((body) => ({ body })));
-      res.sent += fresh.length;
-    } catch (err) {
-      res.send_errors += 1;
-      console.error(JSON.stringify({ lane: "enqueue", watchlist_id: list.id, rows: fresh.length, err: `send failed, the sweep re-sends: ${errText(err)}` }));
+    // Cloudflare Queues takes at most 100 messages per sendBatch call. A
+    // failed chunk leaves its rows pending; the sweep sends them.
+    for (let i = 0; i < fresh.length; i += QUEUE_SEND_BATCH_MAX) {
+      const chunk = fresh.slice(i, i + QUEUE_SEND_BATCH_MAX);
+      try {
+        await env.DELIVERIES.sendBatch(chunk.map((body) => ({ body })));
+        res.sent += chunk.length;
+      } catch (err) {
+        res.send_errors += 1;
+        console.error(JSON.stringify({ lane: "enqueue", watchlist_id: list.id, rows: chunk.length, err: `send failed, the sweep re-sends: ${errText(err)}` }));
+      }
+    }
+    if (lagAlert > 0) {
+      try {
+        const lag = buildLagCountStatement(filter, cursor, lagAlert + 1);
+        const r = await env.DB.prepare(lag.sql).bind(...lag.params).first<{ n: number }>();
+        if (r && r.n > lagAlert) {
+          res.lagging_lists += 1;
+          // The count stops at lag_alert_rows + 1, so the lag is at least n.
+          console.error(JSON.stringify({ lane: "enqueue", alert: "lag", watchlist_id: list.id, lag_rows_at_least: r.n, lag_alert_rows: lagAlert }));
+        }
+      } catch (err) {
+        console.error(JSON.stringify({ lane: "enqueue", watchlist_id: list.id, err: `lag count failed: ${errText(err)}` }));
+      }
     }
   }
 

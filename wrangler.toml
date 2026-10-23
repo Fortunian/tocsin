@@ -12,6 +12,7 @@ routes = [{ pattern = "tocsin.sh", custom_domain = true }]
 #   wrangler d1 create tocsin
 #   wrangler kv namespace create CURSORS
 #   wrangler queues create deliveries
+#   wrangler queues create deliveries-dlq
 [[d1_databases]]
 binding = "DB"
 database_name = "tocsin"
@@ -26,8 +27,22 @@ id = "2a4feb92a3ae44a4a8e12de868a2426a"
 binding = "DELIVERIES"
 queue = "deliveries"
 
+# Consumer settings are deploy config: the Worker cannot read them from D1,
+# so they are not settings rows. Each message is one delivery; a retry of a
+# failed POST is our own delayed message, never msg.retry(). The queue retries
+# a message only when the consumer throws; after max_retries it moves the
+# message to deliveries-dlq, whose consumer marks the row failed with
+# last_error dead_letter (src/queue/run.ts runDeadLetters).
 [[queues.consumers]]
 queue = "deliveries"
+max_batch_size = 10
+max_retries = 3
+max_concurrency = 5
+dead_letter_queue = "deliveries-dlq"
+
+[[queues.consumers]]
+queue = "deliveries-dlq"
+max_batch_size = 10
 
 [triggers]
 # */10: ingest, then webhook enqueue and sweep. 17 3 1 * *: monthly API key

@@ -3,6 +3,7 @@ import { defaultRegistry, runIngesters } from "../ingest/registry";
 import type { Ingester } from "../ingest/types";
 import { enqueueDeliveries, sweepDeliveries } from "../queue/enqueue";
 import { runDeliveryRetention } from "./deliveries-retention";
+import { reencryptWebhookSecrets } from "./reencrypt-secrets";
 import { runKeyRetention } from "./retention";
 
 // Monthly (03:17Z on day 1), in wrangler.toml [triggers]. Every other cron
@@ -42,5 +43,12 @@ export async function runCron(
     await sweepDeliveries(env, new Date());
   } catch (err) {
     console.error(JSON.stringify({ lane: "sweep", err: errText(err) }));
+  }
+  // Moves plaintext webhook secrets under WEBHOOK_KEK (TCS-82). After the
+  // move it reads 0 rows from an empty partial index.
+  try {
+    await reencryptWebhookSecrets(env);
+  } catch (err) {
+    console.error(JSON.stringify({ lane: "reencrypt", err: errText(err) }));
   }
 }
