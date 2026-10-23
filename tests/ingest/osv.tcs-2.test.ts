@@ -16,15 +16,16 @@ const CURSOR_KEY = "cursor:osv";
 const MAX_MODIFIED = "2024-07-03T20:05:21Z"; // GHSA-9v2f-6vcg-3hgv, the newest record in page1.json
 const PLACEHOLDER_ID = "tcs_00000000000000000000000000";
 
-// Expected action per fixture record: lowest fixed version, or no fix.
+// Expected action per fixture record: the fixed version, each fixed line by
+// name when there are several (TCS-75), or no fix.
 const EXPECTED_ACTION: Record<string, string> = {
-  "GHSA-fhjf-83wg-r2j9": "Upgrade mixin-deep to 1.3.2 or later.",
+  "GHSA-fhjf-83wg-r2j9": "Upgrade mixin-deep to 1.3.2 (1.x) or 2.0.1 (2.x) or later.",
   "GHSA-jvf4-g24p-2qgw": "No fix published. Pin and monitor.",
   "PYSEC-2023-74": "Upgrade requests to 2.31.0 or later.",
   "GHSA-9v2f-6vcg-3hgv": "No fix published. Pin and monitor.",
-  "GO-2024-2963": "Upgrade stdlib to 1.21.12 or later.",
+  "GO-2024-2963": "Upgrade stdlib to 1.21.12 (1.21.x) or 1.22.5 (1.22.x) or later.",
   "GO-2020-0001": "Upgrade github.com/gin-gonic/gin to 1.6.0 or later.",
-  "GHSA-9qj7-jvg4-qr2x": "Upgrade passenger to 3.0.21 or later.",
+  "GHSA-9qj7-jvg4-qr2x": "Upgrade passenger to 3.0.21 (3.x) or 4.0.5 (4.x) or later.",
 };
 
 function rec(id: string): OsvVuln {

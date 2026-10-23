@@ -2,6 +2,7 @@
 // per-ecosystem modified_id.csv, fetches each record, normalizes it to
 // advisory v1 and upserts it. The cursor moves only after a full page.
 import { cvss3BaseScore, labelFromScore } from "./cvss";
+import { osvAction } from "./osv-action";
 import { getVuln, listModifiedSince, type ModifiedRow } from "./osv-client";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
 import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
@@ -62,7 +63,6 @@ const TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/;
 const CVE = /^CVE-\d{4}-\d{4,}$/;
 const GHSA = /^GHSA(-[23456789cfghjmpqrvwx]{4}){3}$/;
 const DB_SEVERITY: Record<string, SeverityLabel> = { CRITICAL: "critical", HIGH: "high", MODERATE: "medium", LOW: "low" };
-const NO_FIX = "No fix published. Pin and monitor.";
 
 // Sort key for an RFC3339 UTC timestamp. The fraction is padded to 9 digits
 // so "05Z" sorts before "05.2Z" (a raw string compare puts "." before "Z").
@@ -253,7 +253,6 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
       (a) => typeof a.package?.ecosystem === "string" && baseEcosystem(a.package.ecosystem) === ecosystem && a.package?.name === component,
     );
     const { affected, fixed } = rangesOf(same);
-    const lowest = [...fixed].sort(compareVersions)[0];
     const source_id = osvSourceId(v.id, i, ecosystem, component);
     const doc: AdvisoryInput = {
       cve_ids,
@@ -268,7 +267,7 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
       published_at,
       modified_at,
       summary: summaryOf(v, component),
-      action: lowest !== undefined ? oneLine(`Upgrade ${component} to ${lowest} or later.`) : NO_FIX,
+      action: osvAction(component, fixed, compareVersions),
       references: [...new Set([osvUrl, ...refs])],
       sources: [{ source: "osv", source_id, url: osvUrl }],
     };

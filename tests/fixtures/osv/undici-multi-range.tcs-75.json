@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.7.0",
+  "id": "GHSA-rfgv-xxqx-mfg5",
+  "modified": "2026-09-29T18:30:41Z",
+  "published": "2026-09-29T18:30:41Z",
+  "affected": [
+    {
+      "package": { "ecosystem": "npm", "name": "undici", "purl": "pkg:npm/undici" },
+      "ranges": [{ "type": "SEMVER", "events": [{ "introduced": "6.7.0" }, { "fixed": "6.28.1" }] }]
+    },
+    {
+      "package": { "ecosystem": "npm", "name": "undici", "purl": "pkg:npm/undici" },
+      "ranges": [{ "type": "SEMVER", "events": [{ "introduced": "7.0.0" }, { "fixed": "7.29.1" }] }]
+    },
+    {
+      "package": { "ecosystem": "npm", "name": "undici", "purl": "pkg:npm/undici" },
+      "ranges": [{ "type": "SEMVER", "events": [{ "introduced": "8.0.0" }, { "fixed": "8.10.2" }] }]
+    }
+  ]
+}
