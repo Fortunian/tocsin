@@ -5,6 +5,7 @@ import { DEFAULT_LIMIT, MAX_LIMIT } from "../feed/query";
 import { jsonUtf8 } from "../lib/http";
 import { getSettingInt } from "../lib/settings";
 import { requireApiKey, type AuthEnv } from "../middleware/auth";
+import { keyRateLimit } from "../middleware/ratelimit";
 import { parseWatchlistBody, type WatchlistFilter } from "../watchlists/filter";
 import { buildWatchlistEventsQuery } from "../watchlists/query";
 
@@ -19,9 +20,10 @@ export const CREATE_WATCHLIST_SQL = `INSERT INTO watchlists (id, key_id, name, f
   WHERE (SELECT COUNT(*) FROM watchlists WHERE key_id = ?) < ?
   RETURNING cursor`;
 
-// Bounded by plans.max_watchlists. Never selects webhook_secret.
+// LIMIT is plans.max_watchlists, so the answer is at most that many lists of
+// at most MAX_FILTER_BYTES each. Never selects webhook_secret.
 export const LIST_WATCHLISTS_SQL =
-  "SELECT id, name, filter_json, cursor, delivery, created_at FROM watchlists WHERE key_id = ? ORDER BY created_at, id";
+  "SELECT id, name, filter_json, cursor, delivery, created_at FROM watchlists WHERE key_id = ? ORDER BY created_at, id LIMIT ?";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -39,7 +41,9 @@ interface ListRow {
 
 const watchlists = new Hono<AuthEnv>();
 
-watchlists.use("*", requireApiKey);
+// Auth first, so the per-key counter has a key id; an unknown key is 401 and
+// is never counted.
+watchlists.use("*", requireApiKey, keyRateLimit);
 
 watchlists.post(
   "/",
@@ -74,7 +78,7 @@ watchlists.post(
 );
 
 watchlists.get("/", async (c) => {
-  const { results } = await c.env.DB.prepare(LIST_WATCHLISTS_SQL).bind(c.var.apiKey.id).all<ListRow>();
+  const { results } = await c.env.DB.prepare(LIST_WATCHLISTS_SQL).bind(c.var.apiKey.id, c.var.apiKey.limits.max_watchlists).all<ListRow>();
   return answer(c, {
     watchlists: results.map(({ filter_json, ...r }) => ({ ...r, filter: JSON.parse(filter_json) as WatchlistFilter })),
   });

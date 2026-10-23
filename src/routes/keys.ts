@@ -1,6 +1,8 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { Env } from "../env";
 import { jsonUtf8 } from "../lib/http";
+import { getSettingInt } from "../lib/settings";
 import { sha256Hex, toHex } from "../middleware/auth";
 import { keysRateLimit } from "../middleware/ratelimit";
 
@@ -9,6 +11,8 @@ const NO_STORE = { "Cache-Control": "no-store" };
 // RFC 5321 address length limit, a protocol fact and not a knob.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const EMAIL_MAX = 254;
+// Code fallback only. The live cap is settings.keys.max_body_bytes.
+export const FALLBACK_MAX_BODY_BYTES = 4096;
 
 const keys = new Hono<{ Bindings: Env }>();
 
@@ -16,7 +20,13 @@ keys.use("*", keysRateLimit);
 
 // One key per email. The plaintext key is in this answer only; the row keeps
 // its sha256. A second call for the same email answers 409 with no key.
-keys.post("/", async (c) => {
+keys.post(
+  "/",
+  async (c, next) => {
+    const maxSize = await getSettingInt(c.env.DB, "keys.max_body_bytes", FALLBACK_MAX_BODY_BYTES);
+    return bodyLimit({ maxSize, onError: (c) => jsonUtf8(c, { error: `body over ${maxSize} bytes` }, 413, NO_STORE) })(c, next);
+  },
+  async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -42,6 +52,7 @@ keys.post("/", async (c) => {
   if (!row) return jsonUtf8(c, { error: "a key already exists for this email" }, 409, NO_STORE);
 
   return jsonUtf8(c, { key, key_id: id, plan: row.plan, email }, 201, NO_STORE);
-});
+  },
+);
 
 export default keys;
