@@ -15,8 +15,11 @@ Commands:
             --claude-code --cursor --claude-desktop --codex   wire only these
             --dry-run   print the edits, write nothing
             --print     print the MCP JSON block only
+            --hook      also add a Claude Code SessionStart hook that runs the check
+            --print-agents-md   print a block for a repo's AGENTS.md, write nothing
   check     Check the lockfiles in this directory and the installed runtimes
             --json      print the result as JSON
+            --summary   print one line and exit 0 (for a session hook)
   latest    Print the newest advisories, one per line
             --ecosystem <name>  --since <cursor>  --limit <1-100>  --json
   watch     Print new advisories as they arrive (polls every 5 minutes)
@@ -41,10 +44,12 @@ const VERBS: Record<string, { options: Options; run: (io: Io, values: Record<str
       codex: { type: "boolean" },
       "dry-run": { type: "boolean" },
       print: { type: "boolean" },
+      hook: { type: "boolean" },
+      "print-agents-md": { type: "boolean" },
     },
     run: runConnect,
   },
-  check: { options: { json: { type: "boolean" } }, run: runCheck },
+  check: { options: { json: { type: "boolean" }, summary: { type: "boolean" } }, run: runCheck },
   latest: {
     options: { ecosystem: { type: "string" }, since: { type: "string" }, limit: { type: "string" }, json: { type: "boolean" } },
     run: runLatest,

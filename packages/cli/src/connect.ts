@@ -1,7 +1,8 @@
 // `tocsin connect`: add the Tocsin MCP server to each agent tool on this
-// machine. It reads each config file, edits one key, and writes it back
-// through a temp file and a rename. It never writes a file it cannot parse,
-// never replaces a user's own `tocsin` entry, and never writes the API key.
+// machine, and the Tocsin skill to Claude Code, Codex and Cursor. It reads each
+// config file, edits one key, and writes it back through a temp file and a
+// rename. It never writes a file it cannot parse, never replaces a user's own
+// `tocsin` entry or edited skill copy, and never writes the API key.
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -10,7 +11,7 @@ import type { Io } from "./io.js";
 import { DEFAULT_MCP_URL, mcpServerConfig } from "./mcp-config.js";
 import { PKG_ROOT } from "./version.js";
 
-type Kind = "json" | "toml" | "skill";
+type Kind = "json" | "toml" | "skill" | "skill-copy" | "hook";
 
 interface Target {
   name: string;
@@ -20,6 +21,8 @@ interface Target {
   path: string | null;
   detected: boolean;
   entry?: unknown;
+  /** For kind "skill-copy": the packaged file under skills/. */
+  src?: string;
 }
 
 type Outcome = "connected" | "already" | "different" | "failed";
@@ -45,15 +48,30 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
 const block = (entry: unknown) => JSON.stringify({ mcpServers: { tocsin: entry } }, null, 2);
 
+/** The command the Claude Code SessionStart hook runs. `check --summary` prints one line and exits 0. */
+export const HOOK_COMMAND = "npx -y tocsin check --summary";
+const HOOK_ENTRY = { matcher: "startup", hooks: [{ type: "command", command: HOOK_COMMAND }] };
+const hookBlock = () => JSON.stringify({ hooks: { SessionStart: [HOOK_ENTRY] } }, null, 2);
+
+/** The block `connect --print-agents-md` prints for a repo's AGENTS.md. */
+export const AGENTS_MD_BLOCK = [
+  "## Security advisories (Tocsin)",
+  "",
+  "At session start and before a deploy, run `npx tocsin check --json`.",
+  "Exit 1: a dependency has an advisory. Read `affected[]` and upgrade to `fixed_in`.",
+  "Exit 3: the check failed. Do not report the project as safe.",
+  "Docs: https://tocsin.sh/docs",
+].join("\n");
+
 function homeDir(io: Io): string | null {
   return (io.platform === "win32" ? io.env.USERPROFILE || io.env.HOME : io.env.HOME || io.env.USERPROFILE) || null;
 }
 
-/** The packaged SKILL.md: inside the published package, else in the repo checkout. */
-export function skillSource(): { path: string; found: boolean } {
-  const published = fileURLToPath(new URL("skills/tocsin/SKILL.md", PKG_ROOT));
+/** A packaged file under skills/: inside the published package, else in the repo checkout. */
+export function skillSource(rel = "tocsin/SKILL.md"): { path: string; found: boolean } {
+  const published = fileURLToPath(new URL(`skills/${rel}`, PKG_ROOT));
   if (existsSync(published)) return { path: published, found: true };
-  const repo = fileURLToPath(new URL("../../skills/tocsin/SKILL.md", PKG_ROOT));
+  const repo = fileURLToPath(new URL(`../../skills/${rel}`, PKG_ROOT));
   if (existsSync(repo)) return { path: repo, found: true };
   return { path: published, found: false };
 }
@@ -85,6 +103,16 @@ function targets(io: Io, home: string, mcpUrl: string): Target[] {
       entry: { command: "npx", args: ["-y", "mcp-remote", mcpUrl] },
     },
     { name: "Codex", flag: "codex", kind: "toml", path: join(home, ".codex", "config.toml"), detected: exists(join(home, ".codex")) },
+    {
+      name: "Codex skill",
+      flag: "codex",
+      kind: "skill-copy",
+      path: join(home, ".codex", "skills", "tocsin", "SKILL.md"),
+      detected: exists(join(home, ".codex")),
+      src: "codex/tocsin/SKILL.md",
+    },
+    { name: "Cursor rule", flag: "cursor", kind: "skill-copy", path: join(home, ".cursor", "rules", "tocsin.mdc"), detected: exists(join(home, ".cursor")), src: "cursor/tocsin.mdc" },
+    { name: "Claude Code hook", flag: "claude-code", kind: "hook", path: join(home, ".claude", "settings.json"), detected: claudeDetected },
   ];
 }
 
@@ -143,6 +171,40 @@ async function planSkill(current: Buffer | null): Promise<Plan> {
   return { outcome: "connected", next: bytes };
 }
 
+/** A generated skill copy. A file that differs from ours is the user's: never replaced. */
+async function planSkillCopy(current: Buffer | null, rel: string): Promise<Plan> {
+  const src = skillSource(rel);
+  if (!src.found) return { outcome: "failed", reason: `the packaged skill is missing (${src.path})` };
+  const bytes = await readFile(src.path);
+  if (current === null) return { outcome: "connected", next: bytes };
+  return { outcome: current.equals(bytes) ? "already" : "different" };
+}
+
+/** Add HOOK_ENTRY to hooks.SessionStart in ~/.claude/settings.json, keeping every other key. */
+function planHook(current: Buffer | null): Plan {
+  if (current === null) return { outcome: "connected", next: hookBlock() + "\n" };
+  const text = current.toString("utf8").replace(/^\uFEFF/, "");
+  let obj: unknown;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    return { outcome: "failed", reason: "could not parse" };
+  }
+  if (!isObject(obj)) return { outcome: "failed", reason: "could not parse" };
+  const hooks = obj.hooks;
+  if (hooks !== undefined && !isObject(hooks)) return { outcome: "failed", reason: "could not parse" };
+  const start = hooks?.SessionStart;
+  if (start !== undefined && !Array.isArray(start)) return { outcome: "failed", reason: "could not parse" };
+  const commands = (start ?? []).flatMap((e: unknown) =>
+    isObject(e) && Array.isArray(e.hooks) ? e.hooks.map((h: unknown) => (isObject(h) && typeof h.command === "string" ? h.command : "")) : [],
+  );
+  if (commands.includes(HOOK_COMMAND)) return { outcome: "already" };
+  if (commands.some((c) => c.includes("tocsin check"))) return { outcome: "different" };
+  obj.hooks = { ...(hooks ?? {}), SessionStart: [...(start ?? []), HOOK_ENTRY] };
+  const newline = /\r?\n$/.exec(text)?.[0] ?? "";
+  return { outcome: "connected", next: JSON.stringify(obj, null, 2) + newline };
+}
+
 /** Write through a temp file in the same directory and a rename, keeping the file mode. */
 async function atomicWrite(path: string, data: string | Buffer): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -166,6 +228,10 @@ export async function runConnect(io: Io, values: Record<string, unknown>): Promi
     io.out(block(generic));
     return 0;
   }
+  if (values["print-agents-md"]) {
+    io.out(AGENTS_MD_BLOCK);
+    return 0;
+  }
 
   const home = homeDir(io);
   if (!home) {
@@ -173,7 +239,8 @@ export async function runConnect(io: Io, values: Record<string, unknown>): Promi
     return 2;
   }
 
-  const all = targets(io, home, mcpUrl);
+  // The SessionStart hook is opt-in: without --hook, settings.json is never read.
+  const all = targets(io, home, mcpUrl).filter((t) => t.kind !== "hook" || values.hook === true);
   const flags = new Set(all.map((t) => t.flag).filter((f) => values[f] === true));
   const chosen = flags.size > 0 ? all.filter((t) => flags.has(t.flag)) : all.filter((t) => t.detected);
 
@@ -196,7 +263,11 @@ export async function runConnect(io: Io, values: Record<string, unknown>): Promi
     let plan: Plan;
     try {
       const current = await readIfPresent(t.path);
-      plan = t.kind === "json" ? planJson(current, t.entry) : t.kind === "toml" ? planToml(current, mcpUrl) : await planSkill(current);
+      if (t.kind === "json") plan = planJson(current, t.entry);
+      else if (t.kind === "toml") plan = planToml(current, mcpUrl);
+      else if (t.kind === "skill-copy") plan = await planSkillCopy(current, t.src!);
+      else if (t.kind === "hook") plan = planHook(current);
+      else plan = await planSkill(current);
     } catch (e) {
       plan = { outcome: "failed", reason: `could not read (${(e as Error).message})` };
     }
@@ -206,29 +277,37 @@ export async function runConnect(io: Io, values: Record<string, unknown>): Promi
         io.out(`would write ${t.path}`);
         if (t.kind === "json") io.out(block(t.entry));
         else if (t.kind === "toml") io.out(`[mcp_servers.tocsin]\nurl = "${mcpUrl}"`);
+        else if (t.kind === "hook") io.out(hookBlock());
         continue;
       }
       try {
         await atomicWrite(t.path, plan.next);
-        io.out(`${t.name}: connected (${t.path})`);
+        io.out(`${t.name}: ${t.kind === "skill-copy" ? "installed" : "connected"} (${t.path})`);
       } catch (e) {
         plan = { outcome: "failed", reason: `could not write (${(e as Error).message})` };
       }
     }
     if (plan.outcome === "already") {
       already++;
-      io.out(`${t.name}: already connected (${t.path})`);
+      io.out(`${t.name}: ${t.kind === "skill-copy" ? "already installed" : "already connected"} (${t.path})`);
     }
-    if (plan.outcome === "different") {
+    if (plan.outcome === "different" && t.kind === "skill-copy") {
+      io.out(`${t.name}: ${t.path} differs from ours (edited?), left as is`);
+    } else if (plan.outcome === "different" && t.kind === "hook") {
+      io.out(`${t.name}: ${t.path} has a different tocsin hook, left as is. Ours is:`);
+      io.out(hookBlock());
+    } else if (plan.outcome === "different") {
       io.out(`${t.name}: ${t.path} has a different tocsin entry, left as is. Ours is:`);
       io.out(t.kind === "toml" ? `[mcp_servers.tocsin]\nurl = "${mcpUrl}"` : block(t.entry));
     }
     if (plan.outcome === "failed") {
       failed++;
-      io.out(`${t.name}: ${plan.reason} ${t.path}; add this ${t.kind === "skill" ? "file" : "block"} by hand:`);
+      const isFile = t.kind === "skill" || t.kind === "skill-copy";
+      io.out(`${t.name}: ${plan.reason} ${t.path}; add this ${isFile ? "file" : "block"} by hand:`);
       if (t.kind === "json") io.out(block(t.entry));
       else if (t.kind === "toml") io.out(`[mcp_servers.tocsin]\nurl = "${mcpUrl}"`);
-      else io.out(`copy skills/tocsin/SKILL.md from the tocsin package to ${t.path}`);
+      else if (t.kind === "hook") io.out(hookBlock());
+      else io.out(`copy skills/${t.src ?? "tocsin/SKILL.md"} from the tocsin package to ${t.path}`);
     }
   }
 
