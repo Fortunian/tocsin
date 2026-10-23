@@ -15,11 +15,14 @@
 #   cov-count    for each OSV ecosystem in /v1/status coverage, the backfill records are at
 #                least COV_MIN_PCT percent of the non-MAL- ids in OSV's <eco>/modified_id.csv
 #
+# With KEYS_CHECK=1 (a one-time operator run after the mail setup, docs/OPERATING.md) it runs one more:
+#   keys-signup  POST /v1/keys for KEYS_CHECK_EMAIL answers 202 with status "sent" (it sends one real mail)
+#
 # It prints `ok <check>` or `FAIL <check>: <reason>` per check (plus `WARN <check>: ...`
 # lines that do not fail a check), then
-# `launch-check: <n> of <total> passed` (total 5, or 8 with COVERAGE_CHECK=1).
+# `launch-check: <n> of <total> passed` (total 5, plus 3 with COVERAGE_CHECK=1, plus 1 with KEYS_CHECK=1).
 # Exit 0 only when all of them pass, else exit 1.
-# It only reads: GET requests, and a dry run of the CLI with a throwaway HOME.
+# Without KEYS_CHECK it only reads: GET requests, POST /v1/check, and a dry run of the CLI with a throwaway HOME.
 #
 # Env (all optional):
 #   BASE_URL       the Tocsin host               default https://tocsin.sh
@@ -30,9 +33,12 @@
 #   COV_MIN_PCT    cov-count threshold, percent  default 90
 #   COV_DJANGO_MIN cov-django minimum count      default 10
 #   OSV_BASE       the OSV export bucket         default https://osv-vulnerabilities.storage.googleapis.com
+#   KEYS_CHECK     1 runs keys-signup            default unset (off)
+#   KEYS_CHECK_EMAIL  the inbox keys-signup mails  no default; required when KEYS_CHECK=1
 #
 #   bash scripts/launch-check.sh
 #   BASE_URL=http://localhost:8787 TOCSIN_CLI="node packages/cli/bin/tocsin.js" bash scripts/launch-check.sh
+#   KEYS_CHECK=1 KEYS_CHECK_EMAIL=you@example.com bash scripts/launch-check.sh
 set -uo pipefail
 
 BASE_URL="${BASE_URL:-https://tocsin.sh}"
@@ -45,8 +51,11 @@ COV_MIN_PCT="${COV_MIN_PCT:-90}"
 COV_DJANGO_MIN="${COV_DJANGO_MIN:-10}"
 OSV_BASE="${OSV_BASE:-https://osv-vulnerabilities.storage.googleapis.com}"
 OSV_BASE="${OSV_BASE%/}"
+KEYS_CHECK="${KEYS_CHECK:-}"
+KEYS_CHECK_EMAIL="${KEYS_CHECK_EMAIL:-}"
 TOTAL=5
-if [[ "$COVERAGE_CHECK" == "1" ]]; then TOTAL=8; fi
+if [[ "$COVERAGE_CHECK" == "1" ]]; then TOTAL=$((TOTAL + 3)); fi
+if [[ "$KEYS_CHECK" == "1" ]]; then TOTAL=$((TOTAL + 1)); fi
 
 for tool in curl jq; do
   if ! command -v "$tool" >/dev/null 2>&1; then
@@ -60,6 +69,10 @@ for knob in MAX_AGE_HOURS COV_MIN_PCT COV_DJANGO_MIN; do
     exit 1
   fi
 done
+if [[ "$KEYS_CHECK" == "1" && -z "$KEYS_CHECK_EMAIL" ]]; then
+  echo "FAIL preflight: KEYS_CHECK_EMAIL must be set when KEYS_CHECK=1"
+  exit 1
+fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -225,6 +238,23 @@ if [[ "$COVERAGE_CHECK" == "1" ]]; then
       joined="$(printf '%s; ' "${short[@]}")"
       fail cov-count "under ${COV_MIN_PCT}% of the OSV ids: ${joined%; }"
     fi
+  fi
+fi
+
+# keys-signup: the mail setup works end to end. 202 means the provider took the
+# mail; 503 means mail is not configured (no secret) or the daily cap is hit.
+if [[ "$KEYS_CHECK" == "1" ]]; then
+  body="$(jq -cn --arg e "$KEYS_CHECK_EMAIL" '{email: $e}')"
+  if ! code="$(curl -sS --max-time 20 -o "$BODY_FILE" -w '%{http_code}' -H 'Content-Type: application/json' --data "$body" "$BASE_URL/v1/keys" 2>"$WORK/curl.err")"; then
+    fail keys-signup "POST /v1/keys: curl error: $(head -1 "$WORK/curl.err")"
+  elif [[ "$code" == "503" ]]; then
+    fail keys-signup "POST /v1/keys: HTTP 503 (mail not configured or daily cap hit, docs/OPERATING.md)"
+  elif [[ "$code" != "202" ]]; then
+    fail keys-signup "POST /v1/keys: HTTP $code"
+  elif jq -e '.status == "sent"' "$BODY_FILE" >/dev/null 2>&1; then
+    ok keys-signup
+  else
+    fail keys-signup "POST /v1/keys: HTTP 202 but the body has no status \"sent\": $(head -c 200 "$BODY_FILE")"
   fi
 fi
 

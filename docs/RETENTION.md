@@ -32,7 +32,7 @@ One key per source: the ETag of the first advisories page, sent as `If-None-Matc
 
 ## settings
 
-A small key/value table of run-time limits and knobs (today 28 rows: `feed.anon_rate_per_minute`, `site.latest_rows`, `site.latest_cache_seconds`, `import.max_batch`, `import.max_body_bytes`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`, `webhooks.backoff_seconds`, `webhooks.timeout_ms`, `webhooks.lease_seconds`, `webhooks.sweep_grace_seconds`, `webhooks.sweep_batch`, `webhooks.enqueue_max_lists`, `webhooks.enqueue_per_list`, `webhooks.max_event_age_days`, `webhooks.max_url_length`, `webhooks.deliveries_list_limit`, `retention.deliveries_days`, `retention.deliveries_batch`, `retention.deliveries_dry_run`, `webhooks.pause_after_failures`, `webhooks.dns_cache_seconds`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (today 31 rows: `feed.anon_rate_per_minute`, `site.latest_rows`, `site.latest_cache_seconds`, `import.max_batch`, `import.max_body_bytes`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`, `webhooks.backoff_seconds`, `webhooks.timeout_ms`, `webhooks.lease_seconds`, `webhooks.sweep_grace_seconds`, `webhooks.sweep_batch`, `webhooks.enqueue_max_lists`, `webhooks.enqueue_per_list`, `webhooks.max_event_age_days`, `webhooks.max_url_length`, `webhooks.deliveries_list_limit`, `retention.deliveries_days`, `retention.deliveries_batch`, `retention.deliveries_dry_run`, `webhooks.pause_after_failures`, `webhooks.dns_cache_seconds`, `retention.send_counters_days`, `retention.send_counters_batch`, `retention.send_counters_dry_run`). Rows change in place by key; the table does not grow with traffic. No delete job.
 
 ## api_keys
 
@@ -45,6 +45,14 @@ One row per watch list, at most `plans.max_watchlists` per key. A row is deleted
 ## deliveries
 
 One row per (watch list, advisory) that webhook delivery found (TCS-11). The primary key `(watchlist_id, advisory_id)` is the exactly-once gate. It grows with every advisory a webhook list matches. A `delivered` row is that gate's record (CLAUDE.md rule 4): it is never deleted by age, so a backfill that moves an advisory to a new, higher cursor finds the row and sends nothing. A delivered row lives as long as its watch list. `DELETE /v1/watchlists/{id}` deletes the list's rows in the same transaction as the list, and the monthly key retention (`src/cron/retention.ts`) deletes the rows of the lists it deletes in the same transaction. A daily cron (`41 4 * * *`, `src/cron/deliveries-retention.ts`) deletes `failed` and `skipped` rows whose `next_at` (the time of their last write) is older than `retention.deliveries_days` (default 90). A deleted `failed` or `skipped` row was never delivered, so a new row for the same pair can never repeat a delivery. `pending` and `sending` rows are never deleted by the job: they end as `delivered` or `failed` within about 15 hours, or wait while their list is paused. One run deletes at most `retention.deliveries_batch` rows of each status (default 5000), in one transaction; the rest wait for the next run. When `retention.deliveries_dry_run` is not `0`, the run counts what it would delete and deletes nothing. A row is a delivery receipt, not money or history, so it is deleted, not archived. The index `idx_deliveries_status_delivered_at` (0021) no longer serves a delete; it stays, because the schema is additive only.
+
+## send_counters
+
+The mail send caps of `POST /v1/keys` and `POST /v1/keys/rotate` (TCS-83). One row per window: `ip:<ip>:<hour>` (read against `keys.ip_sends_per_hour`), `em:<sha256 of the email>:<hour>` (`keys.email_sends_per_hour`) and `day:<YYYY-MM-DD>` (`mail.daily_send_cap`). `n` is the mails reserved in the window; a failed send gives its slot back. A row is only useful while its window is open, at most one UTC day. It grows with every caller of the key routes. A daily cron (`41 4 * * *`, `src/cron/send-counters-retention.ts`) deletes rows whose `created_at` is older than `retention.send_counters_days` (default 2), at most `retention.send_counters_batch` rows per run (default 5000); the rest wait for the next run. When `retention.send_counters_dry_run` is not `0`, the run counts what it would delete and deletes nothing. A row is a rate counter, not money or history, so it is deleted, not archived.
+
+## KV `retention:send_counters:last` (CURSORS namespace)
+
+One key: the audit record of the last `send_counters` retention run, `{ran_at, cutoff, dry_run, deleted, has_more}`. It is written after the delete commits, never after a failed run, and each run overwrites it. Each run also writes the same record as one log line. No delete job.
 
 ## KV `webhooks:dns:<host>` (CURSORS namespace)
 
@@ -70,15 +78,9 @@ One key: the audit record of the last `api_keys` retention run, `{ran_at, cutoff
 
 The rate-limit counters, one key per caller per minute: `rl:v1:<ip>:<minute>` for `/v1/events`, `rl:v1:check:<ip>:<minute>` for `/v1/check`, `rl:v1:keys:<ip>:<minute>` for `POST /v1/keys` and `rl:v1:key:<key_id>:<minute>` for the `/v1/watchlists` routes. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
 
-The key link send counters (TCS-64), one key per caller per clock hour: `rl:v1:keyssend:ip:<ip>:<hour>` and `rl:v1:keyssend:em:<sha256 of the email>:<hour>`. Each is written with a 7,200-second TTL, so KV expires it on its own. No delete job.
-
 ## KV `keyconfirm:v1:` keys (CURSORS namespace)
 
 One key per mailed key link (TCS-64): `keyconfirm:v1:<sha256 of the token>`, value `{email, purpose, expect_hash, expires_at}`. Opening the link deletes it. An unopened link expires by its TTL, `keys.confirm_ttl_seconds` (default 3600, never below 60). No delete job.
-
-## KV `mail:sent:` keys (CURSORS namespace)
-
-One counter per UTC day: `mail:sent:<YYYY-MM-DD>`, the mails sent that day, read against `mail.daily_send_cap`. Each is written with a 2-day TTL, so KV expires it on its own. No delete job.
 
 ## KV `mail:fake:` keys (CURSORS namespace)
 
