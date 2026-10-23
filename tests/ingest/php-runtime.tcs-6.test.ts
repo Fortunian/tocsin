@@ -16,6 +16,7 @@ import ghsa6wmf from "../fixtures/php-runtime/GHSA-6wmf-4rv5-p3rp.json?raw";
 import ghsaW8hw from "../fixtures/php-runtime/GHSA-w8hw-w9fx-j79w.json?raw";
 import newsHtml from "../fixtures/php-runtime/2026-10-21.html?raw";
 import releasesXml from "../fixtures/php-runtime/releases.xml?raw";
+import listPage from "../fixtures/php-runtime/security-advisories.page1.json?raw";
 import { createRuntimeFake, type FakeAnswer } from "./runtime-fake.tcs-6";
 
 // Fixtures: recorded from php.net and api.github.com on 2026-10-22 (tests/fixtures/php-runtime/README.md).
@@ -27,6 +28,10 @@ const WMF = `${GHSA_BASE}/GHSA-6wmf-4rv5-p3rp`;
 const LINK = "https://www.php.net/archive/2026.php#2026-10-21-5";
 const TITLE = "Security advisory: Critical remote code execution vulnerabilities, update now";
 const PUB = "2026-10-21T00:35:26Z";
+// TCS-29: the run lists the advisories (default per_page 100); the cursor is the newest GHSA published_at.
+const LIST = `${GHSA_BASE}?state=published&sort=published&direction=desc&per_page=100`;
+const W8HW_PUB = "2026-10-21T13:34:25Z";
+const WMF_PUB = "2026-10-21T13:34:13Z";
 const NOW = "2026-10-22T16:00:00Z";
 const START = "2026-10-01T00:00:00Z";
 const NO_FIX_SENTENCE = "<strong>PHP 8.1 and older</strong> no longer receive updates";
@@ -39,7 +44,7 @@ const EXPECTED = [
 ];
 
 function routes(over: Record<string, FakeAnswer> = {}): Record<string, FakeAnswer> {
-  return { [NEWS]: newsHtml, [RELEASES]: releasesXml, [W8HW]: ghsaW8hw, [WMF]: ghsa6wmf, ...over };
+  return { [LIST]: listPage, [NEWS]: newsHtml, [RELEASES]: releasesXml, [W8HW]: ghsaW8hw, [WMF]: ghsa6wmf, ...over };
 }
 
 function ctxFor(fetchFn: typeof fetch, envOver: Partial<typeof env> = {}): IngestContext {
@@ -214,16 +219,17 @@ describe("normalizePhpAdvisory (normalize)", () => {
 });
 
 describe("phpRuntime.run (run)", () => {
-  it("P2: run stores 2 advisories with 1 news + 1 releases + 2 GHSA fetches and sets the cursor", async () => {
+  it("P2: run stores 2 advisories with 1 list + 1 news + 1 releases + 0 GHSA fetches and sets the cursor", async () => {
     const fake = createRuntimeFake(routes());
     const res = await phpRuntime.run(ctxFor(fake.fetch));
     expect(res.errors).toEqual([]);
     expect(res.upserted).toBe(2);
+    expect(fake.count(LIST)).toBe(1);
     expect(fake.count(NEWS)).toBe(1);
     expect(fake.count(RELEASES)).toBe(1);
-    expect(ghsaCalls(fake).sort()).toEqual([WMF, W8HW].sort());
-    expect(fake.calls).toHaveLength(4);
-    expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe(PUB);
+    expect(ghsaCalls(fake)).toEqual([]);
+    expect(fake.calls).toHaveLength(3);
+    expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe(W8HW_PUB);
     const row = await env.DB.prepare(
       "SELECT a.ecosystem, a.severity_label, a.severity_score FROM advisories a JOIN advisory_sources s ON s.advisory_id = a.id WHERE s.source = 'php-runtime' AND s.source_id = 'CVE-2026-109618'",
     ).first();
@@ -232,6 +238,8 @@ describe("phpRuntime.run (run)", () => {
 
   it("P3 re-run: unchanged for both, 0 GHSA calls, no new rows", async () => {
     await phpRuntime.run(ctxFor(createRuntimeFake(routes()).fetch));
+    // TCS-29: the first run moved the cursor to the newer GHSA; re-read the same window.
+    await env.CURSORS.put(PHP_CURSOR_KEY, START);
     const before = await phpRowCount();
     const fake = createRuntimeFake(routes());
     const res = await phpRuntime.run(ctxFor(fake.fetch));
@@ -281,7 +289,7 @@ describe("phpRuntime.run (run)", () => {
   });
 
   it("P6: a GHSA 403 throws PhpHttpError and leaves the cursor", async () => {
-    const fake = createRuntimeFake(routes({ [W8HW]: { status: 403, body: '{"message":"API rate limit exceeded"}' } }));
+    const fake = createRuntimeFake(routes({ [LIST]: { status: 403, body: '{"message":"API rate limit exceeded"}' } }));
     await expect(phpRuntime.run(ctxFor(fake.fetch))).rejects.toBeInstanceOf(PhpHttpError);
     expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe(START);
   });
@@ -289,47 +297,55 @@ describe("phpRuntime.run (run)", () => {
   it("P7: env GITHUB_TOKEN reaches the GHSA request as a bearer token; unset sends none", async () => {
     const withToken = createRuntimeFake(routes());
     await phpRuntime.run(ctxFor(withToken.fetch, { GITHUB_TOKEN: "tok-fixture-1" }));
-    const ghsaWith = withToken.calls.filter((c) => c.url.startsWith(`${GHSA_BASE}/`));
-    expect(ghsaWith).toHaveLength(2);
+    const ghsaWith = withToken.calls.filter((c) => c.url.startsWith(GHSA_BASE));
+    expect(ghsaWith).toHaveLength(1);
     for (const c of ghsaWith) expect(c.headers["authorization"]).toBe("Bearer tok-fixture-1");
-    for (const c of withToken.calls.filter((c) => !c.url.startsWith(`${GHSA_BASE}/`))) expect(c.headers["authorization"]).toBeUndefined();
+    for (const c of withToken.calls.filter((c) => !c.url.startsWith(GHSA_BASE))) expect(c.headers["authorization"]).toBeUndefined();
 
     await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'php-runtime'").run();
     await env.CURSORS.put(PHP_CURSOR_KEY, START);
     const without = createRuntimeFake(routes());
     await phpRuntime.run(ctxFor(without.fetch, { GITHUB_TOKEN: undefined }));
-    const ghsaWithout = without.calls.filter((c) => c.url.startsWith(`${GHSA_BASE}/`));
-    expect(ghsaWithout).toHaveLength(2);
+    const ghsaWithout = without.calls.filter((c) => c.url.startsWith(GHSA_BASE));
+    expect(ghsaWithout).toHaveLength(1);
     for (const c of ghsaWithout) expect(c.headers["authorization"]).toBeUndefined();
   });
 
   it.each(["PHP 8.5.12 Released!", "PHP 8.6.0 RC 3 available for testing", "PHP 8.5.12 release announcement scheduled"])(
-    "P8: title %j makes 0 GHSA calls (source: assumed, in-test edit)",
+    "P8: title %j makes 0 GHSA calls and the post is not used (source: assumed, in-test edit)",
     async (title) => {
       const edited = newsHtml.replace(`id="2026-10-21-5">${TITLE}</a>`, `id="2026-10-21-5">${title}</a>`);
       expect(edited).not.toBe(newsHtml);
       const fake = createRuntimeFake(routes({ [NEWS]: edited }));
       const res = await phpRuntime.run(ctxFor(fake.fetch));
       expect(ghsaCalls(fake)).toEqual([]);
-      expect(fake.urls()).toEqual([NEWS]);
-      expect(res.upserted).toBe(0);
+      expect(fake.urls()).toEqual([LIST, NEWS, RELEASES]);
+      // TCS-29: both advisories still come from the list; the unmatched post gives no link and no no-fix line.
+      expect(res.upserted).toBe(2);
+      const row = await env.DB.prepare(
+        "SELECT a.doc_json FROM advisories a JOIN advisory_sources s ON s.advisory_id = a.id WHERE s.source = 'php-runtime' AND s.source_id = 'CVE-2026-109618'",
+      ).first<{ doc_json: string }>();
+      const doc = JSON.parse(row!.doc_json) as Advisory;
+      expect(doc.sources[0].url).toBe("https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w");
+      expect(doc.references).not.toContain(LINK);
+      expect(doc.action).not.toContain("no fix");
     },
   );
 
-  it("cursor: a cursor after the post skips it: 1 fetch (news only), 0 GHSA calls", async () => {
-    await env.CURSORS.put(PHP_CURSOR_KEY, "2026-10-21T00:35:27Z");
+  it("cursor: a cursor after the newest advisory skips it: 1 fetch (list only), 0 GHSA calls", async () => {
+    await env.CURSORS.put(PHP_CURSOR_KEY, "2026-10-21T13:34:26Z");
     const fake = createRuntimeFake(routes());
     const res = await phpRuntime.run(ctxFor(fake.fetch));
-    expect(fake.urls()).toEqual([NEWS]);
+    expect(fake.urls()).toEqual([LIST]);
     expect(res.upserted + res.unchanged).toBe(0);
-    expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe("2026-10-21T00:35:27Z");
+    expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe("2026-10-21T13:34:26Z");
   });
 
-  it("cursor: a cursor equal to the post date re-reads the post", async () => {
-    await env.CURSORS.put(PHP_CURSOR_KEY, PUB);
+  it("cursor: a cursor equal to an advisory published_at re-reads that advisory", async () => {
+    await env.CURSORS.put(PHP_CURSOR_KEY, WMF_PUB);
     const fake = createRuntimeFake(routes());
     const res = await phpRuntime.run(ctxFor(fake.fetch));
     expect(res.upserted).toBe(2);
-    expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe(PUB);
+    expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe(W8HW_PUB);
   });
 });

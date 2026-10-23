@@ -9,9 +9,8 @@ import nodePost from "../fixtures/node-runtime/2026-10-21.html?raw";
 import nodeIndex from "../fixtures/node-runtime/index.json?raw";
 import nodeFeed from "../fixtures/node-runtime/vulnerability.xml?raw";
 import phpNews from "../fixtures/php-runtime/2026-10-21.html?raw";
-import ghsa6wmf from "../fixtures/php-runtime/GHSA-6wmf-4rv5-p3rp.json?raw";
-import ghsaW8hw from "../fixtures/php-runtime/GHSA-w8hw-w9fx-j79w.json?raw";
 import phpReleases from "../fixtures/php-runtime/releases.xml?raw";
+import phpList from "../fixtures/php-runtime/security-advisories.page1.json?raw";
 import { createRuntimeFake } from "../ingest/runtime-fake.tcs-6";
 
 // The production entry: worker.scheduled (src/index.ts) -> runCron -> defaultRegistry,
@@ -23,8 +22,8 @@ const ROUTES = {
   "https://nodejs.org/dist/index.json": nodeIndex,
   "https://www.php.net/index.php": phpNews,
   "https://www.php.net/releases/feed.php": phpReleases,
-  "https://api.github.com/repos/php/php-src/security-advisories/GHSA-w8hw-w9fx-j79w": ghsaW8hw,
-  "https://api.github.com/repos/php/php-src/security-advisories/GHSA-6wmf-4rv5-p3rp": ghsa6wmf,
+  // TCS-29: php lists the advisories instead of one GET per GHSA.
+  "https://api.github.com/repos/php/php-src/security-advisories?state=published&sort=published&direction=desc&per_page=100": phpList,
 };
 // Both cursors start before the 2026-10-21 posts, so only those posts are read.
 const START = "2026-10-01T00:00:00Z";
@@ -92,7 +91,8 @@ describe("runtime ingesters through worker.scheduled", () => {
     ]);
     expect(new Set(fake.urls())).toEqual(new Set(Object.keys(ROUTES)));
     expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe("2026-10-21T22:00:00Z");
-    expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe("2026-10-21T00:35:26Z");
+    // TCS-29: the php cursor is the newest GHSA published_at.
+    expect(await env.CURSORS.get(PHP_CURSOR_KEY)).toBe("2026-10-21T13:34:25Z");
   });
 
   it("C2: after the cron, /v1/check flags node 24.10.0 and php 8.3.20, and not node 24.22.1", async () => {
