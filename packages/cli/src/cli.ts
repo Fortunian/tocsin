@@ -24,6 +24,7 @@ Commands:
             --ecosystem <name>  --since <cursor>  --limit <1-100>  --json
   watch     Print new advisories as they arrive (polls every 5 minutes)
             --ecosystem <name>  --since <cursor>
+            --upload   upload the lockfiles here to the key's default watch list and exit
 
 Environment:
   TOCSIN_BASE_URL   API host (default https://tocsin.sh)
@@ -54,7 +55,7 @@ const VERBS: Record<string, { options: Options; run: (io: Io, values: Record<str
     options: { ecosystem: { type: "string" }, since: { type: "string" }, limit: { type: "string" }, json: { type: "boolean" } },
     run: runLatest,
   },
-  watch: { options: { ecosystem: { type: "string" }, since: { type: "string" } }, run: runWatch },
+  watch: { options: { ecosystem: { type: "string" }, since: { type: "string" }, upload: { type: "boolean" } }, run: runWatch },
 };
 
 /** The CLI entry point. Returns the exit code. */

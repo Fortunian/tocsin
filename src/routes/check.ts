@@ -36,7 +36,7 @@ class BadRequest extends Error {
   }
 }
 
-interface Input {
+export interface CheckInput {
   dependencies: Dependency[];
   skipped: object[];
 }
@@ -65,21 +65,32 @@ check.post(
     return bodyLimit({ maxSize, onError: (c) => answer(c, { error: `body over ${maxSize} bytes` }, 413) })(c, next);
   },
   async (c) => {
-    const type = (c.req.header("Content-Type") ?? "").toLowerCase();
-    let input: Input;
-    try {
-      if (type.startsWith("multipart/form-data")) input = await fromMultipart(c);
-      else if (type.startsWith("application/json")) input = await fromJson(c);
-      else return answer(c, { error: "unsupported content type", accepted: ACCEPTED }, 415);
-    } catch (err) {
-      if (err instanceof BadRequest) return answer(c, err.body, 400);
-      throw err;
-    }
+    const input = await readCheckBody(c);
+    if (input instanceof Response) return input;
     return answer(c, await runCheck(c.env.DB, input.dependencies, input.skipped));
   },
 );
 
-async function fromMultipart(c: Ctx): Promise<Input> {
+/**
+ * The dependencies of a POST /v1/check body: multipart lockfiles or JSON
+ * { dependencies, runtimes, os_packages }. A bad body is the 415 or 400
+ * answer. POST /v1/watchlists/:id/lockfile reads the same bodies (TCS-37).
+ */
+export async function readCheckBody<E extends { Bindings: Env }>(ctx: Context<E>): Promise<CheckInput | Response> {
+  // The body readers use the request and the env only; any route env with these bindings fits.
+  const c = ctx as unknown as Ctx;
+  const type = (c.req.header("Content-Type") ?? "").toLowerCase();
+  try {
+    if (type.startsWith("multipart/form-data")) return await fromMultipart(c);
+    if (type.startsWith("application/json")) return await fromJson(c);
+    return answer(c, { error: "unsupported content type", accepted: ACCEPTED }, 415);
+  } catch (err) {
+    if (err instanceof BadRequest) return answer(c, err.body, 400);
+    throw err;
+  }
+}
+
+async function fromMultipart(c: Ctx): Promise<CheckInput> {
   let form: FormData;
   try {
     form = await c.req.raw.formData();
@@ -121,7 +132,7 @@ async function fromMultipart(c: Ctx): Promise<Input> {
   return { dependencies: dedupe(dependencies), skipped };
 }
 
-async function fromJson(c: Ctx): Promise<Input> {
+async function fromJson(c: Ctx): Promise<CheckInput> {
   let body: unknown;
   try {
     body = JSON.parse(await c.req.text());

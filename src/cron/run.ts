@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { defaultRegistry, runIngesters } from "../ingest/registry";
 import type { Ingester } from "../ingest/types";
+import { enqueueDependencyMatches } from "../queue/dependency-match";
 import { enqueueDeliveries, sweepDeliveries } from "../queue/enqueue";
 import { runDeliveryRetention } from "./deliveries-retention";
 import { reencryptWebhookSecrets } from "./reencrypt-secrets";
@@ -38,6 +39,12 @@ export async function runCron(
     await enqueueDeliveries(env, new Date());
   } catch (err) {
     console.error(JSON.stringify({ lane: "enqueue", err: errText(err) }));
+  }
+  // Lists with a stored dependency set (TCS-37).
+  try {
+    await enqueueDependencyMatches(env, new Date());
+  } catch (err) {
+    console.error(JSON.stringify({ lane: "depmatch", err: errText(err) }));
   }
   try {
     await sweepDeliveries(env, new Date());

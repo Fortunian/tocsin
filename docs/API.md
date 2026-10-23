@@ -20,7 +20,8 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `POST /v1/keys/confirm` | Spends the token once and answers the API key. Form body `token=tct_...` (the button) or JSON `{"token": "tct_..."}`. |
 | `POST /v1/keys/rotate` | Mails a link that replaces the API key of the email. |
 | `POST /v1/watchlists`, `GET /v1/watchlists`, `DELETE /v1/watchlists/{id}` | Create, list and delete your watch lists. Needs an API key. |
-| `GET /v1/watchlists/{id}` | One watch list with its filter and its webhook delivery health. Needs an API key. |
+| `GET /v1/watchlists/{id}` | One watch list with its filter, its webhook delivery health and its stored dependency count. Needs an API key. |
+| `POST /v1/watchlists/{id}/lockfile` | Stores the dependency set of a watch list from lockfiles (the same bodies as `POST /v1/check`) and answers the check result. Needs an API key. See [Watch a lockfile](#watch-a-lockfile). |
 | `PATCH /v1/watchlists/{id}` | Sets how a watch list is delivered: `poll` or `webhook`. Needs an API key. |
 | `POST /v1/watchlists/{id}/resume` | Starts webhook delivery again on a paused watch list. Needs an API key. |
 | `GET /v1/watchlists/{id}/events` | New events on one watch list, from its stored cursor. Needs an API key. |
@@ -148,6 +149,20 @@ Limits come from your plan row. The free plan, the only plan today, allows 25 wa
 Input caps on `POST /v1/watchlists`: `name` is at most 100 characters; every other string is at most 200 characters; `ecosystems` holds at most 20 values, each one of `npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `node`, `php`, `python`, `go`, `deno`, `bun`; `runtimes` holds at most 10 entries; the stored filter is at most 64 KB as JSON. A value over a cap answers 400 and the error names the field. `GET /v1/watchlists` answers at most your plan's watch list count (25 on the free plan).
 
 A key that is not used for 365 days is deleted with its watch lists.
+
+### Watch a lockfile
+
+Upload your lockfiles once and get a webhook when a new advisory affects one of your dependencies.
+
+1. Send `POST /v1/watchlists/{id}/lockfile` with the same body as `POST /v1/check`: the lockfiles as multipart (the field name is the file name), or JSON `{"dependencies": [{"ecosystem", "name", "version"}], "runtimes": {...}, "os_packages": "..."}`.
+2. The answer is the `/v1/check` result for those dependencies (`checked`, `affected`, `skipped`, `feed_cursor`, `coverage`) plus `watchlist_id` and `dependencies`, the stored count. It is one check: what is affected now is in this answer, and it is not sent again as a webhook.
+3. Each upload replaces the stored set of the list. A dependency in an ecosystem the matcher does not support is not stored and comes back in `skipped`. An upload with no supported dependency answers 400 `{"error": "no dependencies to watch"}` and keeps the stored set.
+4. After each ingest run (every 10 minutes), Tocsin matches the new and changed advisories against the stored set with the `/v1/check` matcher. On a webhook list, each match is sent once per (list, advisory). The body is the advisory with an `affected` array: the `/v1/check` affected items of your stored dependencies (`dependency`, `advisory_id`, `cve_ids`, `severity`, `exploited`, `fixed_in`, `action`, `url`). The list's filter still applies with AND (`min_severity`, `exploited_only`, `ecosystems`, `components`). A list with a stored set gets matched advisories only, so an empty filter does not send every advisory. A re-upload never sends an advisory again that was already sent. An advisory published more than 30 days before the upload is recorded as `skipped` and not sent, as for filter lists.
+5. `GET /v1/watchlists/{id}` answers `dependencies` (the stored count) and `dependencies_uploaded_at`.
+
+The stored set does not change `GET /v1/watchlists/{id}/events`: a polled list still reads its filter. The free plan stores up to 2,000 dependencies per list (the plan row's `max_watch_dependencies`). Over it, the answer is 413 `{"error": "dependency limit reached", "max_watch_dependencies": 2000, "dependencies": <count>}` and nothing is stored. The body cap is the `/v1/check` cap (2 MB, `check.max_body_bytes`). A list that is not yours answers 404. `DELETE /v1/watchlists/{id}` deletes the stored set with the list.
+
+From a project directory, `npx tocsin watch --upload` uploads the lockfiles there to your key's watch list named `default` and makes that list (polled) when it does not exist. Set it to webhook delivery with `PATCH /v1/watchlists/{id}`. `npx tocsin watch` then prints `watching N dependencies, last delivery at ...` before it polls.
 
 ## Webhook delivery
 

@@ -33,7 +33,8 @@ export const CLAIM_SQL = `UPDATE deliveries SET status = 'sending', next_at = ?
     AND NOT EXISTS (SELECT 1 FROM watchlists w WHERE w.id = deliveries.watchlist_id AND w.paused_at IS NOT NULL)
   RETURNING attempt`;
 
-export const LOAD_SQL = `SELECT w.webhook_url, w.webhook_secret, w.webhook_secret_enc, w.delivery, a.doc_json
+// affected_json is set on rows of the dependency match pass (TCS-37).
+export const LOAD_SQL = `SELECT w.webhook_url, w.webhook_secret, w.webhook_secret_enc, w.delivery, a.doc_json, d.affected_json
   FROM deliveries d JOIN watchlists w ON w.id = d.watchlist_id JOIN advisories a ON a.id = d.advisory_id
   WHERE d.watchlist_id = ? AND d.advisory_id = ?`;
 
@@ -92,6 +93,7 @@ interface Target {
   webhook_secret_enc: string | null;
   delivery: string;
   doc_json: string;
+  affected_json: string | null;
 }
 
 // The result of one attempt: an HTTP status, or no answer and why.
@@ -199,6 +201,14 @@ async function post(j: Job, url: string, secret: string, payload: string): Promi
   }
 }
 
+// The webhook body: the advisory document as stored, byte for byte, or for a
+// dependency list (TCS-37) the advisory plus its affected items. The
+// signature covers the bytes sent.
+export function payloadOf(t: Pick<Target, "doc_json" | "affected_json">): string {
+  if (t.affected_json === null) return t.doc_json;
+  return JSON.stringify({ ...(JSON.parse(t.doc_json) as object), affected: JSON.parse(t.affected_json) as unknown });
+}
+
 // The SSRF guard at send time: the URL rules again (a stored URL can predate
 // them), then the DNS answers. blocked_host is terminal; dns_failed retries.
 async function guardAndSend(j: Job, t: Target & { webhook_url: string }, secret: string): Promise<Outcome> {
@@ -213,7 +223,7 @@ async function guardAndSend(j: Job, t: Target & { webhook_url: string }, secret:
     const a = { code: null, error: verdict.reason };
     return verdict.reason === "blocked_host" ? finishFailed(j, a) : scheduleRetry(j, a);
   }
-  const a = await post(j, t.webhook_url, secret, t.doc_json);
+  const a = await post(j, t.webhook_url, secret, payloadOf(t));
   return a.code !== null && a.code >= 200 && a.code < 300 ? finishDelivered(j, a) : scheduleRetry(j, a);
 }
 

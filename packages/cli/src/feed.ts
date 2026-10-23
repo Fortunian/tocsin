@@ -1,6 +1,7 @@
 // `tocsin latest` and `tocsin watch`: read GET /v1/events and print one line per event.
 import { Api, describeFailure, type ApiResult } from "./api.js";
 import type { Io } from "./io.js";
+import { ApiFailure, runUpload, statusLine } from "./watch-list.js";
 
 /** Poll interval for `watch`: 5 minutes, as the ticket sets it. A client constant: the CLI has no settings store. */
 export const POLL_MS = 300_000;
@@ -72,11 +73,23 @@ export async function runLatest(io: Io, values: Record<string, unknown>): Promis
 }
 
 export async function runWatch(io: Io, values: Record<string, unknown>): Promise<number> {
+  if (values.upload) return runUpload(io);
   let cursor: number | null = values.since === undefined ? null : intFlag(values.since);
   if (values.since !== undefined && cursor === null) return usage(io, "watch", "--since must be a cursor number (0 or more)");
   const ecosystem = values.ecosystem as string | undefined;
   const api = new Api(io);
   let etag: string | null = null;
+
+  // With a key: the default list status once, on stderr, so stdout stays one line per event.
+  // A failed read does not stop the watch. Without a key: no watch-list call.
+  if (io.env.TOCSIN_API_KEY) {
+    try {
+      io.err(await statusLine(api));
+    } catch (e) {
+      if (!(e instanceof ApiFailure)) throw e;
+      io.err(`watch: status failed: ${e.message}`);
+    }
+  }
 
   const failed = (r: ApiResult): number => {
     io.err(`watch: ${describeFailure(r)}; next try in ${r.status === 429 && r.retryAfter ? r.retryAfter : POLL_MS / 1000} s`);

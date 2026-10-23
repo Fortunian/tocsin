@@ -26,9 +26,12 @@ export const QUEUE_SEND_BATCH_MAX = 100;
 export const ENQUEUE_AFTER_KEY = "webhooks:enqueue:after";
 
 // idx_watchlists_delivery. A paused list (delivery health, migrations/0023)
-// is skipped; its cursor does not move, so a resume catches up.
+// is skipped; its cursor does not move, so a resume catches up. A list with a
+// stored dependency set (TCS-37) gets its rows from the dependency match pass
+// (src/queue/dependency-match.ts) only, so an empty filter never sends it
+// every advisory.
 export const WEBHOOK_LISTS_SQL =
-  "SELECT id, filter_json, cursor, created_at FROM watchlists WHERE delivery = 'webhook' AND paused_at IS NULL AND id > ? ORDER BY id LIMIT ?";
+  "SELECT id, filter_json, cursor, created_at FROM watchlists WHERE delivery = 'webhook' AND paused_at IS NULL AND dependency_count = 0 AND id > ? ORDER BY id LIMIT ?";
 
 // idx_deliveries_status_next_at. Rows of a paused list are not re-sent; the
 // sweep picks them up again after a resume.

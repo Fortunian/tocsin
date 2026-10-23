@@ -1,6 +1,8 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { runCheck } from "../check/run";
+import { supportsEcosystem } from "../check/match";
 import { DEFAULT_LIMIT, MAX_LIMIT } from "../feed/query";
 import { jsonUtf8 } from "../lib/http";
 import { encryptSecret, loadKek } from "../lib/secret-box";
@@ -8,6 +10,15 @@ import { getSettingInt } from "../lib/settings";
 import { requireApiKey, type AuthEnv } from "../middleware/auth";
 import { keyRateLimit } from "../middleware/ratelimit";
 import { newWebhookSecret } from "../queue/sign";
+import { FALLBACK_MAX_BODY_BYTES as FALLBACK_CHECK_MAX_BODY_BYTES, readCheckBody } from "./check";
+import {
+  DEPENDENCY_DELETE_SQL,
+  DEPENDENCY_INSERT_SQL,
+  DEPENDENCY_LIST_UPDATE_SQL,
+  FALLBACK_DEPENDENCY_INSERT_CHUNK,
+  MATCH_REWIND_SQL,
+  dependencyRow,
+} from "../watchlists/dependencies";
 import { FALLBACK_MAX_URL_LENGTH, parseDelivery, parseWatchlistBody, type WatchlistFilter } from "../watchlists/filter";
 import { buildWatchlistEventsQuery } from "../watchlists/query";
 
@@ -41,7 +52,7 @@ export const DELIVERIES_LIST_SQL = `SELECT d.advisory_id, d.cursor, d.status, d.
 // One list with its delivery health (migrations/0023). Never selects
 // webhook_secret. Primary key lookup, scoped to the caller's key.
 export const GET_WATCHLIST_SQL = `SELECT id, name, filter_json, cursor, delivery, webhook_url, created_at,
-  consecutive_failures, paused_at, last_delivery_at, last_delivery_code
+  consecutive_failures, paused_at, last_delivery_at, last_delivery_code, dependency_count, dependencies_at
   FROM watchlists WHERE id = ? AND key_id = ?`;
 
 // Clears a pause and the failure count. The rows held while paused are sent by
@@ -173,15 +184,73 @@ watchlists.get("/", async (c) => {
   });
 });
 
-// One list with its filter and delivery health. 404 for another key's list.
+// One list with its filter, delivery health and stored dependency count. 404
+// for another key's list.
 watchlists.get("/:id", async (c) => {
   const row = await c.env.DB.prepare(GET_WATCHLIST_SQL)
     .bind(c.req.param("id"), c.var.apiKey.id)
-    .first<ListRow & HealthRow>();
+    .first<ListRow & HealthRow & { dependency_count: number; dependencies_at: string | null }>();
   if (!row) return answer(c, { error: "not found" }, 404);
-  const { filter_json, consecutive_failures, paused_at, last_delivery_at, last_delivery_code, ...r } = row;
+  const { filter_json, consecutive_failures, paused_at, last_delivery_at, last_delivery_code, dependency_count, dependencies_at, ...r } = row;
   const health = healthView({ consecutive_failures, paused_at, last_delivery_at, last_delivery_code });
-  return answer(c, { ...r, filter: JSON.parse(filter_json) as WatchlistFilter, ...health });
+  return answer(c, {
+    ...r,
+    filter: JSON.parse(filter_json) as WatchlistFilter,
+    ...health,
+    dependencies: dependency_count,
+    dependencies_uploaded_at: dependencies_at,
+  });
+});
+
+// The body cap of the lockfile upload: the same bodies as POST /v1/check, so
+// the same cap (settings.check.max_body_bytes).
+const capCheckBody: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const maxSize = await getSettingInt(c.env.DB, "check.max_body_bytes", FALLBACK_CHECK_MAX_BODY_BYTES);
+  return bodyLimit({ maxSize, onError: (c) => answer(c, { error: `body over ${maxSize} bytes` }, 413) })(c, next);
+};
+
+// Stores the dependency set of a list from a lockfile (TCS-37) and answers the
+// /v1/check result for it (one check). Every check and limit runs before the
+// write. The replace is one transaction: the old set, the new set, the list's
+// count and check cursor, and the match lane rewind. Only dependencies the
+// matcher supports are stored; the rest come back in skipped. An upload with
+// no supported dependency is a 400 and never empties a set.
+watchlists.post("/:id/lockfile", capCheckBody, async (c) => {
+  const id = c.req.param("id");
+  const { id: keyId, limits } = c.var.apiKey;
+  const owned = await c.env.DB.prepare("SELECT 1 AS x FROM watchlists WHERE id = ? AND key_id = ?").bind(id, keyId).first();
+  if (!owned) return answer(c, { error: "not found" }, 404);
+
+  const input = await readCheckBody(c);
+  if (input instanceof Response) return input;
+  const deps = input.dependencies.filter((d) => supportsEcosystem(d.ecosystem));
+  if (deps.length === 0) return answer(c, { error: "no dependencies to watch", skipped: input.skipped }, 400);
+  if (limits.max_watch_dependencies === null) {
+    // Fail closed: a plan row with no limit gets no limit from a code constant.
+    console.error(JSON.stringify({ lane: "watchlists", err: "plans.max_watch_dependencies is NULL", key_id: keyId }));
+    return answer(c, { error: "internal error" }, 500);
+  }
+  if (deps.length > limits.max_watch_dependencies) {
+    return answer(c, { error: "dependency limit reached", max_watch_dependencies: limits.max_watch_dependencies, dependencies: deps.length }, 413);
+  }
+
+  const [result, chunkRaw] = await Promise.all([
+    runCheck(c.env.DB, input.dependencies, input.skipped),
+    getSettingInt(c.env.DB, "webhooks.dependency_insert_chunk", FALLBACK_DEPENDENCY_INSERT_CHUNK),
+  ]);
+  const chunk = chunkRaw > 0 ? chunkRaw : FALLBACK_DEPENDENCY_INSERT_CHUNK;
+  const rows = deps.map(dependencyRow);
+  const now = new Date().toISOString();
+  const db = c.env.DB;
+  const stmts = [db.prepare(DEPENDENCY_DELETE_SQL).bind(id, keyId)];
+  for (let i = 0; i < rows.length; i += chunk) stmts.push(db.prepare(DEPENDENCY_INSERT_SQL).bind(id, keyId, JSON.stringify(rows.slice(i, i + chunk))));
+  stmts.push(db.prepare(DEPENDENCY_LIST_UPDATE_SQL).bind(id, keyId, result.feed_cursor, now));
+  stmts.push(db.prepare(MATCH_REWIND_SQL).bind(result.feed_cursor, now));
+  const res = await db.batch(stmts);
+  // The list was deleted after the ownership read: every statement wrote nothing.
+  if (res[res.length - 2].meta.changes === 0) return answer(c, { error: "not found" }, 404);
+  const stored = res.slice(1, -2).reduce((n, r) => n + r.meta.changes, 0);
+  return answer(c, { watchlist_id: id, dependencies: stored, ...result });
 });
 
 // Clears a delivery pause (owner only; the per-key limit applies as on every
@@ -194,12 +263,14 @@ watchlists.post("/:id/resume", async (c) => {
   return answer(c, { id: row.id, ...healthView(row) });
 });
 
-// One transaction: the list's deliveries rows (guarded by the key), then the list.
+// One transaction: the list's deliveries rows and dependency rows (guarded by
+// the key), then the list.
 watchlists.delete("/:id", async (c) => {
   const id = c.req.param("id");
   const keyId = c.var.apiKey.id;
-  const [, res] = await c.env.DB.batch([
+  const [, , res] = await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM deliveries WHERE watchlist_id IN (SELECT id FROM watchlists WHERE id = ? AND key_id = ?)").bind(id, keyId),
+    c.env.DB.prepare(DEPENDENCY_DELETE_SQL).bind(id, keyId),
     c.env.DB.prepare("DELETE FROM watchlists WHERE id = ? AND key_id = ?").bind(id, keyId),
   ]);
   if (res.meta.changes === 0) return answer(c, { error: "not found" }, 404);
