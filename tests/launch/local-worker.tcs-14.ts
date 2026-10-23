@@ -24,8 +24,10 @@ const ROUTES: Record<string, string> = {
   "https://nodejs.org/dist/index.json": fixture("node-runtime/index-since-2026-07.json"),
   "https://www.php.net/index.php": fixture("php-runtime/2026-10-21.html"),
   "https://www.php.net/releases/feed.php": fixture("php-runtime/releases.xml"),
-  "https://api.github.com/repos/php/php-src/security-advisories/GHSA-w8hw-w9fx-j79w": fixture("php-runtime/GHSA-w8hw-w9fx-j79w.json"),
-  "https://api.github.com/repos/php/php-src/security-advisories/GHSA-6wmf-4rv5-p3rp": fixture("php-runtime/GHSA-6wmf-4rv5-p3rp.json"),
+  // TCS-29: php lists the advisories instead of one GET per GHSA.
+  "https://api.github.com/repos/php/php-src/security-advisories?state=published&sort=published&direction=desc&per_page=100": fixture(
+    "php-runtime/security-advisories.page1.json",
+  ),
 };
 // Both cursors start before the 2026-10-21 posts. The Node ingester has no stored
 // parser revision on a fresh DB, so it also reads its backfill window once (TCS-30).
