@@ -7,9 +7,8 @@ import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Io } from "./io.js";
+import { DEFAULT_MCP_URL, mcpServerConfig } from "./mcp-config.js";
 import { PKG_ROOT } from "./version.js";
-
-export const DEFAULT_MCP_URL = "https://mcp.tocsin.sh/mcp";
 
 type Kind = "json" | "toml" | "skill";
 
@@ -74,7 +73,7 @@ function targets(io: Io, home: string, mcpUrl: string): Target[] {
   else if (io.platform === "win32") desktopDir = winDesktop;
 
   return [
-    { name: "Claude Code", flag: "claude-code", kind: "json", path: claudeJson, detected: claudeDetected, entry: { type: "http", url: mcpUrl } },
+    { name: "Claude Code", flag: "claude-code", kind: "json", path: claudeJson, detected: claudeDetected, entry: mcpServerConfig(mcpUrl) },
     { name: "Claude Code skill", flag: "claude-code", kind: "skill", path: join(home, ".claude", "skills", "tocsin", "SKILL.md"), detected: claudeDetected },
     { name: "Cursor", flag: "cursor", kind: "json", path: join(home, ".cursor", "mcp.json"), detected: exists(join(home, ".cursor")), entry: { url: mcpUrl } },
     {
@@ -161,7 +160,7 @@ async function atomicWrite(path: string, data: string | Buffer): Promise<void> {
 
 export async function runConnect(io: Io, values: Record<string, unknown>): Promise<number> {
   const mcpUrl = io.env.TOCSIN_MCP_URL || DEFAULT_MCP_URL;
-  const generic = { type: "http", url: mcpUrl };
+  const generic = mcpServerConfig(mcpUrl);
 
   if (values.print) {
     io.out(block(generic));

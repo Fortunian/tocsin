@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "$comment": "NOT a verbatim copy. A hand-written subset of the MCP registry server.json schema 2025-12-11 (TCS-36). The build box could not reach GitHub or static.modelcontextprotocol.io. See README.md in this directory.",
+  "title": "server.json (subset)",
+  "type": "object",
+  "required": ["name", "description", "version"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "name": { "type": "string", "minLength": 3, "maxLength": 200, "pattern": "^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "description": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "version": { "type": "string", "maxLength": 255 },
+    "websiteUrl": { "type": "string", "format": "uri" },
+    "repository": {
+      "type": "object",
+      "required": ["url", "source"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "source": { "type": "string" },
+        "id": { "type": "string" },
+        "subfolder": { "type": "string" }
+      }
+    },
+    "remotes": {
+      "type": "array",
+      "items": {
+        "oneOf": [{ "$ref": "#/definitions/StreamableHttpTransport" }, { "$ref": "#/definitions/SseTransport" }]
+      }
+    }
+  },
+  "definitions": {
+    "StreamableHttpTransport": {
+      "type": "object",
+      "required": ["type", "url"],
+      "properties": {
+        "type": { "type": "string", "enum": ["streamable-http"] },
+        "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
+        "headers": { "type": "array" },
+        "variables": { "type": "object" }
+      }
+    },
+    "SseTransport": {
+      "type": "object",
+      "required": ["type", "url"],
+      "properties": {
+        "type": { "type": "string", "enum": ["sse"] },
+        "url": { "type": "string", "format": "uri" },
+        "headers": { "type": "array" },
+        "variables": { "type": "object" }
+      }
+    }
+  }
+}

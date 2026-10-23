@@ -1,4 +1,5 @@
 import { type Freshness, renderFreshness } from "./freshness";
+import { installLinks } from "./install";
 import { command, escapeHtml, page } from "./layout";
 
 // One row of the Latest table, as src/site/data.ts builds and caches it.
@@ -47,6 +48,7 @@ export function renderLanding(rows: LatestRow[] | null, freshness: Freshness | n
 <p>Your agent runs on Node, PHP, Python, Go, Rust, Ruby and the packages on top of them. When one of them ships a critical
 fix, nothing tells the agent. Tocsin does. One feed. One command.</p>
 ${command("npx tocsin connect")}
+${installLinks()}
 <p>Wires Claude Code, Cursor, Claude Desktop and Codex to the feed in one run.</p>
 <p>Or do it by hand:</p>
 ${command('curl "https://tocsin.sh/v1/events?since=0&min_severity=high"')}

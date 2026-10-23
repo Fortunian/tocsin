@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Advisory } from "../../src/schema/advisory";
 import { get, idFor, seed, type SeedRow } from "./seed.tcs-3";
@@ -187,6 +188,8 @@ describe("GET /v1/events/:id and /v1/events/cve/:cve", () => {
 
   it("resolves a CVE (any case) to its advisory; unknown 404, malformed 400", async () => {
     const [doc] = await seed([{ id: idFor("CVA", 0), cursor: 36_101, cve: "CVE-2026-54321" }]);
+    // Ingest writes one advisory_cves row per cve_ids entry (TCS-48: the route reads it).
+    await env.DB.prepare("INSERT INTO advisory_cves (cve, advisory_id) VALUES (?, ?)").bind("CVE-2026-54321", doc.id).run();
     const res = await get("/v1/events/cve/cve-2026-54321", ip);
     expect(res.status).toBe(200);
     expect(((await res.json()) as Advisory).id).toBe(doc.id);

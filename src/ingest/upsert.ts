@@ -28,8 +28,9 @@ export const UPSERT_SQL = {
   findByPair:
     "SELECT s.advisory_id, a.doc_json FROM advisory_sources s JOIN advisories a ON a.id = s.advisory_id WHERE s.source = ? AND s.source_id = ?",
   // idx_advisories_cve_primary, then idx_advisory_sources_advisory_id for the rows of one CVE.
+  // The unary + keeps the ecosystem/component terms off the index choice.
   findByCve:
-    "SELECT a.id, a.doc_json FROM advisories a WHERE a.cve_primary = ? AND NOT EXISTS (SELECT 1 FROM advisory_sources s WHERE s.advisory_id = a.id AND s.source = ?) ORDER BY a.cursor LIMIT 1",
+    "SELECT a.id, a.doc_json FROM advisories a WHERE a.cve_primary = ?1 AND +a.ecosystem = ?3 AND +a.component = ?4 AND NOT EXISTS (SELECT 1 FROM advisory_sources s WHERE s.advisory_id = a.id AND s.source = ?2) ORDER BY a.cursor LIMIT 1",
   nextCursor: NEXT_CURSOR,
   update: `UPDATE advisories SET cve_primary = ?, ecosystem = ?, component = ?, severity_label = ?, severity_score = ?, exploited = ?, epss = ?, published_at = ?, modified_at = ?, doc_json = ?, cursor = ${NEXT_CURSOR} WHERE id = ?`,
   insert: `INSERT INTO advisories (cve_primary, ecosystem, component, severity_label, severity_score, exploited, epss, published_at, modified_at, doc_json, id, cursor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${NEXT_CURSOR})`,
@@ -137,9 +138,11 @@ export async function upsertAdvisory(db: D1Database, doc: AdvisoryInput, key: So
 
   const cvePrimary = [...doc.cve_ids].sort()[0];
   if (cvePrimary !== undefined) {
+    // Merge only into the same ecosystem and component: a crates.io/deno row
+    // and a deno/deno advisory with one CVE are two different findings.
     const match = await db
       .prepare(UPSERT_SQL.findByCve)
-      .bind(cvePrimary, key.source)
+      .bind(cvePrimary, key.source, doc.ecosystem, doc.component)
       .first<{ id: string; doc_json: string }>();
     if (match) {
       const next = checked(merge(JSON.parse(match.doc_json) as Advisory, doc, key));

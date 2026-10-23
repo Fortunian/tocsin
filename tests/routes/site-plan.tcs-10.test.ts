@@ -37,9 +37,9 @@ describe("site query plans on 2,000 advisories", () => {
     expect(p).not.toMatch(/SCAN advisories(?! USING)/);
   });
 
-  it("the sources read is a 7-row table and needs no index", async () => {
+  it("the sources read is a 9-row table and needs no index", async () => {
     const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM sources").first<{ n: number }>();
-    expect(n?.n).toBe(7);
+    expect(n?.n).toBe(9);
     expect(STATUS_SOURCES_SQL).toContain("WHERE enabled = 1");
   });
 });

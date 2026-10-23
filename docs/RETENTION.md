@@ -16,7 +16,15 @@ Kept forever. One row per `(cve, advisory_id)`: every CVE id of an advisory, wri
 
 ## sources
 
-A fixed set of rows (7 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-runtime`, `python-runtime`). It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. `last_warning` (TCS-50) is one value, overwritten by the next run that has a warning and kept by a run with none, cut to 1,000 chars. No delete job.
+A fixed set of rows (9 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-runtime`, `python-runtime`, `deno-runtime`, `bun-runtime`). It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. `last_warning` (TCS-50) is one value, overwritten by the next run that has a warning and kept by a run with none, cut to 1,000 chars. No delete job.
+
+## KV `cursor:deno-runtime`, `cursor:bun-runtime` (CURSORS namespace)
+
+One key per source: the newest GitHub `published_at` the source has read. Overwritten in place after a complete run, never moved back. No TTL and no delete job; the key count does not grow. An operator deletes the key (and the `:etag` key below) to make the source read every advisory again; the upserts are idempotent.
+
+## KV `deno-runtime:etag`, `bun-runtime:etag` (CURSORS namespace)
+
+One key per source: the ETag of the first advisories page, sent as `If-None-Match` on the next run. Overwritten in place after a complete run, deleted when the page had no ETag. No TTL and no delete job; the key count does not grow.
 
 ## settings
 
@@ -51,3 +59,11 @@ One key: the ETag of the last full PSF listing. Each run overwrites it in place.
 ## KV `python:tags` (CURSORS namespace)
 
 One key: `{etag, versions}` from the last full read of the CPython `v3.` tag refs, so a 304 answer can reuse the released set. Each full read overwrites it in place, and its size follows the number of CPython 3.x tags (471 on 2026-10-22). No delete job.
+
+## KV `node-dist-index` (CURSORS namespace)
+
+One key: `{etag, fetched_at, versions}` from the last read of the nodejs.org dist index (TCS-30). A run uses it as is while it is younger than `dist_cache_seconds` (config of the `node-runtime` sources row, default 3600). After that the run sends one conditional GET, and a 304 only moves `fetched_at`. It has no KV TTL, so the ETag outlives the window. Each read overwrites it in place, and its size follows the number of Node.js releases. Losing it costs one download. No delete job.
+
+## KV `cursor:node-runtime:parser` (CURSORS namespace)
+
+One key: the parser revision (`"2"` since TCS-30) that the `cursor:node-runtime` cursor was read with. A run that finds another value moves the cursor back to the backfill window once and writes the revision. It does not grow. No delete job.

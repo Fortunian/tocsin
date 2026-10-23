@@ -94,6 +94,18 @@ npm test
 - `site/` the landing, docs and status pages. Any request to `tocsin.so` answers 301 to the same path on `tocsin.sh`.
 - `tests/e2e/site.spec.ts` the browser test. It is not part of `npm test`: `npx playwright install chromium && npm run test:e2e`.
 
+## Directories
+
+- MCP registry: `sh.tocsin/tocsin`, from `mcp/server.json` (remote `https://mcp.tocsin.sh/mcp`, streamable HTTP, no auth). Publish it by hand: Actions > publish-mcp-registry > Run workflow. The workflow validates the file, logs in with DNS proof of `tocsin.sh` and publishes.
+  Operator setup, once:
+  1. Make an Ed25519 key: `openssl genpkey -algorithm Ed25519 -out key.pem`.
+  2. Get the public key: `openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`.
+  3. Add a TXT record on `tocsin.sh`: `v=MCPv1; k=ed25519; p=<public key>`.
+  4. Get the private key in hex: `openssl pkey -in key.pem -noout -text | grep -A3 "priv:" | tail -n +2 | tr -d ' :\n'`.
+  5. Set it as the repo secret `MCP_REGISTRY_DNS_KEY`.
+- Smithery: not listed yet. `smithery.yaml` holds the server name. List it with `npx @smithery/cli mcp publish https://mcp.tocsin.sh/mcp -n <namespace>/tocsin`.
+- Cursor and VS Code: the landing and docs pages have "Add to Cursor" and "Add to VS Code" links. They carry the same config that `npx tocsin connect --print` prints.
+
 ## License
 
 Apache-2.0.
