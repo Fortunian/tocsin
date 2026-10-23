@@ -60,13 +60,19 @@ Runtimes only, no body:
 curl "${BASE}/v1/check?node=24.22.0&php=8.4.26"
 
 One or more lockfiles, field name = file name (package-lock.json, npm-shrinkwrap.json,
-pnpm-lock.yaml, yarn.lock, requirements.txt, go.sum, composer.lock, Cargo.lock, Gemfile.lock):
+pnpm-lock.yaml, yarn.lock, requirements.txt, go.sum, composer.lock, Cargo.lock, Gemfile.lock,
+pom.xml, gradle.lockfile, packages.lock.json, mix.lock, pubspec.lock):
 
 curl -F "package-lock.json=@package-lock.json" ${BASE}/v1/check
 
 Or JSON:
 
 curl -H "Content-Type: application/json" -d '{"dependencies":[{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}],"runtimes":{"node":"24.22.0"}}' ${BASE}/v1/check
+
+An OS package list (Alpine or Debian): the release plus the list text, from apk list --installed,
+dpkg -l or dpkg-query -W -f='\${source:Package} \${Version}\\n':
+
+curl -F debian=12 --form-string "os_packages=$(dpkg-query -W -f='\${source:Package} \${Version}\\n')" ${BASE}/v1/check
 
 The answer is { "checked": <int>, "affected": [...], "skipped": [...], "feed_cursor": <int> }.
 Each affected item has dependency, advisory_id, cve_ids, severity, exploited, fixed_in, action, url,

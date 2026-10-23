@@ -207,6 +207,14 @@ export function osvSourceId(id: string, index: number, ecosystem: string, name: 
 // The reason normalizeOsv gives when no affected package is in an enabled
 // ecosystem. The import route counts such a record as skipped.
 export const NOT_ENABLED_REASON = "no affected package in a listed ecosystem";
+// The reason when every enabled package is a release-scoped ecosystem with no
+// release (a bare "Debian"): its range cannot be matched to a release.
+export const NO_RELEASE_REASON = "no release on an OS package";
+
+// OSV ecosystems whose suffix is a release (Alpine:v3.18, Debian:12). One
+// package has a different fix per release, so each release is its own doc.
+// This maps a name to code, not to a business value.
+export const RELEASE_SCOPED: ReadonlySet<string> = new Set(["Alpine", "Debian"]);
 
 // The base name of an OSV ecosystem string: the part before the first ":"
 // ("Packagist:https://packages.drupal.org/8" -> "Packagist", "Debian:12" -> "Debian").
@@ -215,25 +223,42 @@ export function baseEcosystem(e: string): string {
   return i === -1 ? e : e.slice(0, i);
 }
 
+// The key packages are grouped by: the full OSV string for a release-scoped
+// ecosystem (Debian:12), the base name for every other one. A release-scoped
+// string with no release has no key.
+function scopeKey(raw: string): string | undefined {
+  const base = baseEcosystem(raw);
+  if (!RELEASE_SCOPED.has(base)) return base;
+  return raw.length > base.length + 1 ? raw : undefined;
+}
+
 export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult {
   if (typeof v?.id !== "string" || v.id === "") return { ok: false, reason: "record has no id" };
   if (typeof v.modified !== "string") return { ok: false, reason: "record has no modified" };
   const affectedList = Array.isArray(v.affected) ? v.affected : [];
-  // Distinct enabled (base ecosystem, name) pairs, in first-appearance order.
-  // OSV writes some ecosystems with a suffix (Packagist:https://packages.drupal.org/8):
-  // the match is on the base name; the first suffixed string is kept as the qualifier.
-  const packages: { ecosystem: string; component: string; qualifier?: string }[] = [];
+  // Distinct enabled (scope, name) pairs, in first-appearance order. The scope
+  // is the base name (TCS-71), or for Alpine and Debian the full string with
+  // the release (TCS-38). OSV writes some ecosystems with a suffix
+  // (Packagist:https://packages.drupal.org/8): the match is on the base name;
+  // the first suffixed string is kept as the qualifier.
+  const packages: { scope: string; ecosystem: string; component: string; qualifier?: string }[] = [];
+  let noRelease = false;
   for (const a of affectedList) {
     const raw = a.package?.ecosystem;
     const component = a.package?.name;
     if (typeof raw !== "string" || typeof component !== "string" || component === "") continue;
     const ecosystem = baseEcosystem(raw);
     if (!ecosystems.includes(ecosystem)) continue;
-    let p = packages.find((x) => x.ecosystem === ecosystem && x.component === component);
-    if (!p) packages.push((p = { ecosystem, component }));
+    const scope = scopeKey(raw);
+    if (scope === undefined) {
+      noRelease = true;
+      continue;
+    }
+    let p = packages.find((x) => x.scope === scope && x.component === component);
+    if (!p) packages.push((p = { scope, ecosystem, component }));
     if (p.qualifier === undefined && raw !== ecosystem) p.qualifier = raw;
   }
-  if (packages.length === 0) return { ok: false, reason: NOT_ENABLED_REASON };
+  if (packages.length === 0) return { ok: false, reason: noRelease ? NO_RELEASE_REASON : NOT_ENABLED_REASON };
 
   const modified_at = schemaTimestamp(v.modified);
   const published_at = schemaTimestamp(typeof v.published === "string" ? v.published : v.modified);
@@ -248,13 +273,15 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
     .filter((u): u is string => typeof u === "string" && /^https?:\/\//.test(u));
   const severity = severityOf(v);
 
-  const docs = packages.map(({ ecosystem, component, qualifier }, i) => {
+  const docs = packages.map(({ scope, ecosystem, component, qualifier }, i) => {
     const same = affectedList.filter(
-      (a) => typeof a.package?.ecosystem === "string" && baseEcosystem(a.package.ecosystem) === ecosystem && a.package?.name === component,
+      (a) => typeof a.package?.ecosystem === "string" && scopeKey(a.package.ecosystem) === scope && a.package?.name === component,
     );
     const { affected, fixed } = rangesOf(same);
     const lowest = [...fixed].sort(compareVersions)[0];
-    const source_id = osvSourceId(v.id, i, ecosystem, component);
+    // The source key of a release doc names its release (DSA-1#Debian:12/openssl),
+    // so two releases of one record never share (source, source_id).
+    const source_id = osvSourceId(v.id, i, scope, component);
     const doc: AdvisoryInput = {
       cve_ids,
       ...(ghsa_id ? { ghsa_id } : {}),

@@ -15,10 +15,10 @@ const job = Object.values(w.jobs)[0];
 const runStep = job.steps.find((s) => s.run?.includes("scripts/backfill/run.mjs"));
 
 describe("backfill.yml", () => {
-  it("is a workflow_dispatch with an ecosystem choice of the six OSV ecosystems and a batch input", () => {
+  it("is a workflow_dispatch with an ecosystem choice of the twelve OSV ecosystems and a batch input", () => {
     const inputs = w.on.workflow_dispatch.inputs;
     expect(inputs.ecosystem.type).toBe("choice");
-    expect(inputs.ecosystem.options).toEqual(["npm", "PyPI", "Go", "Packagist", "crates.io", "RubyGems"]);
+    expect(inputs.ecosystem.options).toEqual(["npm", "PyPI", "Go", "Packagist", "crates.io", "RubyGems", "Maven", "NuGet", "Hex", "Pub", "Alpine", "Debian"]);
     expect(String(inputs.batch.default)).toBe("100");
   });
 

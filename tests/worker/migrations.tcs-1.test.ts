@@ -15,8 +15,12 @@ const INDEXES = [
   "idx_advisories_nvd_pending",
 ];
 const SOURCES = ["bun-runtime", "deno-runtime", "epss", "kev", "node-eol", "node-runtime", "nvd", "osv", "php-runtime", "python-runtime"];
-// TCS-32: migration 0015 seeds the node-runtime history window; every other row keeps "{}".
-const SEEDED_CONFIG: Record<string, string> = { "node-runtime": '{"max_posts":20,"backfill_days":4000,"retry_incomplete_days":365}' };
+// TCS-32: migration 0015 seeds the node-runtime history window; TCS-38: migration
+// 0021 writes the osv ecosystems list; every other row keeps "{}".
+const SEEDED_CONFIG: Record<string, string> = {
+  "node-runtime": '{"max_posts":20,"backfill_days":4000,"retry_incomplete_days":365}',
+  osv: '{"ecosystems":["npm","PyPI","Go","Packagist","crates.io","RubyGems","Maven","NuGet","Hex","Pub","Alpine","Debian"]}',
+};
 const ECOSYSTEMS = ["node", "php", "npm", "PyPI", "Go", "crates.io"];
 
 async function plan(sql: string, ...params: unknown[]): Promise<string> {
@@ -53,9 +57,9 @@ async function seedAdvisories(prefix: string, count: number, cursorBase: number)
 }
 
 describe("migrations on a fresh local D1", () => {
-  it("applies 0001..0017", async () => {
+  it("applies 0001..0017 and 0021", async () => {
     const { results } = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id").all<{ name: string }>();
-    expect(results.map((r) => r.name)).toEqual(["0001_init.sql", "0002_seed_sources.sql", "0003_settings.sql", "0004_check_settings.sql", "0005_pypi_name_index.sql", "0006_site_settings.sql", "0007_nvd_pending_index.sql", "0008_published_at_index.sql", "0009_python_runtime_source.sql", "0010_advisory_cves.sql", "0011_python_runtime_records.sql", "0012_source_last_warning.sql", "0013_deno_bun_runtime_sources.sql", "0014_backfill.sql", "0015_node_history.sql", "0016_watchlists.sql", "0017_watchlist_limits.sql"]);
+    expect(results.map((r) => r.name)).toEqual(["0001_init.sql", "0002_seed_sources.sql", "0003_settings.sql", "0004_check_settings.sql", "0005_pypi_name_index.sql", "0006_site_settings.sql", "0007_nvd_pending_index.sql", "0008_published_at_index.sql", "0009_python_runtime_source.sql", "0010_advisory_cves.sql", "0011_python_runtime_records.sql", "0012_source_last_warning.sql", "0013_deno_bun_runtime_sources.sql", "0014_backfill.sql", "0015_node_history.sql", "0016_watchlists.sql", "0017_watchlist_limits.sql", "0021_osv_more_ecosystems.sql"]);
   });
 
   it("creates the 3 tables and the 5 named indexes", async () => {
@@ -68,7 +72,7 @@ describe("migrations on a fresh local D1", () => {
     for (const i of INDEXES) expect(indexes).toContain(i);
   });
 
-  it("seeds the 10 sources, enabled with empty config (node-runtime: its 0015 history window), and a re-run adds no rows", async () => {
+  it("seeds the 10 sources, enabled with empty config (node-runtime: its 0015 history window; osv: its 0021 ecosystems), and a re-run adds no rows", async () => {
     const read = () =>
       env.DB.prepare("SELECT id, kind, enabled, config_json FROM sources ORDER BY id").all<{
         id: string;

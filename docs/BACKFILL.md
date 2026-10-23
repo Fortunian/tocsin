@@ -20,13 +20,22 @@ Without the worker secret, the route answers 403 to every request.
 ## Run
 
 1. Open Actions, workflow `backfill`, "Run workflow".
-2. Select one `ecosystem` (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io` or `RubyGems`). Keep `batch` at 100.
+2. Select one `ecosystem` (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `Maven`, `NuGet`, `Hex`, `Pub`,
+   `Alpine` or `Debian`). Keep `batch` at 100, except for `Alpine` and `Debian` (see below).
 3. Do this once per ecosystem. Two runs for one ecosystem never run at the same time.
 4. Read the progress line per batch in the run log. The last line is
    `backfill: <eco>: done at <time>: <n> imported, <n> unchanged, <n> skipped, <n> errors in <n> requests`.
 
 A record with no package in an enabled ecosystem (for example a `Debian:12` record while Debian is
-not enabled) counts as `skipped`, not as an error. The answer of the request names it in
+not enabled) counts as `skipped`, not as an error.
+
+`Alpine` and `Debian` records list one package per release (`Alpine:v3.18`, `Debian:12`), and each
+release has its own fix. The import stores one advisory per release and package, with the release in
+`ecosystem_qualifier` and in the source id of every doc after the first
+(`DEBIAN-CVE-2023-1234#Debian:12/openssl`). One record can hold about 4 releases, so it costs about
+4 × 5 D1 queries. Run these two with `batch` 25. An entry with no release (`Debian` alone) cannot be
+matched and is not stored. If no entry of a record has a release, the import answer lists the record
+in `errors` with the reason `no release on an OS package`, and the run log counts it in `errors`. The answer of the request names it in
 `skipped_reasons.ecosystem_not_enabled`. OSV ecosystem strings with a suffix
 (`Packagist:https://packages.drupal.org/8`) match on the part before the first `:`; the advisory
 stores `ecosystem` as that base name and keeps the full string in `ecosystem_qualifier`.

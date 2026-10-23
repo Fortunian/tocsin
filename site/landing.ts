@@ -42,11 +42,12 @@ ${body}
 }
 
 // The landing copy is the client's final text (TCS-10). Do not reword it.
+// TCS-38 (the client's ticket) added the new ecosystems to the hook sentence.
 export function renderLanding(rows: LatestRow[] | null, freshness: Freshness | null = null, nowMs = Date.now()): string {
   const body = `<h1>tocsin</h1>
 <p class="tag">Security advisories, built for agents.</p>
-<p>Your agent runs on Node, PHP, Python, Go, Rust, Ruby and the packages on top of them. When one of them ships a critical
-fix, nothing tells the agent. Tocsin does. One feed. One command.</p>
+<p>Your agent runs on Node, PHP, Python, Go, Rust, Ruby, Java, .NET, Elixir, Dart, Alpine, Debian and the packages on top of
+them. When one of them ships a critical fix, nothing tells the agent. Tocsin does. One feed. One command.</p>
 ${command("npx tocsin connect")}
 ${installLinks()}
 <p>Wires Claude Code, Cursor, Claude Desktop and Codex to the feed in one run.</p>

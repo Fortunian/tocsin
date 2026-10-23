@@ -44,7 +44,8 @@ file. Close Claude Code before you run connect: Claude Code also writes `~/.clau
 
 Reads the lockfiles at the top of the current directory (`package-lock.json`,
 `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `requirements.txt`, `requirements-*.txt`,
-`go.sum`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`) and the installed versions of `node`, `php`,
+`go.sum`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `pom.xml`, `gradle.lockfile`, `packages.lock.json`,
+`mix.lock`, `pubspec.lock`) and the installed versions of `node`, `php`,
 `python` (or `python3`), `go`, `bun` and `deno`. It sends them to `POST /v1/check` and prints a
 table. `--json` prints the result as one JSON document: `{ checked, affected, skipped, feed_cursor }`.
 

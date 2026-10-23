@@ -18,6 +18,11 @@ export const LOCKFILE_NAMES = Object.freeze([
   "composer.lock",
   "cargo.lock",
   "gemfile.lock",
+  "pom.xml",
+  "gradle.lockfile",
+  "packages.lock.json",
+  "mix.lock",
+  "pubspec.lock",
 ]);
 
 const NAMES = new Set(LOCKFILE_NAMES);

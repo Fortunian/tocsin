@@ -1,3 +1,5 @@
+import { baseEcosystem } from "../ingest/osv";
+
 // Honest coverage (TCS-32): for each ecosystem of a check, since when Tocsin
 // holds its advisories and whether that history is complete. A dependency
 // with no finding in an incomplete ecosystem is reported as partial_coverage,
@@ -26,7 +28,8 @@ export type CoverageOwner = { table: "backfill"; key: string } | { table: "sourc
 // code (which table and key), not a business value. OSV package ecosystems
 // own their backfill row; the `go` runtime reads OSV `Go` toolchain rows
 // (src/check/go-runtime.ts), so it follows the `Go` row; the other runtimes
-// own their runtime source row.
+// own their runtime source row. A release-scoped OS ecosystem (Debian:12)
+// follows the backfill row of its base name (Debian).
 const RUNTIME_SOURCES: Record<string, string> = {
   node: "node-runtime",
   php: "php-runtime",
@@ -38,7 +41,7 @@ const RUNTIME_SOURCES: Record<string, string> = {
 export function coverageOwner(ecosystem: string): CoverageOwner {
   if (ecosystem === "go") return { table: "backfill", key: "Go" };
   if (Object.hasOwn(RUNTIME_SOURCES, ecosystem)) return { table: "sources", key: RUNTIME_SOURCES[ecosystem] };
-  return { table: "backfill", key: ecosystem };
+  return { table: "backfill", key: baseEcosystem(ecosystem) };
 }
 
 export const byEcosystem = (a: string, b: string) => {

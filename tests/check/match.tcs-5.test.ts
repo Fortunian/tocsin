@@ -259,8 +259,9 @@ describe("dispatch", () => {
   });
 
   it("an unsupported ecosystem is skipped, never a clean false", () => {
-    const maven = advisory("Maven", "org.foo:bar", [{ introduced: "0", fixed: "2.0.0" }]);
-    expect(matchAdvisory({ ecosystem: "Maven", name: "org.foo:bar", version: "1.0.0" }, maven)).toEqual({
+    // TCS-38 made Maven supported; Hackage has no comparator.
+    const hackage = advisory("Hackage", "foo-bar", [{ introduced: "0", fixed: "2.0.0" }]);
+    expect(matchAdvisory({ ecosystem: "Hackage", name: "foo-bar", version: "1.0.0" }, hackage)).toEqual({
       affected: false,
       skipped: "unsupported_ecosystem",
     });

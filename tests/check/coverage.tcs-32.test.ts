@@ -117,7 +117,7 @@ describe("POST /v1/check coverage", () => {
 
   it("coverage lists only the checked ecosystems, sorted; an unsupported ecosystem is not listed", async () => {
     await done("npm");
-    const a = await postCheck([PY_DEP, { ecosystem: "npm", name: "tcs32-npm-clean", version: "1.0.0" }, { ecosystem: "Maven", name: "x", version: "1" }]);
+    const a = await postCheck([PY_DEP, { ecosystem: "npm", name: "tcs32-npm-clean", version: "1.0.0" }, { ecosystem: "Hackage", name: "x", version: "1" }]);
     expect(a.coverage.map((c) => c.ecosystem)).toEqual(["npm", "PyPI"]);
     expect(a.skipped.map((s) => s.reason).sort()).toEqual(["partial_coverage", "unsupported_ecosystem"]);
   });

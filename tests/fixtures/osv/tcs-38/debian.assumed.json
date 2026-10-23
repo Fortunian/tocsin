@@ -1,0 +1,350 @@
+[
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-01",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-01 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:11",
+          "name": "openssl"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "1.1.1w-0+deb11u1"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "package": {
+          "ecosystem": "Debian:12",
+          "name": "openssl"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "3.0.11-1~deb12u2"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-02",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-02 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:12",
+          "name": "audit"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "1:3.0.9-1+deb12u1"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-03",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-03 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:12",
+          "name": "libxml2"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "2.9.14+dfsg-1.3~deb12u1"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-04",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-04 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:12",
+          "name": "tcs38-epoch-fixture"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "1:2.3-4+deb12u1"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-05",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-05 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:12",
+          "name": "glibc"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "last_affected": "2.36-9+deb12u3"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-06",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-06 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:12",
+          "name": "base-files"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "12.4+deb12u2"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-07",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-07 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:12",
+          "name": "curl"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "7.88.1-10"
+              },
+              {
+                "fixed": "7.88.1-10+deb12u5"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-08",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-08 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:13",
+          "name": "nginx"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "1.26.0-3"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-09",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-09 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:11",
+          "name": "sudo"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "1.9.5p2-3+deb11u1"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  },
+  {
+    "schema_version": "1.6.0",
+    "id": "TCS38-DEBIAN-10",
+    "modified": "2026-10-23T00:00:00Z",
+    "published": "2026-10-23T00:00:00Z",
+    "summary": "Hand-built TCS-38 test record TCS38-DEBIAN-10 (assumed, not a recorded advisory).",
+    "affected": [
+      {
+        "package": {
+          "ecosystem": "Debian:11",
+          "name": "git"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "1:2.30.2-1+deb11u3"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "package": {
+          "ecosystem": "Debian:12",
+          "name": "git"
+        },
+        "ranges": [
+          {
+            "type": "ECOSYSTEM",
+            "events": [
+              {
+                "introduced": "0"
+              },
+              {
+                "fixed": "1:2.39.5-0+deb12u1"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "database_specific": {
+      "severity": "HIGH"
+    }
+  }
+]
