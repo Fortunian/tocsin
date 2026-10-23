@@ -3,7 +3,9 @@ name: launch-check
 # The launch acceptance test (scripts/launch-check.sh) against https://tocsin.sh
 # and the published `tocsin` npm package. It reads prod and npm only and needs
 # no secret. The nightly run is off until an operator sets the repo variable
-# LAUNCH_CHECK_ENABLED=1 after launch; a manual run always works.
+# LAUNCH_CHECK_ENABLED=1 after launch; a manual run always works. The coverage
+# checks (cov-lodash, cov-django, cov-count) run only when the repo variable
+# COVERAGE_CHECK_ENABLED is 1, set after the OSV backfill (docs/BACKFILL.md).
 on:
   schedule:
     - cron: "17 6 * * *"
@@ -20,3 +22,5 @@ jobs:
         with:
           node-version: 22
       - run: bash scripts/launch-check.sh
+        env:
+          COVERAGE_CHECK: ${{ vars.COVERAGE_CHECK_ENABLED }}

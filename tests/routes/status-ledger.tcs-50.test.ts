@@ -69,7 +69,7 @@ describe("GET /v1/status ledger counts", () => {
   it("case 4: every source has a last_warning property", async () => {
     await env.DB.prepare("UPDATE sources SET last_warning = 'fixture: warn' WHERE id = 'kev'").run();
     const sources = await statusJson();
-    expect(sources.length).toBe(9);
+    expect(sources.length).toBe(10);
     for (const s of sources) expect(s, s.id).toHaveProperty("last_warning");
     expect(sources.find((s) => s.id === "kev")).toHaveProperty("last_warning", "fixture: warn");
     expect(sources.find((s) => s.id === "osv")).toHaveProperty("last_warning", null);
@@ -87,7 +87,7 @@ describe("GET /v1/status ledger counts", () => {
   it("case 7: the home loader (no option) makes no ledger read", async () => {
     await seedLedger("c7", CASE1);
     const data = await loadStatus(env.DB);
-    expect(data.sources.length).toBe(9);
+    expect(data.sources.length).toBe(10);
     for (const s of data.sources) expect(s, s.id).not.toHaveProperty("ledger");
   });
 });

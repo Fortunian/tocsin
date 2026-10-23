@@ -15,7 +15,7 @@ site.get("/", async (c) => {
   return c.html(renderLanding(home.rows, home.freshness), 200, { "Cache-Control": "public, max-age=60" });
 });
 site.get("/docs", (c) => c.html(renderDocs(), 200, { "Cache-Control": "public, max-age=60" }));
-site.get("/status", async (c) => c.html(renderStatus(await loadStatus(c.env.DB, { ledger: true })), 200, { "Cache-Control": "no-cache" }));
+site.get("/status", async (c) => c.html(renderStatus(await loadStatus(c.env.DB, { ledger: true, coverage: true })), 200, { "Cache-Control": "no-cache" }));
 
 // The README badge (TCS-35). A failed status read draws "degraded" with a short cache.
 site.get("/badge/status.svg", async (c) => {

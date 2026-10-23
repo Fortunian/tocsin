@@ -11,6 +11,7 @@ import {
   candidateKeys,
   lookupName,
 } from "./candidates";
+import { COVERAGE_SQL, SOURCE_COVERAGE_SQL, coverageFor, type Coverage, type CoverageRows } from "./coverage";
 import { goRuntimeView, isGoToolchainAdvisory, needsGoToolchainRows } from "./go-runtime";
 import { matchAdvisory, supportsEcosystem } from "./match";
 import type { Dependency } from "./parsers";
@@ -31,6 +32,8 @@ export interface CheckResult {
   affected: AffectedItem[];
   skipped: object[];
   feed_cursor: number;
+  // One entry per ecosystem of the checked dependencies (TCS-32).
+  coverage: Coverage[];
 }
 
 const SEVERITY_RANK: Record<SeverityLabel, number> = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
@@ -55,8 +58,17 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
     }
   }
   if (needsGoToolchainRows(checkedDeps)) stmts.push(db.prepare(GO_RUNTIME_CANDIDATE_SQL));
-  const [cursorRes, ...chunkRes] = await db.batch<{ c?: number; doc_json?: string }>(stmts);
+  // The two coverage reads ride the same batch: still one round trip.
+  stmts.push(db.prepare(COVERAGE_SQL), db.prepare(SOURCE_COVERAGE_SQL));
+  const results = await db.batch<{ c?: number; doc_json?: string }>(stmts);
+  const [cursorRes, ...chunkRes] = results.slice(0, -2);
+  const [backfillRes, sourcesRes] = results.slice(-2);
   const feed_cursor = Number(cursorRes.results[0]?.c ?? 0);
+  const coverage = coverageFor(
+    checkedDeps.map((d) => d.ecosystem),
+    { backfill: backfillRes.results, sources: sourcesRes.results } as unknown as CoverageRows,
+  );
+  const partial = new Map(coverage.filter((c) => !c.complete).map((c) => [c.ecosystem, c]));
 
   const byKey = new Map<string, Advisory[]>();
   const seenIds = new Set<string>();
@@ -75,9 +87,11 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
   for (const dep of checkedDeps) {
     const candidates = byKey.get(groupKey(dep.ecosystem, lookupName(dep.ecosystem, dep.name))) ?? [];
     const skippedIds = new Map<string, string[]>();
+    let hit = false;
     for (const a of candidates) {
       const r = matchAdvisory(dep, a);
       if (r.affected) {
+        hit = true;
         affected.push({
           dependency: dep,
           advisory_id: a.id,
@@ -97,6 +111,10 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
     for (const [reason, advisory_ids] of skippedIds) {
       skipped.push({ dependency: dep, reason, advisory_ids: advisory_ids.sort() });
     }
+    // No finding and no other skip reason, in an ecosystem whose history is
+    // not complete: not checked, so never reported as clean.
+    const gap = partial.get(dep.ecosystem);
+    if (gap && !hit && skippedIds.size === 0) skipped.push({ dependency: dep, reason: "partial_coverage", since: gap.since });
   }
 
   affected.sort(
@@ -108,7 +126,7 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
       cmp(x.dependency.version, y.dependency.version),
   );
 
-  return { checked: checkedDeps.length, affected, skipped, feed_cursor };
+  return { checked: checkedDeps.length, affected, skipped, feed_cursor, coverage };
 }
 
 function addCandidate(byKey: Map<string, Advisory[]>, a: Advisory): void {

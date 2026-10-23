@@ -70,7 +70,7 @@ newest advisory. Press Ctrl-C to stop it.
 | 0 | clean | every tool connected or already connected | ok |
 | 1 | one or more dependencies affected | a file could not be read, parsed or written | |
 | 2 | usage error, or no lockfile and no runtime | usage error | usage error |
-| 3 | the API call failed (this is not a clean result) | | the API call failed (`latest`) |
+| 3 | the API call failed, or nothing is affected but a checked ecosystem has partial coverage (neither is a clean result) | | the API call failed (`latest`) |
 
 `watch` keeps polling after an API error. It prints one line on stderr per error.
 

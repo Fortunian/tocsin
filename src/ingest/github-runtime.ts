@@ -3,6 +3,7 @@
 // into an advisory; githubRuntimeIngester builds the run for one runtime.
 import { compareSemver } from "../check/match/semver";
 import type { AffectedRange, SeverityLabel } from "../schema/advisory";
+import { markCoverage } from "./coverage";
 import { advisoriesPageUrl, fetchAdvisoryPage, fetchReleasePage, releasesPageUrl } from "./github-advisories";
 import { oneLine, readRuntimeConfig } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
@@ -236,8 +237,13 @@ export function githubRuntimeIngester(source: string, runtime: string, defaults:
     }
     const token = ctx.env.GITHUB_TOKEN;
     const kv = ctx.env.CURSORS;
-    const stored = await kv.get(cursorKey(source));
-    const storedEtag = await kv.get(etagKey(source));
+    // No coverage_since yet (TCS-32): read the whole history once, with no
+    // cursor and no ETag. The upserts are idempotent, so a re-read writes
+    // nothing new. A complete run then sets coverage_since.
+    const fullRead = ctx.source.coverage_since === null;
+    const storedCursor = await kv.get(cursorKey(source));
+    const stored = fullRead ? null : storedCursor;
+    const storedEtag = fullRead ? null : await kv.get(etagKey(source));
     const result: RunResult = { fetched: 0, upserted: 0, unchanged: 0, errors: [] };
     const origin = new URL(cfg.advisories_url).origin;
 
@@ -334,10 +340,12 @@ export function githubRuntimeIngester(source: string, runtime: string, defaults:
     }
     // KV moves only after a complete run with no record error, so nothing is skipped silently.
     if (result.errors.length > 0) return result;
-    const newest = items.reduce<string | null>((m, i) => (i.published !== "" && (m === null || i.published > m) ? i.published : m), stored);
-    if (newest !== null && newest !== stored) await kv.put(cursorKey(source), newest);
+    // The cursor never moves back, also after a full read.
+    const newest = items.reduce<string | null>((m, i) => (i.published !== "" && (m === null || i.published > m) ? i.published : m), storedCursor);
+    if (newest !== null && newest !== storedCursor) await kv.put(cursorKey(source), newest);
     if (firstEtag !== undefined) await kv.put(etagKey(source), firstEtag);
     else await kv.delete(etagKey(source));
+    if (fullRead) await markCoverage(ctx.env.DB, source, ctx.now().toISOString());
     return result;
   }
   return { id: source, run };

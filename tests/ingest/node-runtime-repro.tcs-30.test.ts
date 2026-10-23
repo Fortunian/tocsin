@@ -25,10 +25,11 @@ function ctxAt(fetchFn: typeof fetch, now: number): IngestContext {
 beforeEach(async () => {
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source = 'node-runtime')").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'node-runtime'").run();
-  // No cached dist index, a cursor before the October post, and the parser
-  // revision of the fix (a literal: the base commit has no such export or key).
+  // No cached dist index, a cursor before the October post, and the current
+  // parser revision (a literal: the base commit has no such export or key).
+  // TCS-32 moved the revision from "2" to "3" (the full feed history read).
   await env.CURSORS.delete("node-dist-index");
-  await env.CURSORS.put("cursor:node-runtime:parser", "2");
+  await env.CURSORS.put("cursor:node-runtime:parser", "3");
   await env.CURSORS.put(NODE_CURSOR_KEY, "2026-10-01T00:00:00Z");
 });
 

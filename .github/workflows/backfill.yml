@@ -1,0 +1,51 @@
+name: backfill
+
+# The one-time OSV backfill of one ecosystem (TCS-32). It downloads
+# <eco>/all.zip from the OSV export bucket and posts the records to
+# POST /v1/internal/import on Tocsin, in batches. A rerun resumes after the
+# last recorded batch. Operator steps: docs/BACKFILL.md.
+# Needs the repo secret TOCSIN_IMPORT_TOKEN (the same value as the worker secret IMPORT_TOKEN).
+on:
+  workflow_dispatch:
+    inputs:
+      ecosystem:
+        description: OSV ecosystem to backfill
+        required: true
+        type: choice
+        options:
+          - npm
+          - PyPI
+          - Go
+          - Packagist
+          - crates.io
+          - RubyGems
+      batch:
+        description: Records per request (the server's settings row import.max_batch caps it)
+        required: false
+        default: "100"
+
+# Two runs for one ecosystem never overlap.
+concurrency:
+  group: backfill-${{ inputs.ecosystem }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Import ${{ inputs.ecosystem }}
+        env:
+          TOCSIN_URL: ${{ vars.TOCSIN_URL || 'https://tocsin.sh' }}
+          IMPORT_TOKEN: ${{ secrets.TOCSIN_IMPORT_TOKEN }}
+          # The inputs reach the shell as env values, never as script text.
+          ECOSYSTEM: ${{ inputs.ecosystem }}
+          BATCH: ${{ inputs.batch }}
+        run: node scripts/backfill/run.mjs --ecosystem "$ECOSYSTEM" --batch "$BATCH"

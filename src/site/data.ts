@@ -2,7 +2,10 @@ import type { Freshness } from "../../site/freshness";
 import type { LatestRow } from "../../site/landing";
 import type { StatusData, StatusSource } from "../../site/status";
 import type { Env } from "../env";
+import { byEcosystem, coverageFor } from "../check/coverage";
+import { RUNTIMES } from "../check/parsers/runtimes";
 import { LEDGER_TABLES, ledgerSql, toLedgerCounts, type LedgerRow } from "../ingest/ledgers";
+import { OSV_CONFIG_SQL, readConfig } from "../ingest/osv";
 import { MAX_LIMIT } from "../feed/query";
 import { getSettingInt } from "../lib/settings";
 import type { Advisory } from "../schema/advisory";
@@ -19,7 +22,10 @@ const DEFAULT_TTL = 60;
 const MIN_TTL = 60;
 
 export const STATUS_SOURCES_SQL =
-  "SELECT id, kind, last_run_at, last_ok_at, last_error, last_warning FROM sources WHERE enabled = 1 ORDER BY id";
+  "SELECT id, kind, last_run_at, last_ok_at, last_error, last_warning, coverage_since FROM sources WHERE enabled = 1 ORDER BY id";
+// Coverage (TCS-32): backfill has one row per OSV ecosystem and sources one row
+// per source, so both are small bounded reads.
+export const STATUS_BACKFILL_SQL = "SELECT ecosystem, coverage_since, done_at, imported, unchanged FROM backfill";
 export const STATUS_CURSOR_SQL = "SELECT MAX(cursor) AS cursor FROM advisories";
 
 // The landing page data, cached as one KV value under LATEST_KEY (TCS-35).
@@ -128,19 +134,45 @@ export async function loadHome(env: Env): Promise<Home> {
 // is 0 only when no advisory exists (0 is the feed's start value for since=).
 // With `ledger: true` the same batch also reads one grouped count per ledger
 // table (LEDGER_TABLES), attached to its source when that source is enabled.
-// Home and the badge call it without the option and make no ledger read.
-export async function loadStatus(db: D1Database, opts: { ledger?: boolean } = {}): Promise<StatusData> {
+// With `coverage: true` the batch also reads the backfill rows and the osv
+// config, for one coverage row per enabled OSV ecosystem and per runtime.
+// Home and the badge call it without the options and make neither read.
+export async function loadStatus(db: D1Database, opts: { ledger?: boolean; coverage?: boolean } = {}): Promise<StatusData> {
   const ledgers = opts.ledger ? Object.entries(LEDGER_TABLES) : [];
-  const [sources, cursor, ...counts] = await db.batch([
+  const coverageStmts = opts.coverage ? [db.prepare(STATUS_BACKFILL_SQL), db.prepare(OSV_CONFIG_SQL)] : [];
+  const [sources, cursor, ...rest] = await db.batch([
     db.prepare(STATUS_SOURCES_SQL),
     db.prepare(STATUS_CURSOR_SQL),
     ...ledgers.map(([, table]) => db.prepare(ledgerSql(table))),
+    ...coverageStmts,
   ]);
+  const counts = rest.slice(0, ledgers.length);
   const max = (cursor.results[0] as { cursor: number | null } | undefined)?.cursor ?? null;
   const list = sources.results as unknown as StatusSource[];
   ledgers.forEach(([id], i) => {
     const s = list.find((x) => x.id === id);
     if (s) s.ledger = toLedgerCounts(counts[i].results as unknown as LedgerRow[]);
   });
-  return { sources: list, cursor: max === null ? 0 : max };
+  const data: StatusData = { sources: list, cursor: max === null ? 0 : max };
+  if (opts.coverage) {
+    const [backfillRes, cfgRes] = rest.slice(ledgers.length);
+    const backfill = backfillRes.results as unknown as { ecosystem: string; coverage_since: string | null; done_at: string | null; imported: number; unchanged: number }[];
+    const cfgRow = cfgRes.results[0] as { config_json: string } | undefined;
+    let osvEcosystems: string[];
+    try {
+      osvEcosystems = readConfig(cfgRow ? (JSON.parse(cfgRow.config_json) as Record<string, unknown>) : {}).ecosystems;
+    } catch (err) {
+      // A bad osv config fails the osv cron run; the status page still shows the rows it has.
+      console.error(JSON.stringify({ lane: "site", step: "osv-config", err: errText(err) }));
+      osvEcosystems = backfill.map((b) => b.ecosystem);
+    }
+    const rows = { backfill, sources: list.map((s) => ({ id: s.id, coverage_since: s.coverage_since })) };
+    const seen = new Map(backfill.map((b) => [b.ecosystem, b.imported + b.unchanged]));
+    data.coverage = [
+      // `imported`: the records the latest backfill run of the ecosystem has written or found unchanged.
+      ...coverageFor([...osvEcosystems].sort(byEcosystem), rows).map((c) => ({ ...c, imported: seen.get(c.ecosystem) ?? 0 })),
+      ...coverageFor([...RUNTIMES], rows).map((c) => ({ ...c, imported: null })),
+    ];
+  }
+  return data;
 }

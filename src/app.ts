@@ -7,6 +7,7 @@ import check from "./routes/check";
 import discovery from "./routes/discovery";
 import events from "./routes/events";
 import health from "./routes/health";
+import internalImport from "./routes/internal-import";
 import keys from "./routes/keys";
 import site from "./routes/site";
 import sitemap from "./routes/sitemap";
@@ -28,6 +29,8 @@ app.route("/v1/health", health);
 app.route("/v1/events", events);
 app.route("/v1/check", check);
 app.route("/v1/status", status);
+// Bearer-gated write path of the OSV backfill (TCS-32). Not for browsers: CORS stays GET/HEAD/OPTIONS.
+app.route("/v1/internal/import", internalImport);
 app.route("/v1/keys", keys);
 app.route("/v1/watchlists", watchlists);
 app.route("/", discovery);

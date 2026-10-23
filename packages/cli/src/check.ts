@@ -1,6 +1,7 @@
 // `tocsin check`: send the lockfiles in cwd and the installed runtime versions
 // to POST /v1/check. Exit 1 when anything is affected, 0 when clean, 2 when
-// there is nothing to check, 3 when the check could not run.
+// there is nothing to check, 3 when the check could not run or when a checked
+// ecosystem has partial coverage and nothing is affected.
 import { Api, describeFailure, type ApiResult } from "./api.js";
 import type { Io } from "./io.js";
 import { LOCKFILE_NAMES, findLockfiles, isLockfileName } from "./lockfiles.js";
@@ -30,11 +31,19 @@ interface AffectedItem {
   action?: string;
 }
 
+interface Coverage {
+  ecosystem: string;
+  since: string | null;
+  complete: boolean;
+}
+
 interface CheckResult {
   checked: number;
   affected: AffectedItem[];
   skipped: unknown[];
   feed_cursor: number;
+  // Absent from a server before TCS-32.
+  coverage?: Coverage[];
 }
 
 async function probe(io: Io, commands: [string, string[]][]): Promise<string | null> {
@@ -67,6 +76,29 @@ function isCheckResult(b: unknown): b is CheckResult {
 }
 
 const cmp = (a = "", b = "") => (a < b ? -1 : a > b ? 1 : 0);
+const byEcosystem = (a: string, b: string) => cmp(a.toLowerCase(), b.toLowerCase()) || cmp(a, b);
+
+function isCoverage(c: unknown): c is Coverage {
+  const o = c as Partial<Coverage> | null;
+  return typeof o?.ecosystem === "string" && typeof o.complete === "boolean" && (o.since === null || typeof o.since === "string");
+}
+
+// One entry per ecosystem: partial if any part says partial; since is the earliest known.
+function mergeCoverage(parts: CheckResult[]): Coverage[] | undefined {
+  const lists = parts.map((p) => p.coverage).filter((c): c is Coverage[] => Array.isArray(c));
+  if (lists.length === 0) return undefined;
+  const out = new Map<string, Coverage>();
+  for (const c of lists.flat().filter(isCoverage)) {
+    const prev = out.get(c.ecosystem);
+    if (!prev) {
+      out.set(c.ecosystem, { ...c });
+      continue;
+    }
+    prev.complete = prev.complete && c.complete;
+    if (c.since !== null && (prev.since === null || c.since < prev.since)) prev.since = c.since;
+  }
+  return [...out.values()].sort((a, b) => byEcosystem(a.ecosystem, b.ecosystem));
+}
 
 function merge(parts: CheckResult[]): CheckResult {
   const affected = parts.flatMap((p) => p.affected);
@@ -77,14 +109,28 @@ function merge(parts: CheckResult[]): CheckResult {
       Number(Boolean(y.exploited)) - Number(Boolean(x.exploited)) ||
       cmp(x.advisory_id, y.advisory_id),
   );
+  const coverage = mergeCoverage(parts);
   return {
     checked: parts.reduce((n, p) => n + p.checked, 0),
     affected,
     skipped: parts.flatMap((p) => p.skipped),
     // The lower cursor, so a follow-up feed read skips no advisory.
     feed_cursor: Math.min(...parts.map((p) => p.feed_cursor)),
+    ...(coverage ? { coverage } : {}),
   };
 }
+
+// "Coverage: node partial (since unknown), npm since 2016-01-05, PyPI partial (since 2026-10-15)".
+function coverageLine(coverage: Coverage[]): string {
+  const day = (s: string) => s.slice(0, 10);
+  const parts = coverage.map((c) => {
+    if (c.complete) return c.since === null ? `${c.ecosystem} complete` : `${c.ecosystem} since ${day(c.since)}`;
+    return `${c.ecosystem} partial (since ${c.since === null ? "unknown" : day(c.since)})`;
+  });
+  return `Coverage: ${parts.join(", ")}`;
+}
+
+const isPartial = (data: CheckResult) => (data.coverage ?? []).some((c) => !c.complete);
 
 function table(rows: string[][]): string[] {
   const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
@@ -93,8 +139,12 @@ function table(rows: string[][]): string[] {
 
 function print(io: Io, data: CheckResult): void {
   const skipped = data.skipped.length > 0 ? ` ${data.skipped.length} skipped (not checked).` : "";
+  const coverage = data.coverage && data.coverage.length > 0 ? coverageLine(data.coverage) : undefined;
   if (data.affected.length === 0) {
-    io.out(`No known advisory affects the ${data.checked} checked dependencies.${skipped}`);
+    // Partial coverage is not a clean result: say what was not checked.
+    if (isPartial(data)) io.out(`0 of ${data.checked} dependencies affected. Coverage is partial, so this is not a clean result.${skipped}`);
+    else io.out(`No known advisory affects the ${data.checked} checked dependencies.${skipped}`);
+    if (coverage) io.out(coverage);
     return;
   }
   const rows = [["SEVERITY", "PACKAGE@VERSION", "ADVISORY", "FIXED IN", "ACTION"]];
@@ -105,6 +155,7 @@ function print(io: Io, data: CheckResult): void {
   for (const line of table(rows)) io.out(line);
   io.out("");
   io.out(`${data.affected.length} of ${data.checked} dependencies affected.${skipped}`);
+  if (coverage) io.out(coverage);
 }
 
 /** The check itself: the exit code, and the merged result when the API answered. Errors go to io.err. */
@@ -132,7 +183,8 @@ async function checkResult(io: Io): Promise<{ code: 0 | 1 | 2 | 3; data?: CheckR
     parts.push(r.body);
   }
   const data = merge(parts);
-  return { code: data.affected.length > 0 ? 1 : 0, data };
+  // Affected wins over partial: it is the answer to act on first. Partial coverage is exit 3, never clean.
+  return { code: data.affected.length > 0 ? 1 : isPartial(data) ? 3 : 0, data };
 }
 
 /**
@@ -148,7 +200,8 @@ async function runSummary(io: Io): Promise<number> {
     return 0;
   }
   if (r.code === 2) io.out("tocsin: nothing to check here (exit 2)");
-  else if (r.code === 3 || !r.data) io.out("tocsin: check failed (network)");
+  else if (!r.data) io.out("tocsin: check failed (network)");
+  else if (r.code === 3) io.out(`tocsin: 0 affected of ${r.data.checked} checked, but coverage is partial (exit 3). Run npx tocsin check for details.`);
   else {
     const d = r.data;
     const skipped = d.skipped.length > 0 ? `, ${d.skipped.length} skipped` : "";

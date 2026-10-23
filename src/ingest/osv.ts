@@ -8,6 +8,8 @@ import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
 import type { AffectedRange, SeverityLabel } from "../schema/advisory";
 
 export const CURSOR_KEY = "cursor:osv";
+// The osv sources row config (PK of sources), for readers outside the cron run.
+export const OSV_CONFIG_SQL = "SELECT config_json FROM sources WHERE id = 'osv'";
 
 // Code fallbacks for sources.config_json of row "osv" (repo iron rule 5).
 export const DEFAULT_ECOSYSTEMS = ["npm", "PyPI", "Go", "Packagist", "crates.io", "RubyGems"];
@@ -255,7 +257,7 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
   return { ok: true, doc: docs[0].doc, docs };
 }
 
-function readConfig(raw: Record<string, unknown>): OsvConfig {
+export function readConfig(raw: Record<string, unknown>): OsvConfig {
   const cfg: OsvConfig = { ...DEFAULTS };
   const posInt = (k: "page_size" | "max_pages" | "backfill_days" | "max_csv_rows") => {
     if (raw[k] === undefined) return;
