@@ -99,7 +99,8 @@ Anonymous calls are limited per IP per minute. The limits are settings rows, so 
 - `GET /v1/events`: 60 per minute (`feed.anon_rate_per_minute`).
 - `/v1/check`: 20 per minute (`check.anon_rate_per_minute`).
 - `POST /v1/check` body: 2 MB (`check.max_body_bytes`). Over the cap the answer is 413.
-- `POST /v1/keys`: 5 per minute (`keys.anon_rate_per_minute`).
+- `POST /v1/keys`: 5 per minute (`keys.anon_rate_per_minute`). Body: 4 KB (`keys.max_body_bytes`). Over the cap the answer is 413.
+- `/v1/watchlists` with an API key: 120 calls per minute per key, shared by every watch list route (`watchlists.key_rate_per_minute`).
 
 Over a limit the answer is 429 with `Retry-After` in seconds.
 
@@ -114,6 +115,8 @@ A watch list is a saved filter with its own cursor. Poll it and you get only the
 5. `GET /v1/watchlists` lists your lists. `DELETE /v1/watchlists/{id}` deletes one (204).
 
 Limits come from your plan row. The free plan, the only plan today, allows 25 watch lists and 2,000 components per list. Over a limit the answer is 403 with the limit in the body: `{"error": "watch list limit reached", "max_watchlists": 25}` or `{"error": "component limit reached", "max_components": 2000}`. A body over 1 MB (`watchlists.max_body_bytes`) answers 413. A list that is not yours answers 404.
+
+Input caps on `POST /v1/watchlists`: `name` is at most 100 characters; every other string is at most 200 characters; `ecosystems` holds at most 20 values, each one of `npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `node`, `php`, `python`, `go`, `deno`, `bun`; `runtimes` holds at most 10 entries; the stored filter is at most 64 KB as JSON. A value over a cap answers 400 and the error names the field. `GET /v1/watchlists` answers at most your plan's watch list count (25 on the free plan).
 
 A key that is not used for 365 days is deleted with its watch lists.
 

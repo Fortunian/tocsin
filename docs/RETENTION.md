@@ -28,7 +28,7 @@ One key per source: the ETag of the first advisories page, sent as `If-None-Matc
 
 ## settings
 
-A small key/value table of run-time limits and knobs (today eleven rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `site.latest_rows`, `site.latest_cache_seconds`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (today thirteen rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `site.latest_rows`, `site.latest_cache_seconds`, `keys.anon_rate_per_minute`, `keys.max_body_bytes`, `watchlists.key_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`). Rows change in place by key; the table does not grow with traffic. No delete job.
 
 ## api_keys
 
@@ -48,7 +48,7 @@ One key: the audit record of the last `api_keys` retention run, `{ran_at, cutoff
 
 ## KV `rl:` keys (CURSORS namespace)
 
-The rate-limit counters, one key per client IP per minute: `rl:v1:<ip>:<minute>` for `/v1/events`, `rl:v1:check:<ip>:<minute>` for `/v1/check` and `rl:v1:keys:<ip>:<minute>` for `POST /v1/keys`. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
+The rate-limit counters, one key per caller per minute: `rl:v1:<ip>:<minute>` for `/v1/events`, `rl:v1:check:<ip>:<minute>` for `/v1/check`, `rl:v1:keys:<ip>:<minute>` for `POST /v1/keys` and `rl:v1:key:<key_id>:<minute>` for the `/v1/watchlists` routes. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
 
 ## KV `nvd:queried:` keys (CURSORS namespace)
 
