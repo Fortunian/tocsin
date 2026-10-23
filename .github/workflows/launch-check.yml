@@ -1,0 +1,22 @@
+name: launch-check
+
+# The launch acceptance test (scripts/launch-check.sh) against https://tocsin.sh
+# and the published `tocsin` npm package. It reads prod and npm only and needs
+# no secret. The nightly run is off until an operator sets the repo variable
+# LAUNCH_CHECK_ENABLED=1 after launch; a manual run always works.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  launch-check:
+    if: vars.LAUNCH_CHECK_ENABLED == '1' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bash scripts/launch-check.sh
