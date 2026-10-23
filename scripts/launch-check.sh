@@ -5,10 +5,12 @@
 #   node-cve     GET /v1/events/cve/CVE-2026-111497 lists fixed version 24.22.1
 #   php-cve      GET /v1/events/cve/CVE-2026-109618 lists fixed version 8.4.27
 #   check-node   GET /v1/check?node=24.22.0 has an affected item for CVE-2026-111497 with fixed_in 24.22.1
-#   status       GET /v1/status lists sources, and each one has last_ok_at within MAX_AGE_HOURS
+#   status       GET /v1/status lists sources; none has last_error set or last_ok_at older
+#                than MAX_AGE_HOURS (a source with no first run yet prints a WARN line)
 #   cli-connect  `$TOCSIN_CLI connect --dry-run` prints the MCP block for MCP_URL
 #
-# It prints `ok <check>` or `FAIL <check>: <reason>` per check, then
+# It prints `ok <check>` or `FAIL <check>: <reason>` per check (plus `WARN <check>: ...`
+# lines that do not fail a check), then
 # `launch-check: <n> of 5 passed`. Exit 0 only when all five pass, else exit 1.
 # It only reads: GET requests, and a dry run of the CLI with a throwaway HOME.
 #
@@ -98,29 +100,39 @@ else
   fail check-node "node 24.22.0: no affected item for CVE-2026-111497 with fixed_in 24.22.1 ($(jq -c '[.affected[]? | {cve_ids, fixed_in}]' "$BODY_FILE"))"
 fi
 
-# status: every enabled source succeeded within MAX_AGE_HOURS. D1 stores
-# toISOString() values with milliseconds; fromdateiso8601 refuses fractions,
-# so they are cut first.
+# status: every enabled source is ok. A source FAILs when its last run left an
+# error (last_error set), or when its last_ok_at is older than MAX_AGE_HOURS.
+# A source with no last_ok_at and no error has not had its first cron yet (a
+# source added in the last deploy). /v1/status carries no created time, so its
+# age is not known: it gets a WARN line, not a FAIL. D1 stores toISOString()
+# values with milliseconds; fromdateiso8601 refuses fractions, so they are cut first.
 if ! get "/v1/status"; then
   fail status "$REASON"
 else
-  stale="$(jq -r --argjson now "$(date -u +%s)" --argjson max "$((MAX_AGE_HOURS * 3600))" '
-    (.sources // [])
-    | if length == 0 then "no sources listed"
-      else map(
-          if .last_ok_at == null then "\(.id) (never ok)"
+  verdict="$(jq -c --argjson now "$(date -u +%s)" --argjson max "$((MAX_AGE_HOURS * 3600))" '
+    (.sources // []) as $s
+    | if ($s | length) == 0 then {fail: ["no sources listed"], warn: []}
+      else ($s | map(
+          if .last_error != null then {fail: "\(.id) (last error: \(.last_error))"}
+          elif .last_ok_at == null then {warn: "\(.id) has not succeeded yet (no first cron run)"}
           else (.last_ok_at | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $t
-            | if $t == null then "\(.id) (unreadable last_ok_at \(.last_ok_at))"
-              elif ($now - $t) > $max then "\(.id) (last ok \(.last_ok_at))"
-              else empty end
-          end)
-        | join(", ")
+            | if $t == null then {fail: "\(.id) (unreadable last_ok_at \(.last_ok_at))"}
+              elif ($now - $t) > $max then {fail: "\(.id) (last ok \(.last_ok_at))"}
+              else {} end
+          end)) as $v
+        | {fail: [$v[] | .fail // empty], warn: [$v[] | .warn // empty]}
       end
   ' "$BODY_FILE" 2>&1)"
-  if [[ -z "$stale" ]]; then
-    ok status
+  if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$verdict"; then
+    fail status "cannot read /v1/status sources: $verdict"
   else
-    fail status "not ok within ${MAX_AGE_HOURS} h: $stale"
+    jq -r '.warn[] | "WARN status: \(.)"' <<<"$verdict"
+    failed="$(jq -r '.fail | join(", ")' <<<"$verdict")"
+    if [[ -z "$failed" ]]; then
+      ok status
+    else
+      fail status "not ok (max age ${MAX_AGE_HOURS} h): $failed"
+    fi
   fi
 fi
 

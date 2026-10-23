@@ -1,7 +1,8 @@
 // Test helper for the launch check (TCS-14). It runs the real worker
 // (src/index.ts) in Miniflare on a localhost port, applies migrations/, and
 // seeds it through the production cron path (worker.scheduled) with the
-// 2026-10-21 Node and PHP fixtures. Every outbound fetch the worker makes is
+// 2026-10-21 Node and PHP fixtures (plus the 2026-07-29 Node post, which the
+// Node ingester reads in its first-run backfill window since TCS-30). Every outbound fetch the worker makes is
 // answered from the fixture files; any other URL gets a 599 and is recorded in
 // unknownUrls, so a test can assert 0 vendor calls.
 
@@ -14,17 +15,20 @@ import { Miniflare, Response as MfResponse } from "miniflare";
 const ROOT = join(import.meta.dirname, "..", "..");
 const fixture = (p: string) => readFileSync(join(ROOT, "tests", "fixtures", p), "utf8");
 
-// The same URL map as tests/cron/runtime-ingest.tcs-6.test.ts (ROUTES).
+// The URL map of tests/cron/runtime-ingest.tcs-6.test.ts (ROUTES) plus the TCS-30 Node backfill post.
 const ROUTES: Record<string, string> = {
   "https://nodejs.org/en/feed/vulnerability.xml": fixture("node-runtime/vulnerability.xml"),
   "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases": fixture("node-runtime/2026-10-21.html"),
-  "https://nodejs.org/dist/index.json": fixture("node-runtime/index.json"),
+  "https://nodejs.org/en/blog/vulnerability/july-2026-security-releases": fixture("node-runtime/2026-07-29.html"),
+  // The dist index cut at 2026-07-01, so the July fixed versions resolve too.
+  "https://nodejs.org/dist/index.json": fixture("node-runtime/index-since-2026-07.json"),
   "https://www.php.net/index.php": fixture("php-runtime/2026-10-21.html"),
   "https://www.php.net/releases/feed.php": fixture("php-runtime/releases.xml"),
   "https://api.github.com/repos/php/php-src/security-advisories/GHSA-w8hw-w9fx-j79w": fixture("php-runtime/GHSA-w8hw-w9fx-j79w.json"),
   "https://api.github.com/repos/php/php-src/security-advisories/GHSA-6wmf-4rv5-p3rp": fixture("php-runtime/GHSA-6wmf-4rv5-p3rp.json"),
 };
-// Both cursors start before the 2026-10-21 posts, so only those posts are read.
+// Both cursors start before the 2026-10-21 posts. The Node ingester has no stored
+// parser revision on a fresh DB, so it also reads its backfill window once (TCS-30).
 const START = "2026-10-01T00:00:00Z";
 const RUNTIME_SOURCES = ["node-runtime", "php-runtime"];
 

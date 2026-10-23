@@ -84,12 +84,31 @@ describe("scripts/launch-check.sh against a seeded local worker", () => {
     expect(fresh.code, fresh.out).toBe(0);
   });
 
-  it("L4: a source that never succeeded FAILs status by name", async () => {
-    await w.db.prepare("UPDATE sources SET last_ok_at = NULL WHERE id = 'node-runtime'").run();
+  it("L4: a fresh source with no first run WARNs by name and passes; one whose run left an error FAILs", async () => {
+    // A source added in the last deploy: no last_ok_at and no error yet.
+    await w.db.prepare("UPDATE sources SET last_ok_at = NULL, last_error = NULL WHERE id = 'node-runtime'").run();
+    const fresh = await runCheck(w.url);
+    expect(fresh.out).toMatch(/^WARN status: node-runtime has not succeeded yet/m);
+    expect(fresh.out).not.toContain("WARN status: php-runtime");
+    expect(fresh.out).toContain("ok status");
+    expect(fresh.out).toContain("launch-check: 5 of 5 passed");
+    expect(fresh.code, fresh.out).toBe(0);
+
+    // The same source after a failed first run: last_error is set, so status FAILs.
+    await w.db.prepare("UPDATE sources SET last_error = 'HTTP 503' WHERE id = 'node-runtime'").run();
+    const failed = await runCheck(w.url);
+    expect(failed.code).toBe(1);
+    expect(failed.out).toMatch(/FAIL status: .*node-runtime \(last error: HTTP 503\)/);
+    expect(failed.out).not.toMatch(/FAIL status: .*php-runtime/);
+    expect(failed.out).not.toContain("WARN status: node-runtime");
+  });
+
+  it("L4b: a source that succeeded once but has a last_error now FAILs even with a fresh last_ok_at", async () => {
+    await w.db.prepare("UPDATE sources SET last_ok_at = ?, last_error = 'HTTP 599' WHERE id = 'php-runtime'").bind(isoHoursAgo(1)).run();
     const r = await runCheck(w.url);
     expect(r.code).toBe(1);
-    expect(r.out).toMatch(/FAIL status: .*node-runtime/);
-    expect(r.out).not.toMatch(/FAIL status: .*php-runtime/);
+    expect(r.out).toMatch(/FAIL status: .*php-runtime \(last error: HTTP 599\)/);
+    expect(r.out).not.toMatch(/FAIL status: .*node-runtime/);
   });
 
   it("L5: a CLI that prints no MCP block FAILs cli-connect; the four HTTP checks still pass", async () => {

@@ -8,7 +8,7 @@ The same day, PHP shipped 8.5.12, 8.4.27, 8.3.36 and 8.2.35 to fix two remote co
 
 I run agents all day. None of them knew. The facts were out there as a blog post, an RSS item, a news entry and a GitHub advisory. Four shapes in four places, and not one of them made for a program to read and act on.
 
-So I built Tocsin. It is one feed of runtime and package advisories in one schema. Every record has the affected ranges, the fixed versions, a severity and a one-line action, like "Upgrade node to 24.22.1 or later." Every fact links back to its source. No model writes any of it.
+So I built Tocsin. It is one feed of advisories in one schema. It covers the Node, PHP, Python, Deno and Bun runtimes, with their history. It also covers packages in six OSV ecosystems (npm, PyPI, Go, Packagist, crates.io and RubyGems), for advisories published since October 15, 2026. The full package history backfill is the next step ([#32](https://github.com/Fortunian/tocsin/issues/32)). Every record has the affected ranges, the fixed versions, a severity and a one-line action, like "Upgrade node to 24.22.1 or later." Every fact links back to its source. No model writes any of it.
 
 Hooking up an agent is one command:
 
@@ -26,7 +26,7 @@ You get back the advisories that hit those versions, each with its fix.
 
 What is free: all of it. The feed, the check endpoint, the MCP server and the CLI need no account and cost nothing. There is no paid tier. Next up are watch lists and signed webhooks, behind a free API key, so an agent gets pushed the advisories for its own stack instead of polling.
 
-Every pull request in the repo was planned, built and reviewed by the Cromford factory, and each one carries its ticket key so you can check the work.
+Every ticket became a pull request that [Cromford](https://cromford.dev) planned, built and reviewed. Each pull request carries its ticket key, and the [merged pull request list](https://github.com/Fortunian/tocsin/pulls?q=is%3Apr+is%3Amerged) is the record. Cromford is open source at [cromford-ai/cromford](https://github.com/cromford-ai/cromford).
 
 The engine, the schema, the ingesters, the MCP server and the CLI are open source under Apache-2.0. If your ecosystem is missing, [open a source request](https://github.com/Fortunian/tocsin/issues/new/choose).
 
