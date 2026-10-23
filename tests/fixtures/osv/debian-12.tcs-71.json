@@ -1,0 +1,15 @@
+{
+  "id": "DEBIAN-CVE-2099-71071",
+  "summary": "Fixture record for a Debian:12 package (tcs-71, not a real advisory).",
+  "modified": "2026-10-01T00:00:00Z",
+  "published": "2026-10-01T00:00:00Z",
+  "aliases": [],
+  "affected": [
+    {
+      "package": { "ecosystem": "Debian:12", "name": "tcs71-fixture-pkg" },
+      "ranges": [{ "type": "ECOSYSTEM", "events": [{ "introduced": "0" }, { "fixed": "1.0-1" }] }]
+    }
+  ],
+  "references": [{ "type": "WEB", "url": "https://example.com/fixture/tcs-71/debian-12" }],
+  "schema_version": "1.7.3"
+}

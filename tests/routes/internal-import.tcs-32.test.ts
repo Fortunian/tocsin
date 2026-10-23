@@ -138,9 +138,10 @@ describe("import", () => {
     expect(a.imported).toBe(2);
     expect(a.inserted).toBe(2);
     expect(a.unchanged).toBe(0);
-    expect(a.skipped).toBe(5);
-    expect(a.errors).toHaveLength(1);
-    expect(a.errors[0]).toContain("GHSA-eeee-0000-0004");
+    // TCS-71: the Maven record (Maven is not enabled) is skipped as ecosystem_not_enabled, not an error.
+    expect(a.skipped).toBe(6);
+    expect((a as Answer & { skipped_reasons: Record<string, number> }).skipped_reasons).toEqual({ ecosystem_not_enabled: 1 });
+    expect(a.errors).toEqual([]);
     expect(a.done_at).toBeNull();
 
     const doc = await env.DB.prepare(
@@ -150,11 +151,11 @@ describe("import", () => {
     expect(parsed.ecosystem).toBe("npm");
     expect(parsed.component).toBe("tcs32-e1");
     expect(parsed.action).toBe("Upgrade tcs32-e1 to 1.0.1 or later.");
-    const skippedRows = await env.DB.prepare("SELECT COUNT(*) AS n FROM advisory_sources WHERE source_id IN ('GHSA-eeee-0000-0003', 'MAL-2026-0001')").first<{ n: number }>();
+    const skippedRows = await env.DB.prepare("SELECT COUNT(*) AS n FROM advisory_sources WHERE source_id IN ('GHSA-eeee-0000-0003', 'MAL-2026-0001', 'GHSA-eeee-0000-0004')").first<{ n: number }>();
     expect(skippedRows!.n).toBe(0);
 
     const r = await row("npm");
-    expect(r).toMatchObject({ imported: 2, unchanged: 0, skipped: 5, last_id: "MAL-2026-0001", done_at: null, coverage_since: "2019-05-01T00:00:00Z" });
+    expect(r).toMatchObject({ imported: 2, unchanged: 0, skipped: 6, last_id: "MAL-2026-0001", done_at: null, coverage_since: "2019-05-01T00:00:00Z" });
     expect(r!.started_at).not.toBeNull();
   });
 
