@@ -5,7 +5,7 @@ import { get } from "./seed.tcs-3";
 // Coverage on /v1/status (JSON) and /status (HTML), through the production routes.
 interface StatusJson {
   sources: { id: string; coverage_since: string | null }[];
-  coverage: { ecosystem: string; since: string | null; complete: boolean; imported: number | null }[];
+  coverage: { ecosystem: string; since: string | null; complete: boolean; imported: number | null; skipped: number | null }[];
 }
 
 beforeEach(async () => {
@@ -26,11 +26,11 @@ describe("/v1/status coverage", () => {
     expect(s.sources.find((x) => x.id === "node-runtime")?.coverage_since).toBe("2018-03-01T00:00:00Z");
     expect(s.sources.find((x) => x.id === "php-runtime")?.coverage_since).toBeNull();
     const by = new Map(s.coverage.map((c) => [c.ecosystem, c]));
-    expect(by.get("npm")).toEqual({ ecosystem: "npm", since: "2016-01-05T00:00:00Z", complete: true, imported: 200012 });
-    expect(by.get("PyPI")).toEqual({ ecosystem: "PyPI", since: "2026-10-15T00:00:00Z", complete: false, imported: 5000 });
-    expect(by.get("Go")).toEqual({ ecosystem: "Go", since: null, complete: false, imported: 0 });
-    expect(by.get("node")).toEqual({ ecosystem: "node", since: "2018-03-01T00:00:00Z", complete: true, imported: null });
-    expect(by.get("php")).toEqual({ ecosystem: "php", since: null, complete: false, imported: null });
+    expect(by.get("npm")).toEqual({ ecosystem: "npm", since: "2016-01-05T00:00:00Z", complete: true, imported: 200012, skipped: 0 });
+    expect(by.get("PyPI")).toEqual({ ecosystem: "PyPI", since: "2026-10-15T00:00:00Z", complete: false, imported: 5000, skipped: 0 });
+    expect(by.get("Go")).toEqual({ ecosystem: "Go", since: null, complete: false, imported: 0, skipped: 0 });
+    expect(by.get("node")).toEqual({ ecosystem: "node", since: "2018-03-01T00:00:00Z", complete: true, imported: null, skipped: null });
+    expect(by.get("php")).toEqual({ ecosystem: "php", since: null, complete: false, imported: null, skipped: null });
     expect([...by.keys()]).toEqual(["crates.io", "Go", "npm", "Packagist", "PyPI", "RubyGems", "bun", "deno", "go", "node", "php", "python"]);
   });
 });
