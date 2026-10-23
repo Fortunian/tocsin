@@ -7,7 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p workers/mcp && tsc --noEmit -p packages/cli",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p workers/mcp && tsc --noEmit -p packages/cli && tsc --noEmit -p action",
     "dev": "wrangler dev",
     "migrate:local": "wrangler d1 migrations apply DB --local",
     "gen:schema": "node scripts/gen-advisory-validator.mjs",
@@ -32,6 +32,10 @@
     "miniflare": "5.20261019.1-beta",
     "typescript": "^7.0.2",
     "vitest": "~4.1.0",
-    "wrangler": "^4.151.3"
+    "wrangler": "^4.151.3",
+    "yaml": "^2.9.1"
+  },
+  "overrides": {
+    "sharp": "^0.35.5"
   }
 }

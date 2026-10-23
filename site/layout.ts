@@ -51,7 +51,8 @@ const COPY_JS = `document.querySelectorAll("button[data-copy]").forEach(function
   });
 });`;
 
-export function page(title: string, body: string, opts: { script?: boolean } = {}): string {
+// `head` is trusted markup the caller built (canonical link, JSON-LD); it goes in as is.
+export function page(title: string, body: string, opts: { script?: boolean; head?: string } = {}): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -59,11 +60,11 @@ export function page(title: string, body: string, opts: { script?: boolean } = {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>${CSS}</style>
-</head>
+${opts.head ? `${opts.head}\n` : ""}</head>
 <body>
 <main>
 ${body}
-<footer><a href="/docs">docs</a> · <a href="/status">status</a> · <a href="/llms.txt">llms.txt</a></footer>
+<footer><a href="/docs">docs</a> · <a href="/status">status</a> · <a href="/llms.txt">llms.txt</a><br>Created with ❤️ by <a href="https://www.linkedin.com/in/liorweinstein">Lior Weinstein</a>.</footer>
 </main>
 ${opts.script ? `<script>${COPY_JS}</script>\n` : ""}</body>
 </html>

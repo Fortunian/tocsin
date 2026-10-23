@@ -1,3 +1,4 @@
+import { LATEST_SQL } from "../../src/site/data";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Advisory } from "../../src/schema/advisory";
@@ -6,7 +7,7 @@ import { docFor, get, idFor, type SeedRow } from "./seed.tcs-3";
 
 // The site pages through the production entry (src/index.ts -> app).
 const ip = "198.51.100.40";
-const KEY = "site:latest:v1";
+const KEY = "site:latest:v2";
 
 function stripTags(html: string): string {
   return html
@@ -123,6 +124,29 @@ describe("landing GET / (production entry)", () => {
     expect(html).toMatch(/<button[^>]*data-copy="npx tocsin check"/);
   });
 
+  it("the Latest read uses idx_advisories_published_at (EXPLAIN QUERY PLAN)", async () => {
+    await seedTop("XPQ", 60);
+    await env.DB.prepare("ANALYZE").run();
+    const { results } = await env.DB.prepare(`EXPLAIN QUERY PLAN ${LATEST_SQL}`).bind(10).all<{ detail: string }>();
+    const plan = results.map((r) => r.detail).join("\n");
+    expect(plan).toContain("idx_advisories_published_at");
+    expect(plan).not.toMatch(/SCAN advisories(?! USING)/);
+  });
+
+  it("orders the Latest table by publish date, newest first, not by feed cursor", async () => {
+    // Cursor order puts the newest-ingested row first; an old advisory re-touched by a source
+    // must not land between fresh ones. Dates are deliberately out of cursor order.
+    const days = [3, 9, 1, 12, 5, 2, 8, 4, 11, 6, 7, 10];
+    await seedTop("SRT", 12, (d, i) => {
+      d.published_at = `2026-10-${String(20 - days[i]).padStart(2, "0")}T00:00:00Z`;
+    });
+    await env.CURSORS.delete(KEY);
+    const html = await landing();
+    const dates = [...html.matchAll(/<time datetime="([^"]+)">/g)].map((m) => m[1]);
+    expect(dates.length).toBe(10);
+    expect(dates).toEqual([...dates].sort().reverse());
+  });
+
   it("links Cromford without rel and has the footer links", async () => {
     const html = await landing();
     expect(html).toContain('<a href="https://cromford.dev">Built with Cromford</a>.');
@@ -138,7 +162,8 @@ describe("landing Latest table", () => {
     const docs = await seedTop("SNA", 12);
     await env.CURSORS.delete(KEY);
     const html = await landing();
-    for (const d of docs.slice(2)) expect(html).toContain(`href="/v1/events/${d.id}"`);
+    // TCS-34: the component link opens the advisory page, not the raw JSON.
+    for (const d of docs.slice(2)) expect(html).toContain(`href="/advisories/${d.id}"`);
     for (const d of docs.slice(0, 2)) expect(html).not.toContain(d.id);
     const head = html.match(/<thead>[\s\S]*?<\/thead>/)?.[0] ?? "";
     expect(stripTags(head).trim().split(" ")).toEqual(["when", "component", "CVE", "severity", "action"]);
@@ -221,7 +246,7 @@ describe("status", () => {
     expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
     const body = (await res.json()) as { sources: Record<string, unknown>[]; cursor: unknown };
     expect(Array.isArray(body.sources)).toBe(true);
-    expect(body.sources.map((s) => s.id).sort()).toEqual(["epss", "kev", "node-runtime", "nvd", "osv", "php-runtime"]);
+    expect(body.sources.map((s) => s.id).sort()).toEqual(["epss", "kev", "node-runtime", "nvd", "osv", "php-runtime", "python-runtime"]);
     for (const s of body.sources) {
       expect(s).toHaveProperty("last_ok_at");
       expect(s).toHaveProperty("last_error");

@@ -79,6 +79,13 @@ The body cap is 2 MB by default (413 over it). Anonymous checks are limited per 
 - ${BASE}/v1/events/{id}
 - ${BASE}/v1/events/cve/{cve}
 
+As an HTML page (send Accept: application/json to the same URL for the JSON):
+
+- ${BASE}/advisories/{id}
+- ${BASE}/cve/{cve}   every advisory that shares the CVE
+
+Every page is listed in ${BASE}/sitemap.xml.
+
 ## MCP
 
 Remote MCP server (streamable HTTP): ${MCP_URL}

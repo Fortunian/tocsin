@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.5.0",
+  "id": "PSF-2026-43",
+  "published": "2026-09-30T16:16:04.923Z",
+  "modified": "2026-10-01T00:44:57.647Z",
+  "aliases": [
+    "CVE-2026-19445"
+  ],
+  "details": "A remote, unauthenticated TLS client can make a server crash or call\nthrough a freed pointer if its sni_callback assigns a different context to\nSSLSocket.context (the documented way to select a certificate per server\nname) and nothing else keeps the original ssl.SSLContext alive. Typical\ncases are servers that create an SSLContext per connection or replace it\nwhile connections are open; servers that wrap their listening socket with\nit are not affected.\n\n\nMitigation: keep a reference to every SSLContext that sets sni_callback for\nthe lifetime of the server. TLS clients are not affected.",
+  "affected": [
+    {
+      "ranges": [
+        {
+          "type": "GIT",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "34a53dce8174da2fceb12fe084a4def02a10053d"
+            },
+            {
+              "fixed": "46133cd57d309652139ada74014aca7665ac552b"
+            },
+            {
+              "fixed": "63fab143d94cafae71850831acfb52041ba44af7"
+            },
+            {
+              "fixed": "cd7e51e7d4563866fbaa1e2521ae69b45daf3698"
+            },
+            {
+              "fixed": "d8717ed01717a9641686e6e6f83f0ab8af235e2c"
+            },
+            {
+              "fixed": "b12968cefe69ca1dcb8606c832ff73ee7dbf4ba8"
+            },
+            {
+              "fixed": "ec44b5a3258cbda947d5e07242ee562ed05ef24b"
+            }
+          ],
+          "repo": "https://github.com/python/cpython"
+        }
+      ]
+    }
+  ],
+  "references": [
+    {
+      "type": "WEB",
+      "url": "https://github.com/python/cpython/pull/158504"
+    },
+    {
+      "type": "ADVISORY",
+      "url": "https://mail.python.org/archives/list/security-announce@python.org/thread/QMQIUQB6WGGC3MI7I3WKQXOYOBDSPPS3/"
+    },
+    {
+      "type": "REPORT",
+      "url": "https://github.com/python/cpython/issues/156293"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/34a53dce8174da2fceb12fe084a4def02a10053d"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/46133cd57d309652139ada74014aca7665ac552b"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/63fab143d94cafae71850831acfb52041ba44af7"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/cd7e51e7d4563866fbaa1e2521ae69b45daf3698"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/d8717ed01717a9641686e6e6f83f0ab8af235e2c"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/b12968cefe69ca1dcb8606c832ff73ee7dbf4ba8"
+    },
+    {
+      "type": "FIX",
+      "url": "https://github.com/python/cpython/commit/ec44b5a3258cbda947d5e07242ee562ed05ef24b"
+    }
+  ],
+  "database_specific": {
+    "cwe_ids": []
+  }
+}

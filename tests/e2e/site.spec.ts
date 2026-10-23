@@ -37,3 +37,14 @@ for (const path of ["/status", "/docs"]) {
     await noHorizontalScroll(page);
   });
 }
+
+test("the Latest table's first component link opens the advisory page", async ({ page }) => {
+  await page.goto("/");
+  const link = page.locator("tbody tr").first().locator("td").nth(1).locator("a");
+  test.skip((await link.count()) === 0, "the local D1 has no advisories");
+  await link.click();
+  await expect(page).toHaveURL(/\/advisories\/tcs_[0-9A-Z]{26}$/);
+  await expect(page.locator("h1")).toBeVisible();
+  await expect(page.getByText("Action:")).toBeVisible();
+  await noHorizontalScroll(page);
+});

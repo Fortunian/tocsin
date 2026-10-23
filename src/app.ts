@@ -2,11 +2,13 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./env";
 import { jsonUtf8 } from "./lib/http";
+import advisory from "./routes/advisory";
 import check from "./routes/check";
 import discovery from "./routes/discovery";
 import events from "./routes/events";
 import health from "./routes/health";
 import site from "./routes/site";
+import sitemap from "./routes/sitemap";
 import status from "./routes/status";
 import { soRedirect } from "./site/redirect";
 
@@ -26,6 +28,8 @@ app.route("/v1/check", check);
 app.route("/v1/status", status);
 app.route("/", discovery);
 app.route("/", site);
+app.route("/", advisory);
+app.route("/", sitemap);
 
 app.notFound((c) => jsonUtf8(c, { error: "not found" }, 404));
 app.onError((err, c) => {

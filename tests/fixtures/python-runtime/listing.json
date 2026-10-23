@@ -1,0 +1,82 @@
+[
+  {
+    "name": "PSF-2025-16.json",
+    "path": "advisories/python/PSF-2025-16.json",
+    "sha": "6e814d8abe4a6e15234133b451d54d2e079db3ea",
+    "size": 3653,
+    "url": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2025-16.json?ref=main",
+    "html_url": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2025-16.json",
+    "git_url": "https://api.github.com/repos/psf/advisory-database/git/blobs/6e814d8abe4a6e15234133b451d54d2e079db3ea",
+    "download_url": "https://raw.githubusercontent.com/psf/advisory-database/main/advisories/python/PSF-2025-16.json",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2025-16.json?ref=main",
+      "git": "https://api.github.com/repos/psf/advisory-database/git/blobs/6e814d8abe4a6e15234133b451d54d2e079db3ea",
+      "html": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2025-16.json"
+    }
+  },
+  {
+    "name": "PSF-2026-41.json",
+    "path": "advisories/python/PSF-2026-41.json",
+    "sha": "17c41919377922d9db7fda1cc87162084cb4492c",
+    "size": 3044,
+    "url": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2026-41.json?ref=main",
+    "html_url": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-41.json",
+    "git_url": "https://api.github.com/repos/psf/advisory-database/git/blobs/17c41919377922d9db7fda1cc87162084cb4492c",
+    "download_url": "https://raw.githubusercontent.com/psf/advisory-database/main/advisories/python/PSF-2026-41.json",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2026-41.json?ref=main",
+      "git": "https://api.github.com/repos/psf/advisory-database/git/blobs/17c41919377922d9db7fda1cc87162084cb4492c",
+      "html": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-41.json"
+    }
+  },
+  {
+    "name": "PSF-2026-42.json",
+    "path": "advisories/python/PSF-2026-42.json",
+    "sha": "38db11228523b2ee01b0fb9e92961ceedc607a98",
+    "size": 2351,
+    "url": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2026-42.json?ref=main",
+    "html_url": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-42.json",
+    "git_url": "https://api.github.com/repos/psf/advisory-database/git/blobs/38db11228523b2ee01b0fb9e92961ceedc607a98",
+    "download_url": "https://raw.githubusercontent.com/psf/advisory-database/main/advisories/python/PSF-2026-42.json",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2026-42.json?ref=main",
+      "git": "https://api.github.com/repos/psf/advisory-database/git/blobs/38db11228523b2ee01b0fb9e92961ceedc607a98",
+      "html": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-42.json"
+    }
+  },
+  {
+    "name": "PSF-2026-43.json",
+    "path": "advisories/python/PSF-2026-43.json",
+    "sha": "15d9d4c6b71e4851f7d5300476f5b7af9aa77026",
+    "size": 3061,
+    "url": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2026-43.json?ref=main",
+    "html_url": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-43.json",
+    "git_url": "https://api.github.com/repos/psf/advisory-database/git/blobs/15d9d4c6b71e4851f7d5300476f5b7af9aa77026",
+    "download_url": "https://raw.githubusercontent.com/psf/advisory-database/main/advisories/python/PSF-2026-43.json",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2026-43.json?ref=main",
+      "git": "https://api.github.com/repos/psf/advisory-database/git/blobs/15d9d4c6b71e4851f7d5300476f5b7af9aa77026",
+      "html": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-43.json"
+    }
+  },
+  {
+    "name": "PSF-2026-44.json",
+    "path": "advisories/python/PSF-2026-44.json",
+    "sha": "41bc348bdd9ed2f688e7c3801e3d2e7b9f32affa",
+    "size": 3714,
+    "url": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2026-44.json?ref=main",
+    "html_url": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-44.json",
+    "git_url": "https://api.github.com/repos/psf/advisory-database/git/blobs/41bc348bdd9ed2f688e7c3801e3d2e7b9f32affa",
+    "download_url": "https://raw.githubusercontent.com/psf/advisory-database/main/advisories/python/PSF-2026-44.json",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/psf/advisory-database/contents/advisories/python/PSF-2026-44.json?ref=main",
+      "git": "https://api.github.com/repos/psf/advisory-database/git/blobs/41bc348bdd9ed2f688e7c3801e3d2e7b9f32affa",
+      "html": "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-44.json"
+    }
+  }
+]

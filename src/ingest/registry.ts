@@ -7,6 +7,7 @@ import { nodeRuntime } from "./node-runtime";
 import { nvd } from "./nvd";
 import { osv } from "./osv";
 import { phpRuntime } from "./php-runtime";
+import { pythonRuntime } from "./python-runtime";
 import type { Ingester, RunResult } from "./types";
 
 export const defaultRegistry: Record<string, Ingester> = {
@@ -16,12 +17,14 @@ export const defaultRegistry: Record<string, Ingester> = {
   epss,
   "node-runtime": nodeRuntime,
   "php-runtime": phpRuntime,
+  "python-runtime": pythonRuntime,
 };
 
 // sources is a fixed set of rows (docs/RETENTION.md); this scan is bounded.
 export const ENABLED_SOURCES_SQL = "SELECT id, kind, config_json FROM sources WHERE enabled = 1 ORDER BY id";
-const MARK_OK = "UPDATE sources SET last_run_at = ?, last_ok_at = ?, last_error = NULL WHERE id = ?";
-const MARK_FAILED = "UPDATE sources SET last_run_at = ?, last_error = ? WHERE id = ?";
+// A NULL warning keeps the stored last_warning (COALESCE).
+const MARK_OK = "UPDATE sources SET last_run_at = ?, last_ok_at = ?, last_error = NULL, last_warning = COALESCE(?, last_warning) WHERE id = ?";
+const MARK_FAILED = "UPDATE sources SET last_run_at = ?, last_error = ?, last_warning = COALESCE(?, last_warning) WHERE id = ?";
 const MAX_ERROR_CHARS = 1000;
 
 export type SourceOutcome =
@@ -31,6 +34,11 @@ export type SourceOutcome =
 
 function errorText(err: unknown): string {
   return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+}
+
+function warningText(result: RunResult | undefined): string | null {
+  const w = result?.warnings;
+  return w && w.length > 0 ? w.join("; ").slice(0, MAX_ERROR_CHARS) : null;
 }
 
 function parseConfig(json: string): Record<string, unknown> {
@@ -71,9 +79,9 @@ export async function runIngesters(env: Env, registry: Record<string, Ingester>,
     try {
       const at = now().toISOString();
       if (outcome.status === "ok") {
-        await env.DB.prepare(MARK_OK).bind(at, at, row.id).run();
+        await env.DB.prepare(MARK_OK).bind(at, at, warningText(outcome.result), row.id).run();
       } else if (outcome.status === "failed") {
-        await env.DB.prepare(MARK_FAILED).bind(at, outcome.error.slice(0, MAX_ERROR_CHARS), row.id).run();
+        await env.DB.prepare(MARK_FAILED).bind(at, outcome.error.slice(0, MAX_ERROR_CHARS), warningText(outcome.result), row.id).run();
       }
     } catch (err) {
       // The status write failing for one source must not stop the next one.

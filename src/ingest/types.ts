@@ -12,6 +12,9 @@ export interface RunResult {
   // the count where the ingester measured it; `incomplete` says more remains.
   deferred?: number;
   incomplete?: boolean;
+  // Notes an operator must see that do not fail the run (sources.last_warning).
+  // Absent or empty keeps the stored last_warning.
+  warnings?: string[];
 }
 
 // The `sources` row the ingester runs for, with `config_json` parsed.
