@@ -26,14 +26,16 @@ export const POST_SQL = {
   // idx_node_runtime_posts_state_next.
   due: `SELECT ${COLS} FROM node_runtime_posts WHERE state = ? AND next_check_at <= ? ORDER BY next_check_at LIMIT ?`,
   // idx_node_runtime_posts_state_next (state IN): a recent post (published >= ?)
-  // the parser did not read in full holds coverage_since back: a failed row, or
-  // an empty row with a note (an attempt cap). An empty row with no note (no
-  // CVE headings in an old post) does not.
-  unread: "SELECT 1 AS r FROM node_runtime_posts WHERE state IN ('failed', 'empty') AND published >= ? AND (state = 'failed' OR last_error IS NOT NULL) LIMIT 1",
+  // the parser did not read in full holds coverage_since back: a failed row, an
+  // empty row with a note (an attempt cap), or an ok row with CVE headings not
+  // emitted. An empty row with no note (no CVE headings in an old post) does not.
+  unread:
+    "SELECT 1 AS r FROM node_runtime_posts WHERE state IN ('failed', 'empty', 'ok') AND published >= ? " +
+    "AND (state = 'failed' OR (state = 'empty' AND last_error IS NOT NULL) OR (state = 'ok' AND unemitted > 0)) LIMIT 1",
   write:
-    "INSERT INTO node_runtime_posts (url, published, state, attempts, last_error, parser_rev, next_check_at, updated_at, title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+    "INSERT INTO node_runtime_posts (url, published, state, attempts, last_error, parser_rev, next_check_at, updated_at, title, unemitted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
     "ON CONFLICT(url) DO UPDATE SET published = excluded.published, state = excluded.state, attempts = excluded.attempts, last_error = excluded.last_error, " +
-    "parser_rev = excluded.parser_rev, next_check_at = excluded.next_check_at, updated_at = excluded.updated_at, title = COALESCE(excluded.title, title)",
+    "parser_rev = excluded.parser_rev, next_check_at = excluded.next_check_at, updated_at = excluded.updated_at, title = COALESCE(excluded.title, title), unemitted = excluded.unemitted",
 } as const;
 
 export interface PostWrite {
@@ -44,6 +46,8 @@ export interface PostWrite {
   parser_rev: string;
   // Empty or absent keeps the stored title.
   title?: string;
+  // CVE headings of the read that gave no advisory. Absent is 0: every read sets it.
+  unemitted?: number;
   last_error?: string;
   next_check_at?: string;
 }
@@ -83,6 +87,7 @@ export async function writePost(db: D1Database, w: PostWrite, now: Date): Promis
       w.next_check_at ?? null,
       now.toISOString(),
       w.title === undefined || w.title === "" ? null : w.title,
+      w.unemitted ?? 0,
     )
     .run();
 }

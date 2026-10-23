@@ -9,6 +9,7 @@ import type { IngestContext } from "../../src/ingest/types";
 import migration0020 from "../../migrations/0020_node_runtime_posts.sql?raw";
 import distIndex from "../fixtures/node-eol/index.json?raw";
 import noUpdatesHtml from "../fixtures/node-runtime/2019-09-12-no-updates.html?raw";
+import juneHtml from "../fixtures/node-runtime/2026-06-18.html?raw";
 import julyHtml from "../fixtures/node-runtime/2026-07-29.html?raw";
 import preHtml from "../fixtures/node-runtime/2026-10-14-pre.html?raw";
 import octHtml from "../fixtures/node-runtime/2026-10-21.html?raw";
@@ -30,6 +31,7 @@ const BASE = "https://nodejs.org/en/blog/vulnerability/";
 const NO_UPDATES = `${BASE}september-2019-openssl-no-updates`;
 const OCT = `${BASE}october-2026-security-releases`;
 const JULY = `${BASE}july-2026-security-releases`;
+const JUNE = `${BASE}june-2026-security-releases`;
 const NOW = Date.parse("2026-10-23T01:00:00Z");
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -125,7 +127,7 @@ beforeEach(async () => {
 describe("migration 0020 (migration)", () => {
   it("migration: the table, its index and the 4 knobs exist; an edited knob is kept", async () => {
     const cols = (await env.DB.prepare("PRAGMA table_info(node_runtime_posts)").all<{ name: string; pk: number }>()).results;
-    expect(cols.map((c) => c.name)).toEqual(["url", "published", "state", "attempts", "last_error", "parser_rev", "next_check_at", "updated_at", "title"]);
+    expect(cols.map((c) => c.name)).toEqual(["url", "published", "state", "attempts", "last_error", "parser_rev", "next_check_at", "updated_at", "title", "unemitted"]);
     expect(cols.find((c) => c.name === "url")?.pk).toBe(1);
     const idx = (await env.DB.prepare("PRAGMA index_info(idx_node_runtime_posts_state_next)").all<{ name: string }>()).results;
     expect(idx.map((c) => c.name)).toEqual(["state", "next_check_at"]);
@@ -435,6 +437,41 @@ describe("coverage (coverage)", () => {
     await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW));
     expect(await cov()).toBeNull();
     await env.DB.prepare("UPDATE node_runtime_posts SET last_error = NULL WHERE url = ?").bind(JULY).run();
+    await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW));
+    expect(await cov()).not.toBeNull();
+  });
+
+  // TCS-69 round 4: an ok read that left CVE headings not emitted is not a
+  // complete read. The RECORDED June 2026 post (README.tcs-69.md) has 12 rated
+  // CVE headings and no "affects" line the parser reads, so 0 advisories.
+  it("coverage: the recorded June 2026 post is ok with unemitted 12 and holds coverage_since back; a re-read of a complete page clears it", async () => {
+    const unemitted = async () => (await env.DB.prepare("SELECT unemitted FROM node_runtime_posts WHERE url = ?").bind(JUNE).first<{ unemitted: number }>())?.unemitted;
+    await readAllBut(JUNE);
+    const f1 = createRuntimeFake(routes({ [JUNE]: juneHtml }));
+    const r1 = await nodeRuntime.run(ctxAt(f1.fetch, NOW));
+    expect(r1.errors).toEqual([]);
+    expect(f1.count(JUNE)).toBe(1);
+    expect(await nodePostState(JUNE)).toBe("ok");
+    expect(await unemitted()).toBe(12);
+    expect(await cov()).toBeNull();
+    // A later run with no re-read of June keeps coverage back.
+    await nodeRuntime.run(ctxAt(createRuntimeFake(routes({ [JUNE]: juneHtml })).fetch, NOW + 61 * MIN));
+    expect(await cov()).toBeNull();
+
+    // A parser revision bump (ticket #76) re-reads the row: here its stored
+    // parser_rev is set back in-test, and June answers a SYNTHETIC complete page.
+    await env.DB.prepare("UPDATE node_runtime_posts SET parser_rev = '2' WHERE url = ?").bind(JUNE).run();
+    const f2 = createRuntimeFake(routes({ [JUNE]: synthetic(998) }));
+    await nodeRuntime.run(ctxAt(f2.fetch, NOW + 122 * MIN));
+    expect(f2.count(JUNE)).toBe(1);
+    expect(await nodePostState(JUNE)).toBe("ok");
+    expect(await unemitted()).toBe(0);
+    expect(await cov()).not.toBeNull();
+  });
+
+  it("coverage: an old ok row with unemitted > 0 does not hold coverage_since back", async () => {
+    await readAllBut();
+    await env.DB.prepare("UPDATE node_runtime_posts SET unemitted = 3 WHERE url = ?").bind(POSTS[3].link).run();
     await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW));
     expect(await cov()).not.toBeNull();
   });

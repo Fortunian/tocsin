@@ -364,7 +364,7 @@ async function storeDocs(w: Walk, d: DuePost, norm: NormalizedPost): Promise<voi
   }
   const label = postLabel(d.post.link);
   w.summary.push(notEmitted > 0 ? `${label}: ${ok} ok, ${notEmitted} not emitted` : `${label}: ${ok} ok`);
-  await write(w, d.post, { state: "ok", attempts: 0 });
+  await write(w, d.post, { state: "ok", attempts: 0, unemitted: notEmitted });
 }
 
 // One post: always records an outcome, never stops the walk.
@@ -415,8 +415,9 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   if (w.warnings.length > 0) result.warnings = w.warnings;
   // The history is read in full when every feed post of the window has a row,
   // the window reaches the oldest release post of the feed, and no post
-  // younger than retry_incomplete_days is unread (failed, or empty at an
-  // attempt cap): a release line the parser could not read is never "complete".
+  // younger than retry_incomplete_days is unread (failed, empty at an attempt
+  // cap, or ok with CVE headings not emitted): a CVE the parser could not read
+  // is never "complete". A parser revision bump re-reads those rows.
   const oldest = releases.reduce<string | null>((m, p) => (m === null || p.published < m ? p.published : m), null);
   const allRead = feed.every((p) => ledger.known.has(p.link) || w.written.has(p.link));
   if (ctx.source.coverage_since || !allRead || oldest === null || !inWindow(oldest)) return result;

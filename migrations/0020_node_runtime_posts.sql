@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS node_runtime_posts (
   next_check_at TEXT,
   updated_at TEXT NOT NULL,
   -- The feed title of the post, so a due row whose post left the feed keeps it.
-  title TEXT
+  title TEXT,
+  -- CVE headings of the last read that gave no advisory. Every read sets it. A
+  -- recent ok row with unemitted > 0 holds coverage_since back.
+  unemitted INTEGER NOT NULL DEFAULT 0
 );
 
 -- The due-work reads (WHERE state = ? AND next_check_at <= ?) and the grouped status count.

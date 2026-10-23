@@ -55,3 +55,23 @@ Sha256 of the files in this directory:
 - `2019-12-18-pre.html`: 19808347f9617900211d4670d1bef29e839e1b0c0652cd9be48911140c4c1e7b
 - `2026-01-13-incomplete.html`: 84a8fae3c6a7b30bc9bcb5d55452166968893e3cbf6c7ffc58112cb8eeb18ac0
 - `2026-10-21.tcs-69.html`: ed6b95c72989b3fd0dad631bc4aaa88736e8084f02bcc230780ddb43fb5a1723
+
+## TCS-69 round 4 fixture
+
+Recorded from nodejs.org on 2026-10-23T13:24:17Z (UTC), HTTP 200, by the
+round-4 build session. No byte in this file was written by hand. The file is
+the byte slice of the one `<main …>…</main>` element of the recording (rule of
+`README.md`).
+
+| File | Source URL | Full-file sha256 of the recording | Slice |
+|---|---|---|---|
+| `2026-06-18.html` | https://nodejs.org/en/blog/vulnerability/june-2026-security-releases | 4a9c6443f5247638c2da0f64fadf2b8b17aadfc0abb065dcc83baee1ca44da88 | 63,333 of 302,449 bytes |
+
+The feed item is "Thursday, June 18, 2026 Security Releases" (pubDate Thu, 18
+Jun 2026 04:00:00 GMT). The parser reads 12 rated CVE headings, and none of
+them has an "affects" line it reads, so the post gives 0 advisories and 12 not
+emitted. Its "Downloads and release details" names 22.23.0, 24.17.0 and 26.3.1.
+
+Sha256 of the file in this directory:
+
+- `2026-06-18.html`: 8d686b519b22f677addae74e311df2e122cb6177ab13ecd82a3b0ea782fb5b92
