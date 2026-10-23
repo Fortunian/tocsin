@@ -8,7 +8,7 @@ import { get } from "./seed.tcs-3";
 // TCS-35: the freshness line under Latest and the status badge, through the
 // production entry (src/index.ts -> app).
 const ip = "198.51.100.35";
-const SOURCES = ["bun-runtime", "deno-runtime", "epss", "kev", "node-runtime", "nvd", "osv", "php-runtime", "python-runtime"];
+const SOURCES = ["bun-runtime", "deno-runtime", "epss", "kev", "node-eol", "node-runtime", "nvd", "osv", "php-runtime", "python-runtime"];
 
 function isoAgo(ms: number): string {
   return new Date(Date.now() - ms).toISOString();
@@ -42,22 +42,22 @@ afterEach(async () => {
 });
 
 describe("freshness line on GET /", () => {
-  it("reads 9 of 9 sources ok with a server-rendered relative time", async () => {
+  it("reads 10 of 10 sources ok with a server-rendered relative time", async () => {
     const at = await allOk(5 * 60_000 + 2_000);
     const line = await freshLine();
-    expect(line).toContain("9 of 9 sources ok");
+    expect(line).toContain("10 of 10 sources ok");
     expect(line).toContain(`<time datetime="${at}" title="${at}">5 minutes ago</time>`);
     expect(line).toMatch(/^<p class="fresh">Updated <time/);
     expect(line).not.toContain('href="/status"');
     expect(line).not.toContain("style=");
   });
 
-  it("reads 8 of 9 with one failed source, turns amber and links to /status", async () => {
+  it("reads 9 of 10 with one failed source, turns amber and links to /status", async () => {
     await allOk(60_000);
     await failOne("osv");
     const line = await freshLine();
-    expect(line).toContain("8 of 9 sources ok");
-    expect(line).toMatch(/<a href="\/status"[^>]*>8 of 9 sources ok<\/a>/);
+    expect(line).toContain("9 of 10 sources ok");
+    expect(line).toMatch(/<a href="\/status"[^>]*>9 of 10 sources ok<\/a>/);
     expect(line).toMatch(/^<p class="fresh" style="color:#f5a524">/);
   });
 
@@ -65,7 +65,7 @@ describe("freshness line on GET /", () => {
     await allOk(60_000);
     await env.DB.prepare("UPDATE sources SET last_ok_at = NULL WHERE id = 'kev'").run();
     await env.CURSORS.delete(LATEST_KEY);
-    expect(await freshLine()).toContain("8 of 9 sources ok");
+    expect(await freshLine()).toContain("9 of 10 sources ok");
   });
 
   it("sits under the Latest heading, before the table, and adds no script", async () => {
@@ -82,11 +82,11 @@ describe("freshness line on GET /", () => {
 
   it("serves the line from the KV cache until the key goes", async () => {
     await allOk(60_000);
-    expect(await freshLine()).toContain("9 of 9 sources ok");
+    expect(await freshLine()).toContain("10 of 10 sources ok");
     await env.DB.prepare("UPDATE sources SET last_error = 'fixture: late' WHERE id = 'nvd'").run();
-    expect(await freshLine()).toContain("9 of 9 sources ok");
+    expect(await freshLine()).toContain("10 of 10 sources ok");
     await env.CURSORS.delete(LATEST_KEY);
-    expect(await freshLine()).toContain("8 of 9 sources ok");
+    expect(await freshLine()).toContain("9 of 10 sources ok");
   });
 });
 
@@ -114,8 +114,8 @@ describe("one KV put for the Latest rows and the freshness line", () => {
     expect(c.puts[0].key).toBe(LATEST_KEY);
     const cached = JSON.parse(c.puts[0].value) as { rows: unknown; freshness: { ok: number; total: number; updated: string } };
     expect(Array.isArray(cached.rows)).toBe(true);
-    expect(cached.freshness.ok).toBe(9);
-    expect(cached.freshness.total).toBe(9);
+    expect(cached.freshness.ok).toBe(10);
+    expect(cached.freshness.total).toBe(10);
     expect(home.freshness).toEqual(cached.freshness);
 
     const again = await loadHome(c.env);
@@ -179,7 +179,7 @@ async function breakStatus(fn: () => Promise<void>): Promise<void> {
 }
 
 describe("GET /badge/status.svg", () => {
-  it("returns an SVG badge with 9/9 sources ok and max-age=300", async () => {
+  it("returns an SVG badge with 10/10 sources ok and max-age=300", async () => {
     await allOk(60_000);
     const res = await get("/badge/status.svg", ip);
     expect(res.status).toBe(200);
@@ -187,9 +187,9 @@ describe("GET /badge/status.svg", () => {
     expect(res.headers.get("cache-control")).toBe("public, max-age=300");
     const svg = await res.text();
     expect(svg).toMatch(/^<svg xmlns="http:\/\/www.w3.org\/2000\/svg"/);
-    expect(svg).toContain("<title>tocsin · 9/9 sources ok</title>");
+    expect(svg).toContain("<title>tocsin · 10/10 sources ok</title>");
     expect(svg).toContain(">tocsin</text>");
-    expect(svg).toContain(">9/9 sources ok</text>");
+    expect(svg).toContain(">10/10 sources ok</text>");
     expect(svg).not.toContain("degraded");
     expect(svg).not.toMatch(/<script/i);
   });
@@ -199,8 +199,8 @@ describe("GET /badge/status.svg", () => {
     await failOne("php-runtime");
     const svg = await (await get("/badge/status.svg", ip)).text();
     expect(svg).toContain(">degraded</text>");
-    expect(svg).toContain("<title>tocsin · degraded (8/9 sources ok)</title>");
-    expect(svg).not.toContain(">9/9 sources ok</text>");
+    expect(svg).toContain("<title>tocsin · degraded (9/10 sources ok)</title>");
+    expect(svg).not.toContain(">10/10 sources ok</text>");
   });
 
   it("draws degraded with max-age=60 when the status read throws", async () => {

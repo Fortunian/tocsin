@@ -2,7 +2,8 @@
 // each "Security Release" post newer than the KV cursor, and emits one
 // advisory per CVE heading. The post is the source of truth for fixed
 // versions; the dist index confirms each fixed version exists.
-import { fetchFeed, fetchPost, NodeLinkError } from "./node-runtime-client";
+import { markCoverage } from "./coverage";
+import { fetchFeed, fetchPost, NodeHttpError, NodeLinkError } from "./node-runtime-client";
 import { loadNodeDistIndex, type DistIndex } from "./node-runtime-dist";
 import { compareVersions } from "./osv";
 import { htmlSections, htmlText, isoUtc, oneLine, readRuntimeConfig, readSince, xmlBlocks, xmlText } from "./runtime-text";
@@ -13,9 +14,10 @@ import type { SeverityLabel } from "../schema/advisory";
 export const NODE_CURSOR_KEY = "cursor:node-runtime";
 // The parser revision the stored cursor was read with. A run that finds another
 // value reads the backfill window again once, so posts the old parser could not
-// read are picked up (TCS-30: the July 2026 wording). Parser identity, not a limit.
+// read are picked up (TCS-30: the July 2026 wording; TCS-32: the whole feed
+// history once, with backfill_days 4000). Parser identity, not a limit.
 export const NODE_PARSER_KEY = "cursor:node-runtime:parser";
-export const NODE_PARSER_REV = "2";
+export const NODE_PARSER_REV = "3";
 const SOURCE = "node-runtime";
 
 // Code fallbacks for sources.config_json of row "node-runtime" (repo iron rule 5).
@@ -27,6 +29,10 @@ export const NODE_DEFAULTS = {
   max_posts: 5,
   // Freshness window of the KV dist index cache, in seconds.
   dist_cache_seconds: 3600,
+  // An incomplete post older than this is reported and passed, not read
+  // again: an old post the parser cannot complete must not stop the history read.
+  // Seeded in the node-runtime row by migrations/0015_node_history.sql.
+  retry_incomplete_days: 365,
 };
 
 export interface FeedItem {
@@ -205,11 +211,18 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   const summary: string[] = [];
 
   // A post dated exactly at the cursor is read again: Node edits a release post in place.
-  const posts = parseNodeFeed(await fetchFeed(ctx.fetch, cfg.feed_url))
-    .filter((p) => p.title.toLowerCase().includes(match) && new Date(p.published).getTime() >= sinceMs)
-    .sort((a, b) => (a.published < b.published ? -1 : a.published > b.published ? 1 : a.link < b.link ? -1 : a.link > b.link ? 1 : 0))
-    .slice(0, cfg.max_posts);
+  const releases = parseNodeFeed(await fetchFeed(ctx.fetch, cfg.feed_url)).filter((p) => p.title.toLowerCase().includes(match));
+  const due = releases
+    .filter((p) => new Date(p.published).getTime() >= sinceMs)
+    .sort((a, b) => (a.published < b.published ? -1 : a.published > b.published ? 1 : a.link < b.link ? -1 : a.link > b.link ? 1 : 0));
+  const posts = due.slice(0, cfg.max_posts);
   if (posts.length === 0) return result;
+  // The history is read in full when this run reads every due post to the
+  // newest one, and the backfill window reaches the oldest release post of
+  // the feed (the parser revision moved the cursor to the window start once).
+  const oldest = releases.reduce<string | null>((m, p) => (m === null || p.published < m ? p.published : m), null);
+  const windowStart = now.getTime() - cfg.backfill_days * 86_400_000;
+  let reachedNewest = due.length <= cfg.max_posts;
 
   // The dist index is read on the first post that needs it, from the KV cache when fresh.
   let dist: DistIndex | undefined;
@@ -217,6 +230,7 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   const loadDist = (force: boolean) => loadNodeDistIndex(ctx.fetch, kv, cfg.dist_index_url, cfg.dist_cache_seconds, now, force);
   // Post links are read only on the origin of the configured feed.
   const allowedOrigin = new URL(cfg.feed_url).origin;
+  const isOld = (post: FeedItem) => now.getTime() - new Date(post.published).getTime() > cfg.retry_incomplete_days * 86_400_000;
   for (const post of posts) {
     const label = postLabel(post.link);
     // HTTP and D1 errors throw out of the run: this post's cursor is not written.
@@ -224,7 +238,10 @@ async function run(ctx: IngestContext): Promise<RunResult> {
     try {
       html = await fetchPost(ctx.fetch, post.link, allowedOrigin);
     } catch (err) {
-      if (!(err instanceof NodeLinkError)) throw err;
+      // A post older than retry_incomplete_days that is gone (404, 410) is a
+      // permanent data problem too: it must not stop the history read.
+      const gone = err instanceof NodeHttpError && (err.status === 404 || err.status === 410) && isOld(post);
+      if (!(err instanceof NodeLinkError) && !gone) throw err;
       // A permanent data problem in the feed: report it and move the cursor past the post.
       result.errors.push(err.message);
       summary.push(`${label}: not read`);
@@ -235,6 +252,7 @@ async function run(ctx: IngestContext): Promise<RunResult> {
     // run, so the post is read again until it carries its CVE headings.
     if (isNodePreAnnouncement(html)) {
       summary.push(`${label}: pre-announcement, read again next run`);
+      reachedNewest = false;
       break;
     }
     dist ??= await loadDist(false);
@@ -245,10 +263,19 @@ async function run(ctx: IngestContext): Promise<RunResult> {
       dist = await loadDist(true);
       norm = normalizeNodePost(post, html, dist.versions);
     }
+    // An incomplete post stops the run; the cursor stays at the last complete
+    // post. One older than retry_incomplete_days is reported and passed.
+    if (norm.incomplete && isOld(post)) {
+      const note = `post incomplete, older than ${cfg.retry_incomplete_days} days, not read again`;
+      result.errors.push(...norm.errors.map((e) => e.replace("post incomplete, read again next run", note)));
+      summary.push(`${label}: incomplete, not read again`);
+      await kv.put(NODE_CURSOR_KEY, post.published);
+      continue;
+    }
     result.errors.push(...norm.errors);
-    // An incomplete post stops the run; the cursor stays at the last complete post.
     if (norm.incomplete) {
       summary.push(`${label}: incomplete, read again next run`);
+      reachedNewest = false;
       break;
     }
     let ok = 0;
@@ -270,6 +297,9 @@ async function run(ctx: IngestContext): Promise<RunResult> {
     await kv.put(NODE_CURSOR_KEY, post.published);
   }
   if (summary.length > 0) result.summary = summary.join("; ");
+  if (!ctx.source.coverage_since && reachedNewest && oldest !== null && new Date(oldest).getTime() >= windowStart) {
+    await markCoverage(ctx.env.DB, SOURCE, oldest);
+  }
   return result;
 }
 

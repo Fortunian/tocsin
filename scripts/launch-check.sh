@@ -9,9 +9,16 @@
 #                than MAX_AGE_HOURS (a source with no first run yet prints a WARN line)
 #   cli-connect  `$TOCSIN_CLI connect --dry-run` prints the MCP block for MCP_URL
 #
+# With COVERAGE_CHECK=1 (set after the OSV backfill, docs/BACKFILL.md) it runs three more:
+#   cov-lodash   POST /v1/check npm lodash 4.17.15 lists CVE-2020-8203 and CVE-2021-23337
+#   cov-django   POST /v1/check PyPI django 3.2.0 lists at least COV_DJANGO_MIN affected items
+#   cov-count    for each OSV ecosystem in /v1/status coverage, the backfill records are at
+#                least COV_MIN_PCT percent of the non-MAL- ids in OSV's <eco>/modified_id.csv
+#
 # It prints `ok <check>` or `FAIL <check>: <reason>` per check (plus `WARN <check>: ...`
 # lines that do not fail a check), then
-# `launch-check: <n> of 5 passed`. Exit 0 only when all five pass, else exit 1.
+# `launch-check: <n> of <total> passed` (total 5, or 8 with COVERAGE_CHECK=1).
+# Exit 0 only when all of them pass, else exit 1.
 # It only reads: GET requests, and a dry run of the CLI with a throwaway HOME.
 #
 # Env (all optional):
@@ -19,6 +26,10 @@
 #   TOCSIN_CLI     the CLI command               default npx --yes tocsin@latest
 #   MCP_URL        the MCP URL the block names   default https://mcp.tocsin.sh/mcp
 #   MAX_AGE_HOURS  max age of last_ok_at         default 24
+#   COVERAGE_CHECK 1 runs the cov- checks        default unset (off)
+#   COV_MIN_PCT    cov-count threshold, percent  default 90
+#   COV_DJANGO_MIN cov-django minimum count      default 10
+#   OSV_BASE       the OSV export bucket         default https://osv-vulnerabilities.storage.googleapis.com
 #
 #   bash scripts/launch-check.sh
 #   BASE_URL=http://localhost:8787 TOCSIN_CLI="node packages/cli/bin/tocsin.js" bash scripts/launch-check.sh
@@ -29,6 +40,13 @@ BASE_URL="${BASE_URL%/}"
 TOCSIN_CLI="${TOCSIN_CLI:-npx --yes tocsin@latest}"
 MCP_URL="${MCP_URL:-https://mcp.tocsin.sh/mcp}"
 MAX_AGE_HOURS="${MAX_AGE_HOURS:-24}"
+COVERAGE_CHECK="${COVERAGE_CHECK:-}"
+COV_MIN_PCT="${COV_MIN_PCT:-90}"
+COV_DJANGO_MIN="${COV_DJANGO_MIN:-10}"
+OSV_BASE="${OSV_BASE:-https://osv-vulnerabilities.storage.googleapis.com}"
+OSV_BASE="${OSV_BASE%/}"
+TOTAL=5
+if [[ "$COVERAGE_CHECK" == "1" ]]; then TOTAL=8; fi
 
 for tool in curl jq; do
   if ! command -v "$tool" >/dev/null 2>&1; then
@@ -36,10 +54,12 @@ for tool in curl jq; do
     exit 1
   fi
 done
-if ! [[ "$MAX_AGE_HOURS" =~ ^[0-9]+$ ]]; then
-  echo "FAIL preflight: MAX_AGE_HOURS must be a whole number, got '$MAX_AGE_HOURS'"
-  exit 1
-fi
+for knob in MAX_AGE_HOURS COV_MIN_PCT COV_DJANGO_MIN; do
+  if ! [[ "${!knob}" =~ ^[0-9]+$ ]]; then
+    echo "FAIL preflight: $knob must be a whole number, got '${!knob}'"
+    exit 1
+  fi
+done
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -148,5 +168,65 @@ else
   fail cli-connect "'$TOCSIN_CLI connect --dry-run' (exit $cli_rc) printed no MCP block for $MCP_URL: $(echo "$cli_out" | head -3 | tr '\n' ' ')"
 fi
 
-echo "launch-check: $PASSED of 5 passed"
-[[ "$PASSED" -eq 5 ]]
+# post_check <path> <json>: POST JSON; on success the body is in $BODY_FILE.
+post_check() {
+  local code
+  if ! code="$(curl -sS --max-time 20 -o "$BODY_FILE" -w '%{http_code}' -H 'Content-Type: application/json' --data "$2" "$BASE_URL$1" 2>"$WORK/curl.err")"; then
+    REASON="POST $1: curl error: $(head -1 "$WORK/curl.err")"
+    return 1
+  fi
+  if [[ "$code" != "200" ]]; then
+    REASON="POST $1: HTTP $code"
+    return 1
+  fi
+  if ! jq -e . "$BODY_FILE" >/dev/null 2>&1; then
+    REASON="POST $1: body is not JSON"
+    return 1
+  fi
+  return 0
+}
+
+if [[ "$COVERAGE_CHECK" == "1" ]]; then
+  # cov-lodash: two well-known lodash CVEs for a version below both fixes.
+  if ! post_check /v1/check '{"dependencies":[{"ecosystem":"npm","name":"lodash","version":"4.17.15"}]}'; then
+    fail cov-lodash "$REASON"
+  else
+    missing="$(jq -r '[.affected[]?.cve_ids[]?] as $c | ["CVE-2020-8203", "CVE-2021-23337"] - $c | join(", ")' "$BODY_FILE")"
+    if [[ -z "$missing" ]]; then ok cov-lodash; else fail cov-lodash "npm lodash 4.17.15: no affected item for $missing"; fi
+  fi
+
+  # cov-django: an old django release has many advisories.
+  if ! post_check /v1/check '{"dependencies":[{"ecosystem":"PyPI","name":"django","version":"3.2.0"}]}'; then
+    fail cov-django "$REASON"
+  else
+    n="$(jq '.affected | length' "$BODY_FILE")"
+    if [[ "$n" -ge "$COV_DJANGO_MIN" ]]; then ok cov-django; else fail cov-django "PyPI django 3.2.0: $n affected, want at least $COV_DJANGO_MIN"; fi
+  fi
+
+  # cov-count: backfill records per OSV ecosystem against OSV's own id list.
+  if ! get "/v1/status"; then
+    fail cov-count "$REASON"
+  else
+    jq -r '.coverage[]? | select(.imported != null) | "\(.ecosystem)\t\(.imported)"' "$BODY_FILE" >"$WORK/cov.tsv"
+    short=()
+    if [[ ! -s "$WORK/cov.tsv" ]]; then short+=("no OSV ecosystem in /v1/status coverage"); fi
+    while IFS=$'\t' read -r eco have; do
+      csv_url="$OSV_BASE/$(jq -rn --arg e "$eco" '$e | @uri')/modified_id.csv"
+      if ! curl -sS --max-time 120 -f -o "$WORK/ids.csv" "$csv_url" 2>"$WORK/curl.err"; then
+        short+=("$eco (cannot read $csv_url: $(head -1 "$WORK/curl.err"))")
+        continue
+      fi
+      want="$(cut -d, -f2 "$WORK/ids.csv" | grep -v '^MAL-' | grep -c . || true)"
+      if (( have * 100 < want * COV_MIN_PCT )); then short+=("$eco $have of $want"); fi
+    done <"$WORK/cov.tsv"
+    if [[ ${#short[@]} -eq 0 ]]; then
+      ok cov-count
+    else
+      joined="$(printf '%s; ' "${short[@]}")"
+      fail cov-count "under ${COV_MIN_PCT}% of the OSV ids: ${joined%; }"
+    fi
+  fi
+fi
+
+echo "launch-check: $PASSED of $TOTAL passed"
+[[ "$PASSED" -eq "$TOTAL" ]]

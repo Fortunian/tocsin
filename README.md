@@ -23,7 +23,7 @@ curl "https://tocsin.sh/v1/events?since=0&min_severity=high"
 curl "https://tocsin.sh/v1/check?node=24.22.0&php=8.4.26"
 ```
 
-The CLI exits 1 when something is affected, 0 when clean, 2 on a usage error and 3 when the check could not run. `--json` prints one document an agent can read. Flags, exit codes and env vars: `packages/cli/README.md`.
+The CLI exits 1 when something is affected, 0 when clean, 2 on a usage error and 3 when the check could not run or a checked ecosystem has partial coverage. `--json` prints one document an agent can read. Flags, exit codes and env vars: `packages/cli/README.md`.
 
 The schema every advisory follows: https://tocsin.sh/schema/advisory.v1.json (source: `schema/advisory.v1.json`). API reference: https://tocsin.sh/docs (source: `docs/API.md`). Source health: https://tocsin.sh/status (JSON at `/v1/status`).
 

@@ -25,8 +25,10 @@ of `node`, `php`, `python`, `go`, `bun` and `deno`. It sends them to the Tocsin 
 - `0`: clean. No known advisory affects the checked dependencies.
 - `1`: affected. One or more dependencies have an advisory. Read `affected`.
 - `2`: usage error. Wrong directory, or nothing to check (no lockfile and no runtime).
-- `3`: the check could not run (network error or an API error). This is NOT a clean result.
-  Tell the user the check failed. Do not report the project as safe.
+- `3`: the check could not run (network error or an API error), or nothing is affected but
+  Tocsin's history for a checked ecosystem is partial (the `Coverage:` line, `coverage[]` with
+  `complete: false`, `skipped[]` with reason `partial_coverage`). This is NOT a clean result.
+  Tell the user the check failed or is partial. Do not report the project as safe.
 
 ## How to read the JSON
 

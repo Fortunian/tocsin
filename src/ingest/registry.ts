@@ -5,6 +5,7 @@ import { bunRuntime } from "./bun-runtime";
 import { denoRuntime } from "./deno-runtime";
 import { epss } from "./epss";
 import { kev } from "./kev";
+import { nodeEol } from "./node-eol";
 import { nodeRuntime } from "./node-runtime";
 import { nvd } from "./nvd";
 import { osv } from "./osv";
@@ -18,6 +19,7 @@ export const defaultRegistry: Record<string, Ingester> = {
   kev,
   epss,
   "node-runtime": nodeRuntime,
+  "node-eol": nodeEol,
   "php-runtime": phpRuntime,
   "python-runtime": pythonRuntime,
   "deno-runtime": denoRuntime,
@@ -25,7 +27,7 @@ export const defaultRegistry: Record<string, Ingester> = {
 };
 
 // sources is a fixed set of rows (docs/RETENTION.md); this scan is bounded.
-export const ENABLED_SOURCES_SQL = "SELECT id, kind, config_json FROM sources WHERE enabled = 1 ORDER BY id";
+export const ENABLED_SOURCES_SQL = "SELECT id, kind, config_json, coverage_since FROM sources WHERE enabled = 1 ORDER BY id";
 // A NULL warning keeps the stored last_warning (COALESCE).
 const MARK_OK = "UPDATE sources SET last_run_at = ?, last_ok_at = ?, last_error = NULL, last_warning = COALESCE(?, last_warning) WHERE id = ?";
 const MARK_FAILED = "UPDATE sources SET last_run_at = ?, last_error = ?, last_warning = COALESCE(?, last_warning) WHERE id = ?";
@@ -52,7 +54,7 @@ function parseConfig(json: string): Record<string, unknown> {
 }
 
 export async function runIngesters(env: Env, registry: Record<string, Ingester>, now: () => Date): Promise<SourceOutcome[]> {
-  const { results: rows } = await env.DB.prepare(ENABLED_SOURCES_SQL).all<{ id: string; kind: string; config_json: string }>();
+  const { results: rows } = await env.DB.prepare(ENABLED_SOURCES_SQL).all<{ id: string; kind: string; config_json: string; coverage_since: string | null }>();
   const outcomes: SourceOutcome[] = [];
 
   for (const row of rows) {
@@ -68,7 +70,7 @@ export async function runIngesters(env: Env, registry: Record<string, Ingester>,
       const config = parseConfig(row.config_json);
       const result = await ingester.run({
         env,
-        source: { id: row.id, kind: row.kind, config },
+        source: { id: row.id, kind: row.kind, config, coverage_since: row.coverage_since },
         now,
         fetch: (input, init) => fetch(input, init),
       });

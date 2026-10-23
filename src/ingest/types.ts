@@ -26,6 +26,9 @@ export interface SourceRow {
   id: string;
   kind: string;
   config: Record<string, unknown>;
+  // sources.coverage_since (TCS-32). null: the row has none yet. Absent: the
+  // caller did not read the column, and the ingester keeps its cursor rules.
+  coverage_since?: string | null;
 }
 
 export interface IngestContext {
