@@ -8,7 +8,7 @@ The same day, PHP shipped 8.5.12, 8.4.27, 8.3.36 and 8.2.35 to fix two remote co
 
 I run agents all day. None of them knew. The facts were out there as a blog post, an RSS item, a news entry and a GitHub advisory. Four shapes in four places, and not one of them made for a program to read and act on.
 
-So I built Tocsin. It is one feed of advisories in one schema. It covers the Node, PHP, Python, Deno and Bun runtimes, with their history. It also covers packages in six OSV ecosystems (npm, PyPI, Go, Packagist, crates.io and RubyGems), for advisories published since October 15, 2026. The full package history backfill is the next step ([#32](https://github.com/Fortunian/tocsin/issues/32)). Every record has the affected ranges, the fixed versions, a severity and a one-line action, like "Upgrade node to 24.22.1 or later." Every fact links back to its source. No model writes any of it.
+So I built Tocsin. It is one feed of advisories in one schema. It covers the PHP, Python, Deno and Bun runtimes with their full history, and Node with its history from July 2026 on while the older Node posts are still being parsed ([#76](https://github.com/Fortunian/tocsin/issues/76)); a check for Node says so, because a partly covered ecosystem never reads as clean. It also covers packages in six OSV ecosystems with their full history: npm since 2017, PyPI since 2005, Go since 2021, Packagist since 2018, crates.io since 2016 and RubyGems since 2017. Every record has the affected ranges, the fixed versions, a severity and a one-line action, like "Upgrade node to 24.22.1 or later." Every fact links back to its source. No model writes any of it.
 
 Hooking up an agent is one command:
 
