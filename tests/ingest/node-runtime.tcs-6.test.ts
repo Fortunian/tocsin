@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { fetchFeed, fetchPost, NodeHttpError, NodeLinkError } from "../../src/ingest/node-runtime-client";
-import { NODE_CURSOR_KEY, NODE_PARSER_KEY, NODE_PARSER_REV, normalizeNodePost, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
+import { normalizeNodePost, nodeRuntime, parseNodeFeed } from "../../src/ingest/node-runtime";
 import { NODE_DIST_KEY } from "../../src/ingest/node-runtime-dist";
 import { decodeEntities, htmlSections } from "../../src/ingest/runtime-text";
 import type { IngestContext } from "../../src/ingest/types";
@@ -9,6 +9,7 @@ import { validateAdvisory, type Advisory } from "../../src/schema/advisory";
 import postHtml from "../fixtures/node-runtime/2026-10-21.html?raw";
 import indexJson from "../fixtures/node-runtime/index.json?raw";
 import feedXml from "../fixtures/node-runtime/vulnerability.xml?raw";
+import { clearNodeLedger, markNodePostsRead, nodePostRow, nodePostState, seedNodePosts } from "./node-ledger-seed.tcs-69";
 import { createRuntimeFake, type FakeAnswer } from "./runtime-fake.tcs-6";
 
 // Fixtures: recorded from nodejs.org on 2026-10-22 (tests/fixtures/node-runtime/README.md).
@@ -92,15 +93,16 @@ afterAll(() => {
   fetchSpy.mockRestore();
 });
 
-// Each test starts with no node-runtime rows and a cursor before the 2026-10-21 post.
+// Each test starts with no node-runtime rows and every post before 2026-10-01
+// read (TCS-69: an ok ledger row, where it was a KV cursor before the 2026-10-21 post).
 // TCS-30: KV is shared by the tests of this file, so each test also starts with no
-// cached dist index and the current parser revision (no one-time backfill).
+// cached dist index.
 beforeEach(async () => {
   await env.CURSORS.delete(NODE_DIST_KEY);
-  await env.CURSORS.put(NODE_PARSER_KEY, NODE_PARSER_REV);
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source = 'node-runtime')").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'node-runtime'").run();
-  await env.CURSORS.put(NODE_CURSOR_KEY, "2026-10-01T00:00:00Z");
+  await clearNodeLedger();
+  await markNodePostsRead("2026-10-01T00:00:00Z");
 });
 
 describe("runtime text helpers (text)", () => {
@@ -214,13 +216,13 @@ describe("normalizeNodePost (normalize)", () => {
 });
 
 describe("nodeRuntime.run (run)", () => {
-  it("N4: run stores 10 advisories and sets the cursor to the post pubDate", async () => {
+  it("N4: run stores 10 advisories and writes an ok row with the post pubDate", async () => {
     const fake = createRuntimeFake(routes());
     const res = await nodeRuntime.run(ctxFor(fake.fetch));
     expect(res.errors).toEqual([]);
     expect(res.upserted).toBe(10);
     expect(res.unchanged).toBe(0);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(PUB);
+    expect(await nodePostRow(POST)).toMatchObject({ state: "ok", published: PUB, next_check_at: null });
     // TCS-30: the dist index is read after the post that needs it.
     expect(fake.urls()).toEqual([FEED, POST, INDEX]);
     const row = await env.DB.prepare(
@@ -230,13 +232,13 @@ describe("nodeRuntime.run (run)", () => {
     expect(await nodeRowCount()).toBe(10);
   });
 
-  it("N4b: with no cursor, the backfill window from config picks the post", async () => {
-    await env.CURSORS.delete(NODE_CURSOR_KEY);
+  it("N4b: with an empty ledger, the backfill window from config picks the post", async () => {
+    await clearNodeLedger();
     const fake = createRuntimeFake(routes());
     const res = await nodeRuntime.run(ctxFor(fake.fetch, { backfill_days: 30 }));
     expect(res.upserted).toBe(10);
     expect(fake.count(POST)).toBe(1);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(PUB);
+    expect(await nodePostState(POST)).toBe("ok");
   });
 
   it("N5: re-run on the same fixtures yields unchanged for every advisory and no new rows", async () => {
@@ -247,34 +249,38 @@ describe("nodeRuntime.run (run)", () => {
     expect(res.unchanged).toBe(10);
     expect(res.upserted).toBe(0);
     expect(await nodeRowCount()).toBe(before);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(PUB);
+    expect(await nodePostState(POST)).toBe("ok");
   });
 
-  it("N6 cursor: a cursor after the post skips it: 1 fetch (feed only), 0 upserts", async () => {
-    await env.CURSORS.put(NODE_CURSOR_KEY, "2026-10-22T00:00:00Z");
-    const fake = createRuntimeFake(routes());
+  it("N6 ledger: an ok post that is not the newest feed post is skipped: 1 fetch (feed only), 0 upserts", async () => {
+    // TCS-69: the ledger premise of "a cursor after the post". A newer feed
+    // post has a terminal empty row, so the October post is not the newest.
+    const newer = "https://nodejs.org/en/blog/vulnerability/tcs-69-newer";
+    await markNodePostsRead("2026-10-22T00:00:00Z");
+    await seedNodePosts([{ url: newer, published: "2026-10-22T01:00:00Z", state: "empty" }]);
+    const fake = createRuntimeFake(routes({ [FEED]: feedWithExtraItem(newer, "Thu, 22 Oct 2026 01:00:00 GMT") }));
     const res = await nodeRuntime.run(ctxFor(fake.fetch));
     expect(fake.urls()).toEqual([FEED]);
     expect(res.upserted + res.unchanged).toBe(0);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe("2026-10-22T00:00:00Z");
+    expect(await nodePostRow(POST)).toMatchObject({ state: "ok", published: PUB });
   });
 
-  it("N7 cursor: a cursor equal to the post pubDate re-reads the post", async () => {
+  it("N7 ledger: an ok row of the newest feed post re-reads the post", async () => {
     await nodeRuntime.run(ctxFor(createRuntimeFake(routes()).fetch));
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(PUB);
+    expect(await nodePostState(POST)).toBe("ok");
     const fake = createRuntimeFake(routes());
     const res = await nodeRuntime.run(ctxFor(fake.fetch));
     expect(fake.count(POST)).toBe(1);
     expect(res.unchanged).toBe(10);
   });
 
-  it("N8: an index without v24.22.1 stores nothing, names 24.22.1 and leaves the cursor", async () => {
+  it("N8: an index without v24.22.1 stores nothing, names 24.22.1 and leaves the post due now", async () => {
     const index = JSON.stringify((JSON.parse(indexJson) as { version: string }[]).filter((e) => e.version !== "v24.22.1"));
     const res = await nodeRuntime.run(ctxFor(createRuntimeFake(routes({ [INDEX]: index })).fetch));
     expect(res.upserted).toBe(0);
     expect(res.errors).toHaveLength(1);
     expect(res.errors[0]).toContain("24.22.1");
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe("2026-10-01T00:00:00Z");
+    expect(await nodePostRow(POST)).toMatchObject({ state: "failed", attempts: 1, next_check_at: new Date(NOW).toISOString() });
     expect(await nodeRowCount()).toBe(0);
   });
 
@@ -282,7 +288,9 @@ describe("nodeRuntime.run (run)", () => {
     "N9: title %j does not start a post read (source: assumed, in-test edit)",
     async (title) => {
       const fake = createRuntimeFake(routes({ [FEED]: feedWithTitle(title) }));
-      const res = await nodeRuntime.run(ctxFor(fake.fetch));
+      // TCS-69: a 30-day window, so the July post (the newest release post once
+      // this title is not one, and read again as the newest ok row) is outside it.
+      const res = await nodeRuntime.run(ctxFor(fake.fetch, { backfill_days: 30 }));
       expect(fake.urls()).toEqual([FEED]);
       expect(res.upserted).toBe(0);
     },
@@ -295,10 +303,10 @@ describe("nodeRuntime.run (run)", () => {
     expect(res.upserted).toBe(10);
   });
 
-  it("N10: a 503 on the post throws NodeHttpError and leaves the cursor", async () => {
+  it("N10: a 503 on the post throws NodeHttpError and writes no row", async () => {
     const fake = createRuntimeFake(routes({ [POST]: { status: 503 } }));
     await expect(nodeRuntime.run(ctxFor(fake.fetch))).rejects.toBeInstanceOf(NodeHttpError);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe("2026-10-01T00:00:00Z");
+    expect(await nodePostRow(POST)).toBeNull();
   });
 
   it("N11 F2: a feed item linking off nodejs.org is not fetched, is reported, and does not stop the real post (source: assumed, in-test edit)", async () => {
@@ -313,8 +321,9 @@ describe("nodeRuntime.run (run)", () => {
     expect(res.errors[0]).toContain("https://nodejs.org");
     expect(res.upserted).toBe(10);
     expect(await nodeRowCount()).toBe(10);
-    // The off-origin post counts as done: the cursor reaches the newest post date.
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe("2026-10-22T01:00:00Z");
+    // The off-origin post counts as done: its row is failed and terminal.
+    expect(await nodePostRow(evil)).toMatchObject({ state: "failed", next_check_at: null });
+    expect(await nodePostState(POST)).toBe("ok");
   });
 
   it("N11 F2: an http:// link on nodejs.org is refused for an https feed (source: assumed, in-test edit)", async () => {

@@ -1,22 +1,22 @@
 // The node-runtime ingester: reads the nodejs.org vulnerability feed, opens
-// each "Security Release" post newer than the KV cursor, and emits one
-// advisory per CVE heading. The post is the source of truth for fixed
-// versions; the dist index confirms each fixed version exists.
+// each "Security Release" post that the post ledger (node_runtime_posts,
+// src/ingest/node-runtime-posts.ts) says is due, and emits one advisory per
+// CVE heading. The post is the source of truth for fixed versions; the dist
+// index confirms each fixed version exists.
 import { markCoverage } from "./coverage";
 import { fetchFeed, fetchPost, NodeHttpError, NodeLinkError } from "./node-runtime-client";
 import { loadNodeDistIndex, type DistIndex } from "./node-runtime-dist";
+import { hasRetrying, readLedger, writePost, type PostRow, type PostWrite } from "./node-runtime-posts";
 import { compareVersions } from "./osv";
-import { htmlSections, htmlText, isoUtc, oneLine, readRuntimeConfig, readSince, xmlBlocks, xmlText } from "./runtime-text";
+import { htmlSections, htmlText, isoUtc, oneLine, readRuntimeConfig, xmlBlocks, xmlText } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
 import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
 import type { SeverityLabel } from "../schema/advisory";
 
-export const NODE_CURSOR_KEY = "cursor:node-runtime";
-// The parser revision the stored cursor was read with. A run that finds another
-// value reads the backfill window again once, so posts the old parser could not
-// read are picked up (TCS-30: the July 2026 wording; TCS-32: the whole feed
-// history once, with backfill_days 4000). Parser identity, not a limit.
-export const NODE_PARSER_KEY = "cursor:node-runtime:parser";
+// The parser revision a ledger row was read with (node_runtime_posts.parser_rev).
+// A row with another value is read again once, so posts the old parser could
+// not read are picked up (TCS-30: the July 2026 wording; TCS-32: the whole feed
+// history once). Parser identity, not a limit.
 export const NODE_PARSER_REV = "3";
 const SOURCE = "node-runtime";
 
@@ -31,8 +31,19 @@ export const NODE_DEFAULTS = {
   dist_cache_seconds: 3600,
   // An incomplete post older than this is reported and passed, not read
   // again: an old post the parser cannot complete must not stop the history read.
+  // A post older than this with no CVE heading is a terminal "empty" post.
   // Seeded in the node-runtime row by migrations/0015_node_history.sql.
   retry_incomplete_days: 365,
+  // Minutes until a pending post (a pre-announcement) younger than
+  // retry_incomplete_days, or a recent post with no CVE heading, is read again.
+  // Seeded in the node-runtime row by migrations/0020_node_runtime_posts.sql.
+  pending_recheck_minutes: 60,
+  // Minutes until a pending post older than retry_incomplete_days is read again.
+  // Seeded in the node-runtime row by migrations/0020_node_runtime_posts.sql.
+  pending_old_recheck_minutes: 10080,
+  // Reads of a recent post with no CVE heading before it is terminal.
+  // Seeded in the node-runtime row by migrations/0020_node_runtime_posts.sql.
+  max_attempts: 10,
 };
 
 export interface FeedItem {
@@ -193,36 +204,52 @@ function postLabel(link: string): string {
   }
 }
 
+function byPublished(a: FeedItem, b: FeedItem): number {
+  return a.published < b.published ? -1 : a.published > b.published ? 1 : a.link < b.link ? -1 : a.link > b.link ? 1 : 0;
+}
+
 async function run(ctx: IngestContext): Promise<RunResult> {
   const cfg = readRuntimeConfig(SOURCE, ctx.source.config, NODE_DEFAULTS);
   const kv = ctx.env.CURSORS;
+  const db = ctx.env.DB;
   const now = ctx.now();
-  let { sinceMs } = await readSince(kv, NODE_CURSOR_KEY, now, cfg.backfill_days);
-  if ((await kv.get(NODE_PARSER_KEY)) !== NODE_PARSER_REV) {
-    // A new parser revision: move the cursor back to the backfill window once.
-    // The cursor then advances post by post as usual, so an incomplete or
-    // failed post in the window is read again on the next run.
-    sinceMs = Math.min(sinceMs, now.getTime() - cfg.backfill_days * 86_400_000);
-    await kv.put(NODE_CURSOR_KEY, new Date(sinceMs).toISOString());
-    await kv.put(NODE_PARSER_KEY, NODE_PARSER_REV);
-  }
   const match = cfg.title_match.toLowerCase();
   const result: RunResult = { fetched: 0, upserted: 0, unchanged: 0, errors: [] };
   const summary: string[] = [];
-
-  // A post dated exactly at the cursor is read again: Node edits a release post in place.
-  const releases = parseNodeFeed(await fetchFeed(ctx.fetch, cfg.feed_url)).filter((p) => p.title.toLowerCase().includes(match));
-  const due = releases
-    .filter((p) => new Date(p.published).getTime() >= sinceMs)
-    .sort((a, b) => (a.published < b.published ? -1 : a.published > b.published ? 1 : a.link < b.link ? -1 : a.link > b.link ? 1 : 0));
-  const posts = due.slice(0, cfg.max_posts);
-  if (posts.length === 0) return result;
-  // The history is read in full when this run reads every due post to the
-  // newest one, and the backfill window reaches the oldest release post of
-  // the feed (the parser revision moved the cursor to the window start once).
-  const oldest = releases.reduce<string | null>((m, p) => (m === null || p.published < m ? p.published : m), null);
+  const warnings: string[] = [];
   const windowStart = now.getTime() - cfg.backfill_days * 86_400_000;
-  let reachedNewest = due.length <= cfg.max_posts;
+  const inWindow = (published: string) => new Date(published).getTime() >= windowStart;
+
+  const releases = parseNodeFeed(await fetchFeed(ctx.fetch, cfg.feed_url)).filter((p) => p.title.toLowerCase().includes(match));
+  const feed = releases.filter((p) => inWindow(p.published));
+  if (feed.length === 0) return result;
+  const ledger = await readLedger(db, feed.map((p) => p.link), now, cfg.max_posts);
+
+  // The posts this run reads: a feed post with no row, a re-published post or
+  // one read by another parser revision; a pending or failed row whose
+  // next_check_at has come (by its stored URL and date, even if the post left
+  // the feed); and the newest feed post when its row is ok, because Node
+  // edits a release post in place.
+  const due = new Map<string, { post: FeedItem; prev?: PostRow }>();
+  for (const p of feed) {
+    const row = ledger.known.get(p.link);
+    if (!row || row.published !== p.published || row.parser_rev !== NODE_PARSER_REV) due.set(p.link, { post: p, prev: row });
+  }
+  for (const row of ledger.due) {
+    if (due.has(row.url) || !inWindow(row.published)) continue;
+    const post = feed.find((p) => p.link === row.url) ?? { title: "", link: row.url, published: row.published };
+    due.set(row.url, { post, prev: row });
+  }
+  const newest = [...feed].sort(byPublished).pop()!;
+  const newestRow = ledger.known.get(newest.link);
+  if (newestRow?.state === "ok" && !due.has(newest.link)) due.set(newest.link, { post: newest, prev: newestRow });
+  const ordered = [...due.values()].sort((a, b) => byPublished(a.post, b.post));
+  const posts = ordered.slice(0, cfg.max_posts);
+  if (ordered.length > posts.length) {
+    // The rest stay due in the ledger: the next run reads them.
+    result.deferred = ordered.length - posts.length;
+    result.incomplete = true;
+  }
 
   // The dist index is read on the first post that needs it, from the KV cache when fresh.
   let dist: DistIndex | undefined;
@@ -231,9 +258,19 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   // Post links are read only on the origin of the configured feed.
   const allowedOrigin = new URL(cfg.feed_url).origin;
   const isOld = (post: FeedItem) => now.getTime() - new Date(post.published).getTime() > cfg.retry_incomplete_days * 86_400_000;
-  for (const post of posts) {
+  const after = (minutes: number) => new Date(now.getTime() + minutes * 60_000).toISOString();
+  const written = new Set<string>();
+  // The row is written after the post's advisories are stored, in the same
+  // step as its one error or warning.
+  const write = async (post: FeedItem, w: Omit<PostWrite, "url" | "published" | "parser_rev">) => {
+    await writePost(db, { url: post.link, published: post.published, parser_rev: NODE_PARSER_REV, ...w }, now);
+    written.add(post.link);
+  };
+
+  for (const { post, prev } of posts) {
     const label = postLabel(post.link);
-    // HTTP and D1 errors throw out of the run: this post's cursor is not written.
+    const attempts = prev?.attempts ?? 0;
+    // HTTP and D1 errors throw out of the run: this post's row is not written.
     let html: string;
     try {
       html = await fetchPost(ctx.fetch, post.link, allowedOrigin);
@@ -242,18 +279,43 @@ async function run(ctx: IngestContext): Promise<RunResult> {
       // permanent data problem too: it must not stop the history read.
       const gone = err instanceof NodeHttpError && (err.status === 404 || err.status === 410) && isOld(post);
       if (!(err instanceof NodeLinkError) && !gone) throw err;
-      // A permanent data problem in the feed: report it and move the cursor past the post.
+      // A permanent data problem in the feed: report it once, the row is terminal.
       result.errors.push(err.message);
       summary.push(`${label}: not read`);
-      await kv.put(NODE_CURSOR_KEY, post.published);
+      await write(post, { state: "failed", attempts: attempts + 1, last_error: err.message });
       continue;
     }
-    // A pre-announcement is not a failure. It writes no cursor and stops the
-    // run, so the post is read again until it carries its CVE headings.
-    if (isNodePreAnnouncement(html)) {
-      summary.push(`${label}: pre-announcement, read again next run`);
-      reachedNewest = false;
-      break;
+    const parsed = parseNodeSecurityPost(html);
+    if (parsed.cves.length === 0 && parsed.unparsed.length === 0) {
+      if (isPreAnnouncement(parsed, html)) {
+        // A pre-announcement is not a failure: it waits for its CVE headings.
+        const next = after(isOld(post) ? cfg.pending_old_recheck_minutes : cfg.pending_recheck_minutes);
+        summary.push(`${label}: pre-announcement, read again after ${next}`);
+        await write(post, { state: "pending", attempts, next_check_at: next });
+        continue;
+      }
+      if (isOld(post)) {
+        // A historical post with nothing to emit (the 2019 "no updates" post).
+        warnings.push(`${label}: no CVE headings, older than ${cfg.retry_incomplete_days} days, not read again`);
+        summary.push(`${label}: no CVE headings, not read again`);
+        await write(post, { state: "empty", attempts });
+        continue;
+      }
+      // A recent post with no CVE heading is likely a parser gap: an error
+      // until the attempt cap, then one warning and a terminal row.
+      const n = attempts + 1;
+      const err = `${post.link}: no CVE headings`;
+      if (n >= cfg.max_attempts) {
+        warnings.push(`${label}: no CVE headings after ${n} reads, not read again`);
+        summary.push(`${label}: no CVE headings, not read again`);
+        await write(post, { state: "failed", attempts: n, last_error: err });
+      } else {
+        const next = after(cfg.pending_recheck_minutes);
+        result.errors.push(err);
+        summary.push(`${label}: no CVE headings, read again after ${next}`);
+        await write(post, { state: "failed", attempts: n, last_error: err, next_check_at: next });
+      }
+      continue;
     }
     dist ??= await loadDist(false);
     let norm = normalizeNodePost(post, html, dist.versions);
@@ -263,19 +325,20 @@ async function run(ctx: IngestContext): Promise<RunResult> {
       dist = await loadDist(true);
       norm = normalizeNodePost(post, html, dist.versions);
     }
-    // An incomplete post stops the run; the cursor stays at the last complete
-    // post. One older than retry_incomplete_days is reported and passed.
+    // An incomplete post stops the run and is read again on the next run.
+    // One older than retry_incomplete_days is reported once and is terminal.
     if (norm.incomplete && isOld(post)) {
       const note = `post incomplete, older than ${cfg.retry_incomplete_days} days, not read again`;
-      result.errors.push(...norm.errors.map((e) => e.replace("post incomplete, read again next run", note)));
+      const errs = norm.errors.map((e) => e.replace("post incomplete, read again next run", note));
+      result.errors.push(...errs);
       summary.push(`${label}: incomplete, not read again`);
-      await kv.put(NODE_CURSOR_KEY, post.published);
+      await write(post, { state: "failed", attempts: attempts + 1, last_error: errs.join("; ") });
       continue;
     }
     result.errors.push(...norm.errors);
     if (norm.incomplete) {
       summary.push(`${label}: incomplete, read again next run`);
-      reachedNewest = false;
+      await write(post, { state: "failed", attempts: attempts + 1, last_error: norm.errors.join("; "), next_check_at: now.toISOString() });
       break;
     }
     let ok = 0;
@@ -283,7 +346,7 @@ async function run(ctx: IngestContext): Promise<RunResult> {
     for (const doc of norm.docs) {
       result.fetched += 1;
       try {
-        const outcome = await upsertAdvisory(ctx.env.DB, doc, { source: SOURCE, source_id: doc.sources[0].source_id });
+        const outcome = await upsertAdvisory(db, doc, { source: SOURCE, source_id: doc.sources[0].source_id });
         if (outcome === "unchanged") result.unchanged += 1;
         else result.upserted += 1;
         ok += 1;
@@ -294,11 +357,17 @@ async function run(ctx: IngestContext): Promise<RunResult> {
       }
     }
     summary.push(notEmitted > 0 ? `${label}: ${ok} ok, ${notEmitted} not emitted` : `${label}: ${ok} ok`);
-    await kv.put(NODE_CURSOR_KEY, post.published);
+    await write(post, { state: "ok", attempts: 0 });
   }
   if (summary.length > 0) result.summary = summary.join("; ");
-  if (!ctx.source.coverage_since && reachedNewest && oldest !== null && new Date(oldest).getTime() >= windowStart) {
-    await markCoverage(ctx.env.DB, SOURCE, oldest);
+  if (warnings.length > 0) result.warnings = warnings;
+  // The history is read in full when every feed post of the window has a row,
+  // the window reaches the oldest release post of the feed, and no failed
+  // post still retries.
+  const oldest = releases.reduce<string | null>((m, p) => (m === null || p.published < m ? p.published : m), null);
+  const allRead = feed.every((p) => ledger.known.has(p.link) || written.has(p.link));
+  if (!ctx.source.coverage_since && allRead && oldest !== null && inWindow(oldest) && !(await hasRetrying(db))) {
+    await markCoverage(db, SOURCE, oldest);
   }
   return result;
 }

@@ -71,11 +71,14 @@ workflow's `ecosystem` options, and run the workflow for it.
 The runtime sources need no workflow. Each one sets its own `sources.coverage_since` after one
 run that read its whole history:
 
-- `node-runtime`: migration 0015 sets `max_posts` 20 and `backfill_days` 4000 in its config row,
-  and the parser revision 3 moves the cursor back to the window start once. The cron then reads
-  the feed's Security Release posts 20 per run (48 posts on 2026-10-22: 3 runs). An old post
-  that is incomplete or gone (404) is reported in `last_error` and passed, so the read never
-  stops there (`retry_incomplete_days`, 365).
+- `node-runtime`: migration 0015 sets `max_posts` 20 and `backfill_days` 4000 in its config row.
+  The cron reads the feed's Security Release posts 20 per run (48 posts on 2026-10-22: 3 runs),
+  and the post ledger `node_runtime_posts` (TCS-69) records the outcome of each post. An old post
+  that is incomplete or gone (404) is reported in `last_error` once and passed, so the read never
+  stops there (`retry_incomplete_days`, 365). An old post with no CVE heading (the 2019 "no
+  updates" post) is `empty` with one note in `last_warning`. A pre-announcement is `pending` and is
+  read again after `pending_recheck_minutes` (60). coverage_since is set when every feed post of
+  the window has a row and no failed post still retries.
 - `node-eol`: one advisory per Node.js release line past its end of life, from the nodejs/Release
   `schedule.json`. A version on such a line is never clean.
 - `deno-runtime`, `bun-runtime`: while `coverage_since` is NULL, a run ignores its KV cursor and

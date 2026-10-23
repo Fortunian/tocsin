@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { NODE_CURSOR_KEY, normalizeNodePost, nodeRuntime } from "../../src/ingest/node-runtime";
+import { normalizeNodePost, nodeRuntime } from "../../src/ingest/node-runtime";
 import type { IngestContext } from "../../src/ingest/types";
 import julyHtml from "../fixtures/node-runtime/2026-07-29.html?raw";
 import preHtml from "../fixtures/node-runtime/2026-10-14-pre.html?raw";
@@ -8,6 +8,7 @@ import octHtml from "../fixtures/node-runtime/2026-10-21.html?raw";
 import indexJuly from "../fixtures/node-runtime/index-since-2026-07.json?raw";
 import indexJson from "../fixtures/node-runtime/index.json?raw";
 import feedXml from "../fixtures/node-runtime/vulnerability.xml?raw";
+import { clearNodeLedger, markNodePostsRead } from "./node-ledger-seed.tcs-69";
 import { createRuntimeFake } from "./runtime-fake.tcs-6";
 
 // TCS-30 reproduction. It uses only the exports that existed before the fix,
@@ -25,12 +26,12 @@ function ctxAt(fetchFn: typeof fetch, now: number): IngestContext {
 beforeEach(async () => {
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source = 'node-runtime')").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'node-runtime'").run();
-  // No cached dist index, a cursor before the October post, and the current
-  // parser revision (a literal: the base commit has no such export or key).
-  // TCS-32 moved the revision from "2" to "3" (the full feed history read).
+  // No cached dist index, and every post before the October post read with the
+  // current parser revision (TCS-69: ok ledger rows, where it was a KV cursor
+  // and parser key before).
   await env.CURSORS.delete("node-dist-index");
-  await env.CURSORS.put("cursor:node-runtime:parser", "3");
-  await env.CURSORS.put(NODE_CURSOR_KEY, "2026-10-01T00:00:00Z");
+  await clearNodeLedger();
+  await markNodePostsRead("2026-10-01T00:00:00Z");
 });
 
 describe("TCS-30 repro", () => {
