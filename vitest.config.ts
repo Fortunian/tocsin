@@ -6,6 +6,8 @@ import { defineConfig } from "vitest/config";
 // `cli` is the npm package in packages/cli; it runs in plain Node.
 // `action` is the GitHub Action in action/; it runs in plain Node too.
 // `launch` runs scripts/launch-check.sh in Node against the worker in Miniflare.
+// `contract` calls real vendors (mail). It is not in `npm test` (an explicit
+// project list); `npm run test:contract` runs it with TOCSIN_CONTRACT=1.
 export default defineConfig(async () => {
   const migrations = await readD1Migrations("./migrations");
   return {
@@ -15,13 +17,14 @@ export default defineConfig(async () => {
           plugins: [
             cloudflareTest({
               wrangler: { configPath: "./wrangler.toml" },
-              miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
+              // MAIL_TRANSPORT=fake: the mail seam answers the KV fake, 0 network calls.
+              miniflare: { bindings: { TEST_MIGRATIONS: migrations, MAIL_TRANSPORT: "fake" } },
             }),
           ],
           test: {
             name: "api",
             include: ["tests/**/*.test.ts"],
-            exclude: ["tests/mcp/**", "tests/cli/**", "tests/action/**", "tests/launch/**", "tests/docs/**"],
+            exclude: ["tests/mcp/**", "tests/cli/**", "tests/action/**", "tests/launch/**", "tests/docs/**", "tests/contract/**"],
             setupFiles: ["./tests/apply-migrations.ts"],
           },
         },
@@ -66,6 +69,16 @@ export default defineConfig(async () => {
             include: ["tests/launch/**/*.test.ts"],
             testTimeout: 120_000,
             hookTimeout: 180_000,
+          },
+        },
+        {
+          // Real-vendor contract tests, off the PR path: they skip without the
+          // vendor secret. .github/workflows/mail-contract.yml runs them.
+          test: {
+            name: "contract",
+            environment: "node",
+            include: ["tests/contract/**/*.test.ts"],
+            fileParallelism: false,
           },
         },
       ],

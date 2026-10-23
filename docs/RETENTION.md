@@ -70,6 +70,20 @@ One key: the audit record of the last `api_keys` retention run, `{ran_at, cutoff
 
 The rate-limit counters, one key per caller per minute: `rl:v1:<ip>:<minute>` for `/v1/events`, `rl:v1:check:<ip>:<minute>` for `/v1/check`, `rl:v1:keys:<ip>:<minute>` for `POST /v1/keys` and `rl:v1:key:<key_id>:<minute>` for the `/v1/watchlists` routes. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
 
+The key link send counters (TCS-64), one key per caller per clock hour: `rl:v1:keyssend:ip:<ip>:<hour>` and `rl:v1:keyssend:em:<sha256 of the email>:<hour>`. Each is written with a 7,200-second TTL, so KV expires it on its own. No delete job.
+
+## KV `keyconfirm:v1:` keys (CURSORS namespace)
+
+One key per mailed key link (TCS-64): `keyconfirm:v1:<sha256 of the token>`, value `{email, purpose, expect_hash, expires_at}`. Opening the link deletes it. An unopened link expires by its TTL, `keys.confirm_ttl_seconds` (default 3600, never below 60). No delete job.
+
+## KV `mail:sent:` keys (CURSORS namespace)
+
+One counter per UTC day: `mail:sent:<YYYY-MM-DD>`, the mails sent that day, read against `mail.daily_send_cap`. Each is written with a 2-day TTL, so KV expires it on its own. No delete job.
+
+## KV `mail:fake:` keys (CURSORS namespace)
+
+Tests only. The test mailer (`src/mail/fake.ts`, selected by `MAIL_TRANSPORT=fake` in `vitest.config.ts`) keeps one outbox per recipient, `mail:fake:<email>`, with a 1-hour TTL. Production never writes it.
+
 ## KV `nvd:queried:` keys (CURSORS namespace)
 
 `nvd:queried:<cve>` marks a CVE that NVD answered with no score (or a 404), so the NVD ingester does not ask again. Each key is written with a TTL of `requery_hours` (config of the `nvd` sources row, default 24 hours), so KV expires it on its own and the CVE is asked again after that. A CVE that gets a score leaves the candidate query instead. No delete job.
