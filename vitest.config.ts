@@ -24,7 +24,7 @@ export default defineConfig(async () => {
           test: {
             name: "api",
             include: ["tests/**/*.test.ts"],
-            exclude: ["tests/mcp/**", "tests/cli/**", "tests/action/**", "tests/launch/**", "tests/contract/**"],
+            exclude: ["tests/mcp/**", "tests/cli/**", "tests/action/**", "tests/launch/**", "tests/docs/**", "tests/contract/**"],
             setupFiles: ["./tests/apply-migrations.ts"],
           },
         },
@@ -45,6 +45,14 @@ export default defineConfig(async () => {
             name: "cli",
             environment: "node",
             include: ["tests/cli/**/*.test.ts"],
+          },
+        },
+        {
+          // `docs` runs documented code blocks (docs/API.md) in plain Node.
+          test: {
+            name: "docs",
+            environment: "node",
+            include: ["tests/docs/**/*.test.ts"],
           },
         },
         {

@@ -1,7 +1,8 @@
 // The CISA KEV ingester: downloads the Known Exploited Vulnerabilities JSON
 // feed once per run and sets exploited=true on every advisory whose primary
 // CVE is listed. A newly exploited advisory gets a new cursor, so feed
-// subscribers see it again. exploited is never set back to false.
+// subscribers see it again, and exploited_at = the run time, so webhook
+// enqueue sends it even when the CVE is old (src/queue/enqueue.ts). exploited is never set back to false.
 // This file is the KEV seam: the only code that reads the KEV feed.
 import { appendSource, canonicalJson, checked, UPSERT_SQL } from "./upsert";
 import { posIntConfig, urlConfig } from "./config";
@@ -21,7 +22,7 @@ const CHUNK = 90;
 export const KEV_SQL = {
   // idx_advisories_cve_primary. `exploited = 0` is the watermark: a flagged row is never read again.
   match: (n: number) => `SELECT id, cve_primary, doc_json FROM advisories WHERE cve_primary IN (${Array(n).fill("?").join(", ")}) AND exploited = 0 ORDER BY cve_primary, id`,
-  update: `UPDATE advisories SET exploited = 1, doc_json = ?, cursor = ${UPSERT_SQL.nextCursor} WHERE id = ? AND exploited = 0`,
+  update: `UPDATE advisories SET exploited = 1, exploited_at = ?, doc_json = ?, cursor = ${UPSERT_SQL.nextCursor} WHERE id = ? AND exploited = 0`,
 } as const;
 
 export class KevHttpError extends Error {
@@ -56,6 +57,7 @@ async function run(ctx: IngestContext): Promise<RunResult> {
   const feedUrl = urlConfig(raw, "kev", "feed_url", DEFAULTS.feed_url);
   const maxUpdates = posIntConfig(raw, "kev", "max_updates_per_run", DEFAULTS.max_updates_per_run);
   const db = ctx.env.DB;
+  const nowIso = ctx.now().toISOString();
 
   const res = await ctx.fetch(feedUrl);
   if (!res.ok) throw new KevHttpError(res.status);
@@ -90,7 +92,7 @@ async function run(ctx: IngestContext): Promise<RunResult> {
         result.errors.push(`${row.cve_primary}: ${err instanceof Error ? err.message : String(err)}`);
         continue;
       }
-      writes.push(db.prepare(KEV_SQL.update).bind(canonicalJson(next), row.id));
+      writes.push(db.prepare(KEV_SQL.update).bind(nowIso, canonicalJson(next), row.id));
     }
     if (writes.length > 0) {
       for (const w of await db.batch(writes)) result.upserted += w.meta.changes ?? 0;

@@ -1,10 +1,12 @@
 import { severitiesAtLeast } from "../feed/query";
 import type { WatchlistFilter } from "./filter";
 
-// One statement, 2 columns, the same page shape as /v1/events. Each list is
-// bound as ONE JSON parameter through json_each, so 2,000 components stay far
-// under D1's 100-parameter cap. Fetches limit + 1 rows to tell has_more.
-export function buildWatchlistEventsQuery(f: WatchlistFilter, since: number, limit: number): { sql: string; params: unknown[] } {
+// The WHERE terms of a watch list filter over advisories, above cursor since.
+// Each list is bound as ONE JSON parameter through json_each, so 2,000
+// components stay far under D1's 100-parameter cap. The poll feed
+// (buildWatchlistEventsQuery) and webhook enqueue (src/queue/enqueue.ts) share
+// it, so both read the same advisories for one filter.
+export function watchlistWhere(f: WatchlistFilter, since: number): { where: string[]; params: unknown[] } {
   const where = ["cursor > ?"];
   const params: unknown[] = [since];
   const ecosystems = [...new Set([...f.ecosystems, ...Object.keys(f.runtimes)])];
@@ -22,5 +24,12 @@ export function buildWatchlistEventsQuery(f: WatchlistFilter, since: number, lim
     params.push(...labels);
   }
   if (f.exploited_only) where.push("exploited = 1");
+  return { where, params };
+}
+
+// One statement, 2 columns, the same page shape as /v1/events. Fetches
+// limit + 1 rows to tell has_more.
+export function buildWatchlistEventsQuery(f: WatchlistFilter, since: number, limit: number): { sql: string; params: unknown[] } {
+  const { where, params } = watchlistWhere(f, since);
   return { sql: `SELECT cursor, doc_json FROM advisories WHERE ${where.join(" AND ")} ORDER BY cursor LIMIT ${limit + 1}`, params };
 }
