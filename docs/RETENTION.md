@@ -16,7 +16,15 @@ Kept forever. One row per `(cve, advisory_id)`: every CVE id of an advisory, wri
 
 ## sources
 
-A fixed set of rows (7 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-runtime`, `python-runtime`). It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. `last_warning` (TCS-50) is one value, overwritten by the next run that has a warning and kept by a run with none, cut to 1,000 chars. No delete job.
+A fixed set of rows (9 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `php-runtime`, `python-runtime`, `deno-runtime`, `bun-runtime`). It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. `last_warning` (TCS-50) is one value, overwritten by the next run that has a warning and kept by a run with none, cut to 1,000 chars. No delete job.
+
+## KV `cursor:deno-runtime`, `cursor:bun-runtime` (CURSORS namespace)
+
+One key per source: the newest GitHub `published_at` the source has read. Overwritten in place after a complete run, never moved back. No TTL and no delete job; the key count does not grow. An operator deletes the key (and the `:etag` key below) to make the source read every advisory again; the upserts are idempotent.
+
+## KV `deno-runtime:etag`, `bun-runtime:etag` (CURSORS namespace)
+
+One key per source: the ETag of the first advisories page, sent as `If-None-Match` on the next run. Overwritten in place after a complete run, deleted when the page had no ETag. No TTL and no delete job; the key count does not grow.
 
 ## settings
 

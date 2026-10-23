@@ -267,7 +267,7 @@ describe("EXPLAIN: the upsert and registry queries use indexes on seeded data", 
     expect(read1).toContain("sqlite_autoindex_advisory_sources_1");
     expect(read1).not.toContain("SCAN");
 
-    const read2 = await plan(UPSERT_SQL.findByCve, "CVE-2025-100005", "osv");
+    const read2 = await plan(UPSERT_SQL.findByCve, "CVE-2025-100005", "osv", "npm", "left-pad");
     expect(read2).toContain("idx_advisories_cve_primary");
     expect(read2).toContain("idx_advisory_sources_advisory_id");
     expect(read2).not.toMatch(/SCAN (a|advisories|s|advisory_sources)\b(?! USING)/);

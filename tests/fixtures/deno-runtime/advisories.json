@@ -1,0 +1,437 @@
+[
+  {
+    "ghsa_id": "GHSA-2222-2222-2222",
+    "cve_id": "CVE-2099-41001",
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-2222-2222-2222",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-2222-2222-2222",
+    "summary": "Synthetic: permission check bypass",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "high",
+    "state": "published",
+    "published_at": "2026-10-12T12:00:00Z",
+    "updated_at": "2026-10-12T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "deno",
+          "name": ""
+        },
+        "vulnerable_version_range": "<= 2.7.4",
+        "patched_versions": "2.7.5",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "score": 7.5
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-3333-3333-3333",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-3333-3333-3333",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-3333-3333-3333",
+    "summary": "Synthetic: v-prefixed bounds",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "medium",
+    "state": "published",
+    "published_at": "2026-10-11T12:00:00Z",
+    "updated_at": "2026-10-11T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "rust",
+          "name": "deno"
+        },
+        "vulnerable_version_range": "< v2.7.10",
+        "patched_versions": "v2.7.10",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-4444-4444-4444",
+    "cve_id": "CVE-2099-41003",
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-4444-4444-4444",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-4444-4444-4444",
+    "summary": "Synthetic: two patched lines",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "high",
+    "state": "published",
+    "published_at": "2026-10-10T12:00:00Z",
+    "updated_at": "2026-10-10T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "",
+          "name": "Deno"
+        },
+        "vulnerable_version_range": ">=2.0.0",
+        "patched_versions": "2.2.15, 2.5.2",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-5555-5555-5555",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-5555-5555-5555",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-5555-5555-5555",
+    "summary": "Synthetic: three patched lines",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "low",
+    "state": "published",
+    "published_at": "2026-10-09T12:00:00Z",
+    "updated_at": "2026-10-09T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "deno",
+          "name": "deno"
+        },
+        "vulnerable_version_range": "<=2.1.12, <=2.2.12",
+        "patched_versions": "2.1.13, 2.2.13, >=2.3.3",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-6666-6666-6666",
+    "cve_id": "CVE-2099-41005",
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-6666-6666-6666",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-6666-6666-6666",
+    "summary": "Synthetic: exclusive lower bound",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "high",
+    "state": "published",
+    "published_at": "2026-10-08T12:00:00Z",
+    "updated_at": "2026-10-08T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "rust",
+          "name": "denoland/deno"
+        },
+        "vulnerable_version_range": "> 1.46.0 <= 2.1.6",
+        "patched_versions": "2.1.7",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "score": 6.5
+      },
+      "cvss_v4": {
+        "vector_string": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+        "score": 8.7
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-7777-7777-7777",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-7777-7777-7777",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-7777-7777-7777",
+    "summary": "Synthetic: crate entry and an upper bound that adds a fix",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "medium",
+    "state": "published",
+    "published_at": "2026-10-07T12:00:00Z",
+    "updated_at": "2026-10-07T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "rust",
+          "name": "deno_fetch"
+        },
+        "vulnerable_version_range": "<1.46.4",
+        "patched_versions": "1.46.4",
+        "vulnerable_functions": []
+      },
+      {
+        "package": {
+          "ecosystem": "rust",
+          "name": "deno"
+        },
+        "vulnerable_version_range": "<1.46.4, <2.1.2",
+        "patched_versions": "2.1.2",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-8888-8888-8888",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-8888-8888-8888",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-8888-8888-8888",
+    "summary": "Synthetic: empty patched versions",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "medium",
+    "state": "published",
+    "published_at": "2026-10-06T12:00:00Z",
+    "updated_at": "2026-10-06T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "deno",
+          "name": ""
+        },
+        "vulnerable_version_range": ">= 1.36.2, < 1.40.3",
+        "patched_versions": "",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-9999-9999-9999",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-9999-9999-9999",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-9999-9999-9999",
+    "summary": "Synthetic: exact version and a crate",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "low",
+    "state": "published",
+    "published_at": "2026-10-05T12:00:00Z",
+    "updated_at": "2026-10-05T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "rust",
+          "name": "deno_runtime"
+        },
+        "vulnerable_version_range": "=1.34.0",
+        "patched_versions": "1.34.1",
+        "vulnerable_functions": []
+      },
+      {
+        "package": {
+          "ecosystem": "deno",
+          "name": "deno"
+        },
+        "vulnerable_version_range": "=1.34.0",
+        "patched_versions": "1.34.1",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-2222-3333-4444",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-2222-3333-4444",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-2222-3333-4444",
+    "summary": "Synthetic: composer misfile with a hyphen range",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "medium",
+    "state": "published",
+    "published_at": "2026-10-04T12:00:00Z",
+    "updated_at": "2026-10-04T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "composer",
+          "name": ""
+        },
+        "vulnerable_version_range": "1.5.0 - 1.10.1",
+        "patched_versions": "1.10.2",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-3333-4444-5555",
+    "cve_id": "CVE-2099-41009",
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-3333-4444-5555",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-3333-4444-5555",
+    "summary": "Synthetic: node:crypto entry",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "critical",
+    "state": "published",
+    "published_at": "2026-10-03T12:00:00Z",
+    "updated_at": "2026-10-03T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "deno",
+          "name": "node:crypto"
+        },
+        "vulnerable_version_range": ">= 1.9",
+        "patched_versions": ">= 2.2.5",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+        "score": 9.3
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-4444-5555-6666",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-4444-5555-6666",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-4444-5555-6666",
+    "summary": "Synthetic: library crates only",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "high",
+    "state": "published",
+    "published_at": "2026-10-02T12:00:00Z",
+    "updated_at": "2026-10-02T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "rust",
+          "name": "serde_v8"
+        },
+        "vulnerable_version_range": "<0.200.0",
+        "patched_versions": "0.200.0",
+        "vulnerable_functions": []
+      },
+      {
+        "package": {
+          "ecosystem": "rust",
+          "name": "deno_doc"
+        },
+        "vulnerable_version_range": "<0.100.0",
+        "patched_versions": "0.100.0",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "ghsa_id": "GHSA-5555-6666-7777",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/denoland/deno/security-advisories/GHSA-5555-6666-7777",
+    "html_url": "https://github.com/denoland/deno/security/advisories/GHSA-5555-6666-7777",
+    "summary": "Synthetic: withdrawn",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "high",
+    "state": "published",
+    "published_at": "2026-10-01T12:00:00Z",
+    "updated_at": "2026-10-01T13:00:00Z",
+    "withdrawn_at": "2026-10-02T00:00:00Z",
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "deno",
+          "name": "deno"
+        },
+        "vulnerable_version_range": "<2.0.0",
+        "patched_versions": "2.0.0",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": null,
+        "score": 0.0
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  }
+]

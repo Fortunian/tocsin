@@ -1,6 +1,8 @@
 // Maps sources.id to its ingester. runIngesters runs every enabled source
 // that has one, in sequence; one failure never stops the others.
 import type { Env } from "../env";
+import { bunRuntime } from "./bun-runtime";
+import { denoRuntime } from "./deno-runtime";
 import { epss } from "./epss";
 import { kev } from "./kev";
 import { nodeRuntime } from "./node-runtime";
@@ -18,6 +20,8 @@ export const defaultRegistry: Record<string, Ingester> = {
   "node-runtime": nodeRuntime,
   "php-runtime": phpRuntime,
   "python-runtime": pythonRuntime,
+  "deno-runtime": denoRuntime,
+  "bun-runtime": bunRuntime,
 };
 
 // sources is a fixed set of rows (docs/RETENTION.md); this scan is bounded.

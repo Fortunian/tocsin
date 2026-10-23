@@ -1,0 +1,44 @@
+[
+  {
+    "tag_name": "v2.0.0-rc.1",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2024-09-01T00:00:00Z"
+  },
+  {
+    "tag_name": "v1.40.5",
+    "draft": true,
+    "prerelease": false,
+    "published_at": "2024-08-01T00:00:00Z"
+  },
+  {
+    "tag_name": "v1.40.4",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2024-07-01T00:00:00Z"
+  },
+  {
+    "tag_name": "v1.40.3",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2024-06-01T00:00:00Z"
+  },
+  {
+    "tag_name": "v1.40.2",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2024-05-01T00:00:00Z"
+  },
+  {
+    "tag_name": "std-0.200.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2024-04-01T00:00:00Z"
+  },
+  {
+    "tag_name": "v1.40.1",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2024-03-01T00:00:00Z"
+  }
+]

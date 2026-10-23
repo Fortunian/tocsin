@@ -1,0 +1,36 @@
+[
+  {
+    "ghsa_id": "GHSA-6666-7777-8888",
+    "cve_id": "CVE-2099-41101",
+    "url": "https://api.github.com/repos/oven-sh/bun/security-advisories/GHSA-6666-7777-8888",
+    "html_url": "https://github.com/oven-sh/bun/security/advisories/GHSA-6666-7777-8888",
+    "summary": "Synthetic: bun test entry",
+    "description": "SYNTHETIC test entry. See README.md.",
+    "severity": "high",
+    "state": "published",
+    "published_at": "2026-10-15T12:00:00Z",
+    "updated_at": "2026-10-15T13:00:00Z",
+    "withdrawn_at": null,
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "npm",
+          "name": "bun"
+        },
+        "vulnerable_version_range": "<= 1.1.30",
+        "patched_versions": "1.1.31",
+        "vulnerable_functions": []
+      }
+    ],
+    "cvss_severities": {
+      "cvss_v3": {
+        "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "score": 7.1
+      },
+      "cvss_v4": {
+        "vector_string": null,
+        "score": 0.0
+      }
+    }
+  }
+]
