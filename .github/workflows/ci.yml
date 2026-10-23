@@ -38,6 +38,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # wrangler deploy fails when a queue that wrangler.toml names does not
+      # exist. Create the dead-letter queue (TCS-82) when it is missing, so no
+      # deploy waits on a hand step. An error other than "missing" stops here.
+      - run: npx wrangler queues info deliveries-dlq || npx wrangler queues create deliveries-dlq
       - run: npx wrangler d1 migrations apply DB --remote
       - run: npx wrangler deploy
       - run: npx wrangler deploy -c workers/mcp/wrangler.toml

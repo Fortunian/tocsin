@@ -12,7 +12,7 @@ routes = [{ pattern = "tocsin.sh", custom_domain = true }]
 #   wrangler d1 create tocsin
 #   wrangler kv namespace create CURSORS
 #   wrangler queues create deliveries
-#   wrangler queues create deliveries-dlq
+#   wrangler queues create deliveries-dlq (the CI deploy job creates it when it is missing)
 [[d1_databases]]
 binding = "DB"
 database_name = "tocsin"

@@ -8,6 +8,7 @@ import apiMd from "../../docs/API.md?raw";
 import worker from "../../src/index";
 import type { Env } from "../../src/env";
 import { DLQ_QUEUE, LOAD_SQL, runQueue } from "../../src/queue/run";
+import ciYml from "../../.github/workflows/ci.yml?raw";
 import wranglerToml from "../../wrangler.toml?raw";
 import { FakeFetch, FakeQueue, deliveryRow, envWith, fakeBatch, insertDelivery, seedAdvisory, seedList, setKnob } from "./helpers.tcs-11";
 
@@ -96,6 +97,15 @@ describe("wrangler.toml consumer settings", () => {
     const dlq = all.find((c) => c.queue === DLQ_QUEUE);
     expect(dlq).toBeDefined();
     expect(dlq!.dead_letter_queue).toBeUndefined();
+  });
+
+  it("the deploy job creates deliveries-dlq when it is missing, before the migrations and the deploy", () => {
+    // wrangler deploy throws when a consumer names a queue that does not exist.
+    const ensure = `npx wrangler queues info ${DLQ_QUEUE} || npx wrangler queues create ${DLQ_QUEUE}`;
+    const at = ciYml.indexOf(ensure);
+    expect(at).toBeGreaterThan(ciYml.indexOf("deploy:"));
+    expect(at).toBeLessThan(ciYml.indexOf("npx wrangler d1 migrations apply DB --remote"));
+    expect(at).toBeLessThan(ciYml.indexOf("- run: npx wrangler deploy\n"));
   });
 });
 

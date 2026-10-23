@@ -41,29 +41,34 @@ export interface DeliveryMessage {
   advisory_id: string;
 }
 
-// The two statements one list runs in one transaction (env.DB.batch), in this
-// order:
+// The three statements one list runs in one transaction (env.DB.batch), in
+// this order. A fresh advisory has no deliveries row for this list. An aged
+// advisory was published before ageCutoff and has no KEV flag after it
+// (exploited_at): backfill history (docs/BACKFILL.md). It gets a 'skipped' row
+// and no message. A KEV flag on an old CVE is news, so that advisory is not
+// aged, and an exploited_only list sees it first at that flag. Only fresh,
+// not-aged advisories (to send) count against perList.
 // 1. Move the list cursor. The window is the first scanRows advisories above
 //    the cursor that match the filter; `end` is its last cursor. `stop` is the
-//    cursor of the perList-th advisory in the window that has no deliveries
-//    row for this list (fresh), or NULL when the window holds fewer. The
-//    cursor moves to `stop`, else to `end`. So it passes, in SQL, every
-//    advisory that already has a row (a backfill re-cursor of 50,000 delivered
-//    rows costs one run), and never passes a fresh advisory that statement 2
-//    does not take. It runs first, so it sees the deliveries rows from before
-//    this run.
-// 2. Insert a deliveries row for each fresh advisory in the window, oldest
-//    first, at most perList. since is a bound parameter, so the cursor move of
-//    statement 1 does not change what this scans. The pair (watchlist_id,
-//    advisory_id) is the key whatever the cursor: a backfill that moves an
-//    advisory to a new cursor finds its row (NOT EXISTS) and is not queued
-//    again. INSERT OR IGNORE on the primary key is the backstop; RETURNING
+//    cursor of the perList-th advisory to send in the window, or NULL when the
+//    window holds fewer. The cursor moves to `stop`, else to `end`. So it
+//    passes, in SQL, every advisory that already has a row and every aged
+//    advisory (a backfill or re-cursor of 50,000 rows costs one run), and
+//    never passes an advisory that statement 2 or 3 does not take. It runs
+//    first, so it sees the deliveries rows from before this run.
+// 2. Insert a 'skipped' row for each fresh aged advisory in the window up to
+//    `stop` (else `end`). No RETURNING: the run reads the count from
+//    meta.changes, so a big backfill sends no rows back to the Worker.
+// 3. Insert a 'pending' row for each fresh advisory to send in the window,
+//    oldest first, at most perList: exactly the ones up to `stop`. RETURNING
 //    gives only the new rows.
-//    An advisory published before ageCutoff gets a 'skipped' row (backfill
-//    history, docs/BACKFILL.md) and no message, unless KEV flagged it after
-//    ageCutoff (exploited_at): a KEV flag on an old CVE is news, and an
-//    exploited_only list sees the advisory first at that flag.
-// Both statements read at most scanRows index entries of advisories, plus one
+// since is a bound parameter, so the cursor move of statement 1 does not
+// change what statements 2 and 3 scan. Statement 2 writes only aged rows, so
+// it does not change which rows statement 3 counts. The pair (watchlist_id,
+// advisory_id) is the key whatever the cursor: a backfill that moves an
+// advisory to a new cursor finds its row (NOT EXISTS) and is not queued
+// again. INSERT OR IGNORE on the primary key is the backstop.
+// Each statement reads at most scanRows index entries of advisories, plus one
 // primary-key probe of deliveries per entry.
 export function buildEnqueueStatements(
   f: WatchlistFilter,
@@ -73,22 +78,37 @@ export function buildEnqueueStatements(
   ageCutoff: string,
   nowIso: string,
   scanRows: number = FALLBACK_ENQUEUE_SCAN_ROWS,
-): { insertSql: string; insertParams: unknown[]; cursorSql: string; cursorParams: unknown[] } {
+): {
+  insertSql: string;
+  insertParams: unknown[];
+  skippedSql: string;
+  skippedParams: unknown[];
+  cursorSql: string;
+  cursorParams: unknown[];
+} {
   const { where, params } = watchlistWhere(f, since);
   const filter = `FROM advisories WHERE ${where.join(" AND ")}`;
   const end = `(SELECT MAX(cursor) FROM (SELECT cursor ${filter} ORDER BY cursor LIMIT ?))`;
   const endParams = [...params, scanRows];
   const fresh = `${filter} AND cursor <= ${end} AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.watchlist_id = ? AND d.advisory_id = advisories.id)`;
   const freshParams = [...params, ...endParams, listId];
-  const stop = `(SELECT cursor ${fresh} ORDER BY cursor LIMIT 1 OFFSET ?)`;
+  // A NULL published_at is not aged (it is sent), as before.
+  const aged = "COALESCE(published_at < ? AND (exploited_at IS NULL OR exploited_at < ?), 0)";
+  const toSend = `${fresh} AND NOT ${aged}`;
+  const toSendParams = [...freshParams, ageCutoff, ageCutoff];
+  const stop = `(SELECT cursor ${toSend} ORDER BY cursor LIMIT 1 OFFSET ?)`;
+  const stopParams = [...toSendParams, perList - 1];
   return {
+    skippedSql: `INSERT OR IGNORE INTO deliveries (watchlist_id, advisory_id, cursor, attempt, status, next_at)
+      SELECT ?, id, cursor, 0, 'skipped', ? ${fresh} AND ${aged} AND cursor <= COALESCE(${stop}, ${end})`,
+    skippedParams: [listId, nowIso, ...freshParams, ageCutoff, ageCutoff, ...stopParams, ...endParams],
     insertSql: `INSERT OR IGNORE INTO deliveries (watchlist_id, advisory_id, cursor, attempt, status, next_at)
-      SELECT ?, id, cursor, 0, CASE WHEN published_at < ? AND (exploited_at IS NULL OR exploited_at < ?) THEN 'skipped' ELSE 'pending' END, ? ${fresh} ORDER BY cursor LIMIT ?
+      SELECT ?, id, cursor, 0, 'pending', ? ${toSend} ORDER BY cursor LIMIT ?
       RETURNING advisory_id, status`,
-    insertParams: [listId, ageCutoff, ageCutoff, nowIso, ...freshParams, perList],
+    insertParams: [listId, nowIso, ...toSendParams, perList],
     cursorSql: `UPDATE watchlists SET cursor = MAX(cursor, COALESCE(${stop}, ${end}, cursor))
       WHERE id = ? AND delivery = 'webhook' RETURNING cursor`,
-    cursorParams: [...freshParams, perList - 1, ...endParams, listId],
+    cursorParams: [...stopParams, ...endParams, listId],
   };
 }
 
@@ -156,15 +176,17 @@ export async function enqueueDeliveries(env: Env, now: Date): Promise<EnqueueRes
       const created = Date.parse(list.created_at);
       const ageCutoff = new Date((Number.isNaN(created) ? now.getTime() : created) - maxAgeDays * 86_400_000).toISOString();
       const s = buildEnqueueStatements(filter, list.id, list.cursor, perList, ageCutoff, nowIso, scanRows);
-      const [moved, ins] = await env.DB.batch([
+      const [moved, skip, ins] = await env.DB.batch([
         env.DB.prepare(s.cursorSql).bind(...s.cursorParams),
+        env.DB.prepare(s.skippedSql).bind(...s.skippedParams),
         env.DB.prepare(s.insertSql).bind(...s.insertParams),
       ]);
       cursor = (moved.results[0] as { cursor: number } | undefined)?.cursor ?? list.cursor;
       const rows = ins.results as Array<{ advisory_id: string; status: string }>;
-      res.inserted += rows.length;
-      fresh = rows.filter((r) => r.status === "pending").map((r) => ({ watchlist_id: list.id, advisory_id: r.advisory_id }));
-      res.skipped += rows.length - fresh.length;
+      const skipped = skip.meta.changes ?? 0;
+      res.inserted += rows.length + skipped;
+      res.skipped += skipped;
+      fresh = rows.map((r) => ({ watchlist_id: list.id, advisory_id: r.advisory_id }));
     } catch (err) {
       res.list_errors += 1;
       console.error(JSON.stringify({ lane: "enqueue", watchlist_id: list.id, err: errText(err) }));

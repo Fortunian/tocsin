@@ -1,7 +1,7 @@
 // TCS-82 item 1: catch-up after a cursor flood. A backfill can re-cursor tens
-// of thousands of advisories a list already has a deliveries row for. The
-// cursor must pass them in SQL, so the list reaches a new matching event in
-// one run. Also: the per-run cap is the settings row webhooks.enqueue_per_list
+// of thousands of advisories a list already has a deliveries row for, or
+// insert tens of thousands of aged advisories the list never saw. The cursor
+// must pass both in SQL, so the list reaches a new matching event in one run. Also: the per-run cap is the settings row webhooks.enqueue_per_list
 // (1000, sent in sendBatch chunks of 100), and a list whose cursor lags more
 // than webhooks.lag_alert_rows rows logs one alert line.
 import { env } from "cloudflare:workers";
@@ -121,6 +121,80 @@ describe("enqueue catch-up over a cursor flood", () => {
     expect(await listCursor(list.id)).toBe(fresh.cursor);
     expect(r).toMatchObject({ inserted: 1, sent: 1, lagging_lists: 0 });
     expect(lagAlerts(errSpy)).toEqual([]);
+  });
+
+  it("a backfill of 48,000 aged advisories with no deliveries row: one run writes 48,000 skipped rows and reaches the new matching event", async () => {
+    // The common flood (docs/BACKFILL.md): years of old advisories, new to the
+    // list, so they have no deliveries row. Published 2019, so they are aged.
+    const comp = uid("aged");
+    const list = await seedList({ filter: { components: [comp] } });
+    const b = nextBase();
+    await seedFlood(comp, b, 48_000, "2019-06-01T00:00:00Z");
+    const fresh = await seedAdvisory({ component: comp, cursor: b + 48_001 });
+    const q = new CountingQueue();
+
+    const r = await enqueueDeliveries(envWith(q), NOW);
+
+    expect(q.forList(list.id).map((m) => m.body.advisory_id)).toEqual([fresh.id]);
+    expect(await listCursor(list.id)).toBe(fresh.cursor);
+    const counts = await env.DB.prepare("SELECT status, COUNT(*) AS n FROM deliveries WHERE watchlist_id = ? GROUP BY status ORDER BY status")
+      .bind(list.id)
+      .all<{ status: string; n: number }>();
+    expect(counts.results).toEqual([
+      { status: "pending", n: 1 },
+      { status: "skipped", n: 48_000 },
+    ]);
+    expect(r).toMatchObject({ inserted: 48_001, skipped: 48_000, sent: 1, lagging_lists: 0 });
+
+    // A second run finds nothing new and writes nothing.
+    const again = await enqueueDeliveries(envWith(q), NOW);
+    expect(again).toMatchObject({ inserted: 0, skipped: 0, sent: 0 });
+    expect(q.forList(list.id)).toHaveLength(1);
+  });
+
+  it("aged rows do not count against enqueue_per_list, and the cursor never passes an advisory to send", async () => {
+    await setKnob("webhooks.enqueue_per_list", "2");
+    const comp = uid("mix");
+    const list = await seedList({ filter: { components: [comp] } });
+    const b = nextBase();
+    await seedFlood(comp, b, 30, "2019-06-01T00:00:00Z");
+    // Cursors b+31.. b+33: three advisories to send, after 30 aged ones; then 10 more aged ones.
+    const send = [];
+    for (let i = 31; i <= 33; i++) send.push(await seedAdvisory({ component: comp, cursor: b + i }));
+    await env.DB.prepare(
+      `WITH RECURSIVE s(i) AS (SELECT 34 UNION ALL SELECT i + 1 FROM s WHERE i < 43)
+       INSERT INTO advisories (id, ecosystem, component, severity_label, published_at, modified_at, doc_json, cursor)
+       SELECT 'tcs_tail_' || ?1 || '_' || i, 'npm', ?1, 'high', '2019-06-01T00:00:00Z', '2019-06-01T00:00:00Z', '{}', ?2 + i FROM s`,
+    )
+      .bind(comp, b)
+      .run();
+    const q = new CountingQueue();
+
+    const r1 = await enqueueDeliveries(envWith(q), NOW);
+    expect(q.forList(list.id).map((m) => m.body.advisory_id)).toEqual([send[0].id, send[1].id]);
+    expect(await listCursor(list.id)).toBe(send[1].cursor);
+    expect(r1).toMatchObject({ skipped: 30, sent: 2 });
+
+    const r2 = await enqueueDeliveries(envWith(q), NOW);
+    expect(q.forList(list.id).map((m) => m.body.advisory_id)).toEqual(send.map((a) => a.id));
+    expect(await listCursor(list.id)).toBe(b + 43);
+    expect(r2).toMatchObject({ skipped: 10, sent: 1 });
+  });
+
+  it("an old advisory with a KEV flag after the cutoff is sent, not skipped, inside an aged flood", async () => {
+    const comp = uid("kev");
+    const list = await seedList({ filter: { components: [comp] } });
+    const b = nextBase();
+    await seedFlood(comp, b, 100, "2019-06-01T00:00:00Z");
+    const flagged = `tcs_flood_${comp}_50`;
+    await env.DB.prepare("UPDATE advisories SET exploited = 1, exploited_at = '2026-10-22T00:00:00Z' WHERE id = ?").bind(flagged).run();
+    const q = new CountingQueue();
+
+    const r = await enqueueDeliveries(envWith(q), NOW);
+
+    expect(q.forList(list.id).map((m) => m.body.advisory_id)).toEqual([flagged]);
+    expect(r).toMatchObject({ skipped: 99, sent: 1 });
+    expect(await listCursor(list.id)).toBe(b + 100);
   });
 
   it("reads 1000 from the seeded enqueue_per_list row: 1000 fresh rows give 1000 pending rows in 10 sendBatch calls of 100", async () => {
@@ -260,7 +334,7 @@ describe("EXPLAIN QUERY PLAN over the 50,000-row flood", () => {
     { ecosystems: [], components: ["left-pad"], runtimes: {}, min_severity: "high" as const, exploited_only: false },
   ];
 
-  it("the cursor statement, the insert and the lag count use an index, never a bare SCAN advisories", async () => {
+  it("the cursor statement, both inserts and the lag count use an index, never a bare SCAN advisories", async () => {
     // Its own flood, so the test does not depend on the order of the tests above.
     await seedFlood(uid("explain"), nextBase(), 50_000);
     const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM advisories").first<{ n: number }>();
@@ -269,15 +343,17 @@ describe("EXPLAIN QUERY PLAN over the 50,000-row flood", () => {
       const s = buildEnqueueStatements(f, "wl_plan82", 0, 1000, "2026-01-01T00:00:00.000Z", NOW.toISOString(), 100_000);
       const cursorPlan = await plan(s.cursorSql, s.cursorParams);
       const insertPlan = await plan(s.insertSql, s.insertParams);
+      const skippedPlan = await plan(s.skippedSql, s.skippedParams);
       const lag = buildLagCountStatement(f, 0, 5001);
       const lagPlan = await plan(lag.sql, lag.params);
-      for (const p of [cursorPlan, insertPlan, lagPlan]) {
+      for (const p of [cursorPlan, insertPlan, skippedPlan, lagPlan]) {
         expect(p).toMatch(/USING (COVERING )?INDEX idx_advisories_/);
         expect(p).not.toMatch(BARE_SCAN("advisories"));
         expect(p).not.toMatch(BARE_SCAN("deliveries"));
         expect(p).not.toMatch(BARE_SCAN("d"));
       }
       expect(cursorPlan).toMatch(/SEARCH d USING (COVERING )?INDEX sqlite_autoindex_deliveries_1 \(watchlist_id=\? AND advisory_id=\?\)/);
+      expect(skippedPlan).toMatch(/SEARCH d USING (COVERING )?INDEX sqlite_autoindex_deliveries_1 \(watchlist_id=\? AND advisory_id=\?\)/);
       expect(insertPlan).toMatch(/SEARCH d USING (COVERING )?INDEX sqlite_autoindex_deliveries_1 \(watchlist_id=\? AND advisory_id=\?\)/);
     }
   });
