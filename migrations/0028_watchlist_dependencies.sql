@@ -22,10 +22,13 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_dependencies_ecosystem_name ON watchlis
 
 -- One row per match lane: the last advisory cursor the dependency match pass
 -- has read (src/queue/dependency-match.ts). One row; it does not grow.
+-- version goes up on every write (a pass advance or an upload rewind), so a
+-- pass that read the lane before an upload committed loses its compare-and-set.
 CREATE TABLE IF NOT EXISTS match_cursors (
   lane TEXT PRIMARY KEY,
   cursor INTEGER NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO match_cursors (lane, cursor, updated_at)
   SELECT 'dependencies', COALESCE(MAX(cursor), 0), strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM advisories;

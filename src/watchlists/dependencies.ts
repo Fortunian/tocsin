@@ -34,12 +34,14 @@ export const DEPENDENCY_COUNT_SQL = "SELECT COUNT(*) FROM watchlist_dependencies
 export const DEPENDENCY_LIST_UPDATE_SQL = `UPDATE watchlists SET dependency_count = (${DEPENDENCY_COUNT_SQL}),
   dependencies_cursor = ?3, dependencies_at = ?4 WHERE id = ?1 AND key_id = ?2`;
 
-// Upload, step 4: the match lane never stays above the upload's check cursor.
-// A pass that read the old set and moves the lane after this commit fails its
-// compare-and-set, so the next pass reads those advisories again.
-export const MATCH_REWIND_SQL = `UPDATE match_cursors SET cursor = MIN(cursor, ?1), updated_at = ?2 WHERE lane = '${DEPENDENCY_LANE}'`;
+// Upload, step 4: the match lane never stays above the upload's check cursor,
+// and its version always goes up. A pass that read the lane before this commit
+// fails its compare-and-set and writes no row (MATCH_LANE_UNCHANGED), even when
+// the cursor itself did not move, so the next pass reads those advisories again
+// against the new set.
+export const MATCH_REWIND_SQL = `UPDATE match_cursors SET cursor = MIN(cursor, ?1), updated_at = ?2, version = version + 1 WHERE lane = '${DEPENDENCY_LANE}'`;
 
-export const MATCH_CURSOR_SQL = `SELECT cursor FROM match_cursors WHERE lane = '${DEPENDENCY_LANE}'`;
+export const MATCH_CURSOR_SQL = `SELECT cursor, version FROM match_cursors WHERE lane = '${DEPENDENCY_LANE}'`;
 
 // Pass, step 1: the advisories above the lane cursor, oldest first, without
 // doc_json. idx_advisories_cursor.
@@ -58,8 +60,13 @@ export const DEPENDENCY_MATCH_SQL = `SELECT d.watchlist_id, d.ecosystem, d.name,
 // Pass, step 3: doc_json of the advisories with a candidate pair. Primary key.
 export const DEPENDENCY_DOCS_SQL = "SELECT id, doc_json FROM advisories WHERE id IN (SELECT value FROM json_each(?))";
 
+// The lane is still where the pass read it (?3 cursor, ?4 version). A missing
+// row counts as unchanged: the pass then reads from 0 each time, slow, never wrong.
+const MATCH_LANE_UNCHANGED = `COALESCE((SELECT cursor = ?3 AND version = ?4 FROM match_cursors WHERE lane = '${DEPENDENCY_LANE}'), 1)`;
+
 // Pass, step 4: one chunk of new deliveries rows (?1, items [watchlist_id,
-// advisory_id, cursor, status, affected_json]). The primary key
+// advisory_id, cursor, status, affected_json]), written only while the lane is
+// unchanged since the pass read it (a concurrent upload or pass wins). The primary key
 // (watchlist_id, advisory_id) is the exactly-once gate; RETURNING gives only
 // the new rows. A row is written only while the advisory is still above the
 // list's dependencies_cursor, so a pass that read a set replaced by a later
@@ -68,11 +75,13 @@ export const DEPENDENCY_DELIVERY_INSERT_SQL = `INSERT OR IGNORE INTO deliveries 
   SELECT json_extract(j.value, '$[0]'), json_extract(j.value, '$[1]'), json_extract(j.value, '$[2]'), 0, json_extract(j.value, '$[3]'), ?2, json_extract(j.value, '$[4]')
   FROM json_each(?1) j
   WHERE EXISTS (SELECT 1 FROM watchlists w WHERE w.id = json_extract(j.value, '$[0]') AND w.dependencies_cursor < json_extract(j.value, '$[2]'))
+    AND ${MATCH_LANE_UNCHANGED}
   RETURNING watchlist_id, advisory_id, status`;
 
-// Pass, step 5: compare-and-set of the lane cursor (?3 = the cursor the pass
-// started from).
-export const MATCH_ADVANCE_SQL = `UPDATE match_cursors SET cursor = ?1, updated_at = ?2 WHERE lane = '${DEPENDENCY_LANE}' AND cursor = ?3`;
+// Pass, step 5: compare-and-set of the lane (?3, ?4 = the cursor and version
+// the pass started from).
+export const MATCH_ADVANCE_SQL = `UPDATE match_cursors SET cursor = ?1, updated_at = ?2, version = version + 1
+  WHERE lane = '${DEPENDENCY_LANE}' AND cursor = ?3 AND version = ?4`;
 
 /** One stored row as the upload writes it: [ecosystem, name, dep_ecosystem, dep_name, version]. */
 export function dependencyRow(d: Dependency): [string, string, string, string, string] {

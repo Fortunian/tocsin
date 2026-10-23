@@ -32,8 +32,9 @@ export interface DependencyMatchResult {
   skipped: number;
   sent: number;
   send_errors: number;
-  // 1 when another writer (an upload rewind or a second pass) moved the lane
-  // cursor during this pass; the lane is left where that writer put it.
+  // 1 when another writer (an upload rewind or a second pass) wrote the lane
+  // during this pass; the pass writes no row and leaves the lane where that
+  // writer put it.
   cas_lost: number;
 }
 
@@ -88,7 +89,7 @@ export async function enqueueDependencyMatches(env: Env, now: Date): Promise<Dep
     getSettingInt(env.DB, "webhooks.dependency_scan_rows", FALLBACK_DEPENDENCY_SCAN_ROWS),
     getSettingInt(env.DB, "webhooks.dependency_insert_chunk", FALLBACK_DEPENDENCY_INSERT_CHUNK),
     getSettingInt(env.DB, "webhooks.max_event_age_days", FALLBACK_MAX_EVENT_AGE_DAYS),
-    env.DB.prepare(MATCH_CURSOR_SQL).first<{ cursor: number }>(),
+    env.DB.prepare(MATCH_CURSOR_SQL).first<{ cursor: number; version: number }>(),
   ]);
   if (scanRows < 1) {
     console.error(JSON.stringify({ lane: "depmatch", err: `knob out of range: dependency_scan_rows=${scanRows}` }));
@@ -100,6 +101,7 @@ export async function enqueueDependencyMatches(env: Env, now: Date): Promise<Dep
     console.error(JSON.stringify({ lane: "depmatch", err: "match_cursors row 'dependencies' missing, reading from 0" }));
   }
   const g0 = lane?.cursor ?? 0;
+  const v0 = lane?.version ?? 0;
 
   const { results: window } = await env.DB.prepare(DEPENDENCY_WINDOW_SQL).bind(g0, scanRows).all<WindowRow>();
   if (window.length === 0) return res;
@@ -172,11 +174,12 @@ export async function enqueueDependencyMatches(env: Env, now: Date): Promise<Dep
     }
   }
 
-  // One transaction: the new rows, then the lane compare-and-set.
+  // One transaction: the new rows, then the lane compare-and-set. Both are
+  // void when an upload (or another pass) wrote the lane after the read above.
   const nowIso = now.toISOString();
   const writes: D1PreparedStatement[] = [];
-  for (let i = 0; i < items.length; i += insertChunk) writes.push(env.DB.prepare(DEPENDENCY_DELIVERY_INSERT_SQL).bind(JSON.stringify(items.slice(i, i + insertChunk)), nowIso));
-  writes.push(env.DB.prepare(MATCH_ADVANCE_SQL).bind(g1, nowIso, g0));
+  for (let i = 0; i < items.length; i += insertChunk) writes.push(env.DB.prepare(DEPENDENCY_DELIVERY_INSERT_SQL).bind(JSON.stringify(items.slice(i, i + insertChunk)), nowIso, g0, v0));
+  writes.push(env.DB.prepare(MATCH_ADVANCE_SQL).bind(g1, nowIso, g0, v0));
   const written = await env.DB.batch<{ watchlist_id: string; advisory_id: string; status: string }>(writes);
   if ((written[written.length - 1].meta.changes ?? 0) === 0) res.cas_lost = 1;
   const fresh: DeliveryMessage[] = [];

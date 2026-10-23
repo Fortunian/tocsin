@@ -2,9 +2,16 @@ import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Env } from "../../src/env";
 import { WEBHOOK_LISTS_SQL } from "../../src/queue/enqueue";
-import { enqueueDependencyMatches } from "../../src/queue/dependency-match";
+import { enqueueDependencyMatches, type DependencyMatchResult } from "../../src/queue/dependency-match";
 import { runQueue } from "../../src/queue/run";
-import { filterAccepts } from "../../src/watchlists/dependencies";
+import {
+  DEPENDENCY_DELETE_SQL,
+  DEPENDENCY_INSERT_SQL,
+  DEPENDENCY_LIST_UPDATE_SQL,
+  MATCH_REWIND_SQL,
+  dependencyRow,
+  filterAccepts,
+} from "../../src/watchlists/dependencies";
 import type { WatchlistFilter } from "../../src/watchlists/filter";
 import { watchlistWhere } from "../../src/watchlists/query";
 import { FakeFetch, envWith, fakeBatch, insertDelivery } from "../queue/helpers.tcs-11";
@@ -244,6 +251,81 @@ describe("upload during a pass", () => {
     expect(res.pairs).toBeGreaterThanOrEqual(1);
     expect(await deliveriesOf(list)).toHaveLength(0);
     expect(q.forList(list)).toHaveLength(0);
+  });
+});
+
+// The refute-review race: the upload read its check cursor F before advisory X
+// existed, and its batch commits between the pass's dependency read and the
+// pass's write batch. The lane stays at or below F, so only the version bump
+// makes the pass lose its compare-and-set.
+async function racedPass(list: string, keyId: string, newDeps: Dep[], f: number): Promise<DependencyMatchResult> {
+  const real = env.DB;
+  let batches = 0;
+  const db = new Proxy(real, {
+    get(target, prop) {
+      if (prop === "batch") {
+        return async (stmts: D1PreparedStatement[]) => {
+          batches += 1;
+          if (batches === 2) {
+            const now = new Date().toISOString();
+            await real.batch([
+              real.prepare(DEPENDENCY_DELETE_SQL).bind(list, keyId),
+              real.prepare(DEPENDENCY_INSERT_SQL).bind(list, keyId, JSON.stringify(newDeps.map(dependencyRow))),
+              real.prepare(DEPENDENCY_LIST_UPDATE_SQL).bind(list, keyId, f, now),
+              real.prepare(MATCH_REWIND_SQL).bind(f, now),
+            ]);
+          }
+          return target.batch(stmts);
+        };
+      }
+      const v = Reflect.get(target, prop);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  const res = await enqueueDependencyMatches({ ...envWith(new FakeQueue() as never), DB: db as D1Database }, new Date());
+  expect(batches).toBeGreaterThanOrEqual(2);
+  return res;
+}
+
+describe("upload commits during a pass, check cursor below the new advisory", () => {
+  it("a dependency the upload adds gets its delivery on the next pass", async () => {
+    const oldName = `fx37-rca-${tag()}`;
+    const newName = `fx37-rcb-${tag()}`;
+    const key = await seedKey();
+    const list = await seedList(key.id);
+    expect((await upload(key.token, list, [{ ecosystem: "npm", name: oldName, version: "1.0.0" }])).status).toBe(200);
+    await alignMatchCursor();
+    const f = await matchCursor();
+    // The new advisory affects only the added dependency.
+    const adv = await seedAdvisory({ component: newName, affected: [{ introduced: "0", fixed: "9.0.0" }] });
+
+    const res = await racedPass(list, key.id, [{ ecosystem: "npm", name: newName, version: "1.0.0" }], f);
+    expect(res.cas_lost).toBe(1);
+    expect(await matchCursor()).toBeLessThan(adv.cursor);
+
+    await cron(new FakeQueue());
+    expect((await deliveriesOf(list)).map((r) => r.advisory_id)).toEqual([adv.id]);
+  });
+
+  it("a dependency the upload removes gets no delivery", async () => {
+    const oldName = `fx37-rcr-${tag()}`;
+    const keepName = `fx37-rck-${tag()}`;
+    const key = await seedKey();
+    const list = await seedList(key.id);
+    expect((await upload(key.token, list, [{ ecosystem: "npm", name: oldName, version: "1.0.0" }])).status).toBe(200);
+    await alignMatchCursor();
+    const f = await matchCursor();
+    const adv = await seedAdvisory({ component: oldName, affected: [{ introduced: "0", fixed: "9.0.0" }] });
+
+    const res = await racedPass(list, key.id, [{ ecosystem: "npm", name: keepName, version: "1.0.0" }], f);
+    expect(res.pairs).toBeGreaterThanOrEqual(1);
+    expect(res.cas_lost).toBe(1);
+    expect(await deliveriesOf(list)).toHaveLength(0);
+
+    await cron(new FakeQueue());
+    await cron(new FakeQueue());
+    expect(await deliveriesOf(list)).toHaveLength(0);
+    expect(await matchCursor()).toBeGreaterThanOrEqual(adv.cursor);
   });
 });
 

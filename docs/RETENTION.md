@@ -48,7 +48,7 @@ The stored dependency set of a watch list (TCS-37), written by `POST /v1/watchli
 
 ## match_cursors
 
-One row per match lane (TCS-37): `dependencies`, the last advisory cursor the dependency match pass read. It is overwritten in place and does not grow. No delete job.
+One row per match lane (TCS-37): `dependencies`, the last advisory cursor the dependency match pass read, and a `version` that every pass advance and every lockfile upload increments. It is overwritten in place and does not grow. No delete job.
 
 ## deliveries
 
