@@ -32,7 +32,7 @@ One key per source: the ETag of the first advisories page, sent as `If-None-Matc
 
 ## settings
 
-A small key/value table of run-time limits and knobs (today thirteen rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `site.latest_rows`, `site.latest_cache_seconds`, `keys.anon_rate_per_minute`, `keys.max_body_bytes`, `watchlists.key_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (today twenty rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `site.latest_rows`, `site.latest_cache_seconds`, `keys.anon_rate_per_minute`, `keys.max_body_bytes`, `watchlists.key_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`, `keys.confirm_ttl_seconds`, `keys.ip_sends_per_hour`, `keys.email_sends_per_hour`, `mail.daily_send_cap`, `mail.provider`, `mail.from_address`, `keys.confirm_base_url`). Rows change in place by key; the table does not grow with traffic. No delete job.
 
 ## api_keys
 
@@ -53,6 +53,20 @@ One key: the audit record of the last `api_keys` retention run, `{ran_at, cutoff
 ## KV `rl:` keys (CURSORS namespace)
 
 The rate-limit counters, one key per caller per minute: `rl:v1:<ip>:<minute>` for `/v1/events`, `rl:v1:check:<ip>:<minute>` for `/v1/check`, `rl:v1:keys:<ip>:<minute>` for `POST /v1/keys` and `rl:v1:key:<key_id>:<minute>` for the `/v1/watchlists` routes. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
+
+The key link send counters (TCS-64), one key per caller per clock hour: `rl:v1:keyssend:ip:<ip>:<hour>` and `rl:v1:keyssend:em:<sha256 of the email>:<hour>`. Each is written with a 7,200-second TTL, so KV expires it on its own. No delete job.
+
+## KV `keyconfirm:v1:` keys (CURSORS namespace)
+
+One key per mailed key link (TCS-64): `keyconfirm:v1:<sha256 of the token>`, value `{email, purpose, expect_hash, expires_at}`. Opening the link deletes it. An unopened link expires by its TTL, `keys.confirm_ttl_seconds` (default 3600, never below 60). No delete job.
+
+## KV `mail:sent:` keys (CURSORS namespace)
+
+One counter per UTC day: `mail:sent:<YYYY-MM-DD>`, the mails sent that day, read against `mail.daily_send_cap`. Each is written with a 2-day TTL, so KV expires it on its own. No delete job.
+
+## KV `mail:fake:` keys (CURSORS namespace)
+
+Tests only. The test mailer (`src/mail/fake.ts`, selected by `MAIL_TRANSPORT=fake` in `vitest.config.ts`) keeps one outbox per recipient, `mail:fake:<email>`, with a 1-hour TTL. Production never writes it.
 
 ## KV `nvd:queried:` keys (CURSORS namespace)
 

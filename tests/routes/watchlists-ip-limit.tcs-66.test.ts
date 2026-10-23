@@ -224,7 +224,7 @@ describe("per-IP limit before API-key auth", () => {
 
     // An open IP passes the IP gate and is counted by both limiters.
     const open = ip();
-    expect((await call("POST", "/v1/keys", { ip: open, body: { email: uniqueEmail("ip66") } })).status).toBe(201);
+    expect((await call("POST", "/v1/keys", { ip: open, body: { email: uniqueEmail("ip66") } })).status).toBe(202);
     expect(await env.CURSORS.get(authCounter(open))).toBe("1");
     expect(await env.CURSORS.get(`rl:v1:keys:${open}:${WINDOW}`)).toBe("1");
   });
