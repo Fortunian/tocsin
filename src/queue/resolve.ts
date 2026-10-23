@@ -3,10 +3,11 @@ import { isBlockedAddress } from "../watchlists/webhook-url";
 // Send-time DNS check of a webhook host (TCS-11). The host is resolved with
 // DNS over HTTPS through the consumer's fetch seam, and the POST is refused
 // when any A or AAAA answer is a blocked address. The answers are cached in
-// KV (CURSORS) for settings.webhooks.dns_cache_seconds.
+// KV (CURSORS) for settings.webhooks.dns_cache_seconds; 0 means no cache.
 export const DOH_URL = "https://cloudflare-dns.com/dns-query";
-// Code fallback only. The live value is settings.webhooks.dns_cache_seconds.
-export const FALLBACK_DNS_CACHE_SECONDS = 600;
+// Code fallback only. The live value is settings.webhooks.dns_cache_seconds
+// (migrations/0027_dns_cache_seconds.sql).
+export const FALLBACK_DNS_CACHE_SECONDS = 60;
 // KV refuses an expirationTtl under 60 seconds. A platform limit, not a knob.
 const KV_MIN_TTL = 60;
 
@@ -36,9 +37,12 @@ async function query(fetcher: Fetcher, host: string, type: "A" | "AAAA"): Promis
 }
 
 // The A and AAAA addresses of a host, from KV or DoH. A string is a failure.
+// ttl 0: no KV read or write, a DoH lookup at every send.
 async function addresses(kv: KVNamespace, fetcher: Fetcher, host: string, ttl: number): Promise<string[] | string> {
-  const cached = await kv.get(dnsCacheKey(host));
-  if (cached !== null) return JSON.parse(cached) as string[];
+  if (ttl > 0) {
+    const cached = await kv.get(dnsCacheKey(host));
+    if (cached !== null) return JSON.parse(cached) as string[];
+  }
   let a: string[] | string;
   let aaaa: string[] | string;
   try {
@@ -50,13 +54,14 @@ async function addresses(kv: KVNamespace, fetcher: Fetcher, host: string, ttl: n
   if (typeof aaaa === "string") return aaaa;
   const all = [...a, ...aaaa];
   if (all.length === 0) return "no A or AAAA answer";
-  await kv.put(dnsCacheKey(host), JSON.stringify(all), { expirationTtl: Math.max(ttl, KV_MIN_TTL) });
+  if (ttl > 0) await kv.put(dnsCacheKey(host), JSON.stringify(all), { expirationTtl: Math.max(ttl, KV_MIN_TTL) });
   return all;
 }
 
 // Fail closed: a DoH error is dns_failed (a retryable failed attempt), and
-// any blocked answer is blocked_host. A residual gap stays: the platform
-// resolves the host again for the POST (see the PR follow-ups).
+// any blocked answer is blocked_host. A residual gap stays: Workers fetch
+// cannot pin the checked address, so the platform resolves the host again for
+// the POST. A short cache (or 0) narrows the window; it does not close it.
 export async function checkHost(kv: KVNamespace, fetcher: Fetcher, host: string, ttl: number): Promise<HostVerdict> {
   const r = await addresses(kv, fetcher, host, ttl);
   if (typeof r === "string") return { ok: false, reason: "dns_failed", detail: r };

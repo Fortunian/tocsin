@@ -39,55 +39,57 @@ afterEach(async () => {
 describe("runDeliveryRetention", () => {
   // Round 2 (finding 3): delivered rows are the exactly-once record and are
   // never deleted by this job, at any age; they go with their watch list.
-  it("deletes failed and skipped rows older than 90 days; keeps delivered rows of any age, 89-day rows and pending rows", async () => {
+  // TCS-82 item 6: failed rows are kept the same way; only skipped rows age out.
+  it("deletes skipped rows older than 90 days; keeps delivered and failed rows of any age, 89-day rows and pending rows", async () => {
     const now = new Date("2032-06-15T04:41:00.000Z");
     const del91 = await row("delivered", new Date(now.getTime() - 91 * DAY));
     const del89 = await row("delivered", new Date(now.getTime() - 89 * DAY));
     const fail91 = await row("failed", new Date(now.getTime() - 91 * DAY));
-    const fail89 = await row("failed", new Date(now.getTime() - 89 * DAY));
+    const skip89 = await row("skipped", new Date(now.getTime() - 89 * DAY));
     const skip91 = await row("skipped", new Date(now.getTime() - 91 * DAY));
     const pend91 = await row("pending", new Date(now.getTime() - 91 * DAY));
 
     const a = await runDeliveryRetention(env, now);
 
     expect(await gone(del91)).toBe(false);
-    expect(await gone(fail91)).toBe(true);
+    expect(await gone(fail91)).toBe(false);
     expect(await gone(skip91)).toBe(true);
     expect(await gone(del89)).toBe(false);
-    expect(await gone(fail89)).toBe(false);
+    expect(await gone(skip89)).toBe(false);
     expect(await gone(pend91)).toBe(false);
-    expect(a).toMatchObject({ dry_run: false, failed: 1, skipped: 1, has_more: false });
+    expect(a).toMatchObject({ dry_run: false, skipped: 1, has_more: false });
     expect(a).not.toHaveProperty("delivered");
-    expect(await audit()).toMatchObject({ ran_at: now.toISOString(), dry_run: false, failed: 1, skipped: 1 });
+    expect(a).not.toHaveProperty("failed");
+    expect(await audit()).toMatchObject({ ran_at: now.toISOString(), dry_run: false, skipped: 1 });
   });
 
   it("a dry run deletes nothing and records the counts", async () => {
     const now = new Date("2033-06-15T04:41:00.000Z");
-    const fail91 = await row("failed", new Date(now.getTime() - 91 * DAY));
+    const skip91 = await row("skipped", new Date(now.getTime() - 91 * DAY));
     await setKnob("retention.deliveries_dry_run", "1");
 
     const a = await runDeliveryRetention(env, now);
 
-    expect(await gone(fail91)).toBe(false);
+    expect(await gone(skip91)).toBe(false);
     expect(a).toMatchObject({ dry_run: true });
-    expect(a.failed).toBeGreaterThanOrEqual(1);
-    expect(await audit()).toMatchObject({ dry_run: true, failed: a.failed });
+    expect(a.skipped).toBeGreaterThanOrEqual(1);
+    expect(await audit()).toMatchObject({ dry_run: true, skipped: a.skipped });
   });
 
   it("reads the window from retention.deliveries_days", async () => {
     const now = new Date("2034-06-15T04:41:00.000Z");
-    const fail11 = await row("failed", new Date(now.getTime() - 11 * DAY));
+    const skip11 = await row("skipped", new Date(now.getTime() - 11 * DAY));
     await setKnob("retention.deliveries_days", "10");
     await runDeliveryRetention(env, now);
-    expect(await gone(fail11)).toBe(true);
+    expect(await gone(skip11)).toBe(true);
   });
 
   it("an out-of-range knob throws and deletes nothing", async () => {
     const now = new Date("2035-06-15T04:41:00.000Z");
-    const fail91 = await row("failed", new Date(now.getTime() - 91 * DAY));
+    const skip91 = await row("skipped", new Date(now.getTime() - 91 * DAY));
     await setKnob("retention.deliveries_days", "0");
     await expect(runDeliveryRetention(env, now)).rejects.toThrow(/out of range/);
-    expect(await gone(fail91)).toBe(false);
+    expect(await gone(skip91)).toBe(false);
   });
 });
 
@@ -98,7 +100,7 @@ describe("the daily cron", () => {
   });
 
   it("worker.scheduled with DELIVERY_RETENTION_CRON runs the deliveries retention and no ingest", async () => {
-    const del91 = await row("failed", new Date(Date.now() - 91 * DAY));
+    const del91 = await row("skipped", new Date(Date.now() - 91 * DAY));
     const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM sources WHERE last_run_at IS NOT NULL").first<{ n: number }>();
     const ctx = createExecutionContext();
     await worker.scheduled(createScheduledController({ cron: DELIVERY_RETENTION_CRON, scheduledTime: Date.now() }), env, ctx);
@@ -109,7 +111,7 @@ describe("the daily cron", () => {
   });
 
   it("runCron routes it too", async () => {
-    const del91 = await row("failed", new Date(Date.now() - 91 * DAY));
+    const del91 = await row("skipped", new Date(Date.now() - 91 * DAY));
     const ctx = createExecutionContext();
     await runCron(createScheduledController({ cron: DELIVERY_RETENTION_CRON, scheduledTime: Date.now() }), env, ctx, {});
     await waitOnExecutionContext(ctx);

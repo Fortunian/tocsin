@@ -83,7 +83,7 @@ Tocsin runs on Cloudflare Workers with D1, KV and Queues. Fork the repo, create 
 
 1. Run `wrangler d1 create tocsin` and put the id in `wrangler.toml` (`database_id`).
 2. Run `wrangler kv namespace create CURSORS` and put the id in `wrangler.toml` (`[[kv_namespaces]] id`).
-3. Run `wrangler queues create deliveries`.
+3. Run `wrangler queues create deliveries`. The deploy job creates the dead-letter queue `deliveries-dlq` when it is missing.
 4. Change `account_id` and the `routes` custom domain in `wrangler.toml` and `workers/mcp/wrangler.toml` to your own account and zone. Cloudflare creates the DNS records on deploy.
 5. Add the repo secret `CLOUDFLARE_API_TOKEN` and the repo variables `CLOUDFLARE_ACCOUNT_ID` and `DEPLOY_ENABLED=1`.
 

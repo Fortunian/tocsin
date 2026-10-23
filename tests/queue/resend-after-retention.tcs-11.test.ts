@@ -78,7 +78,8 @@ describe("a delivered event after retention and a re-cursor", () => {
 });
 
 describe("retention keeps delivered rows of a live list", () => {
-  it("deletes failed and skipped rows past the window, keeps delivered rows", async () => {
+  // TCS-82 item 6: failed rows are kept for the life of the list too.
+  it("deletes skipped rows past the window, keeps delivered and failed rows", async () => {
     const list = await seedList();
     const now = new Date("2031-03-01T04:41:00.000Z");
     const old = new Date(now.getTime() - 400 * DAY).toISOString();
@@ -90,7 +91,7 @@ describe("retention keeps delivered rows of a live list", () => {
     }
     await runDeliveryRetention(env, now);
     expect((await deliveryRow(list.id, rows.delivered))!.status).toBe("delivered");
-    expect(await deliveryRow(list.id, rows.failed)).toBeNull();
+    expect((await deliveryRow(list.id, rows.failed))!.status).toBe("failed");
     expect(await deliveryRow(list.id, rows.skipped)).toBeNull();
   });
 

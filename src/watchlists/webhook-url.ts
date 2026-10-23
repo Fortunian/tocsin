@@ -85,7 +85,12 @@ function v6Groups(ip: string): number[] | null {
 }
 
 function blockedV6(g: number[]): boolean {
-  if (g.slice(0, 7).every((x) => x === 0) && g[7] <= 1) return true; // :: and ::1
+  // ::/96: ::, ::1 and IPv4-compatible ::a.b.c.d (deprecated, RFC 4291 2.5.5.1).
+  if (g.slice(0, 6).every((x) => x === 0)) return true;
+  // ::ffff:0:0:0/96: IPv4-translated ::ffff:0:a.b.c.d (RFC 2765).
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return true;
+  // 2002::/16: 6to4 carries an IPv4 address in groups 1 and 2; blocked whole.
+  if (g[0] === 0x2002) return true;
   const embedded = (hi: number, lo: number) => blockedV4([hi >> 8, hi & 255, lo >> 8, lo & 255]);
   if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return embedded(g[6], g[7]); // ::ffff:a.b.c.d
   if (g[0] === 0x64 && g[1] === 0xff9b) return embedded(g[6], g[7]); // NAT64

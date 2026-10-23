@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { DEFAULT_LIMIT, MAX_LIMIT } from "../feed/query";
 import { jsonUtf8 } from "../lib/http";
+import { encryptSecret, loadKek } from "../lib/secret-box";
 import { getSettingInt } from "../lib/settings";
 import { requireApiKey, type AuthEnv } from "../middleware/auth";
 import { keyRateLimit } from "../middleware/ratelimit";
@@ -20,9 +21,10 @@ export const DELIVERIES_LIST_MAX = 100;
 // One guarded statement: the count check and the insert are atomic, so two
 // parallel creates cannot pass plans.max_watchlists. A new list starts at the
 // newest feed cursor, so it answers new events only. ?1..?7 as before;
-// ?8 delivery, ?9 webhook_url, ?10 webhook_secret.
-export const CREATE_WATCHLIST_SQL = `INSERT INTO watchlists (id, key_id, name, filter_json, cursor, delivery, webhook_url, webhook_secret, created_at)
-  SELECT ?1, ?2, ?3, ?4, (SELECT COALESCE(MAX(cursor), 0) FROM advisories), COALESCE(?8, 'poll'), ?9, ?10, ?5
+// ?8 delivery, ?9 webhook_url, ?10 webhook_secret (plaintext, only without a
+// KEK), ?11 webhook_secret_enc.
+export const CREATE_WATCHLIST_SQL = `INSERT INTO watchlists (id, key_id, name, filter_json, cursor, delivery, webhook_url, webhook_secret, webhook_secret_enc, created_at)
+  SELECT ?1, ?2, ?3, ?4, (SELECT COALESCE(MAX(cursor), 0) FROM advisories), COALESCE(?8, 'poll'), ?9, ?10, ?11, ?5
   WHERE (SELECT COUNT(*) FROM watchlists WHERE key_id = ?6) < ?7
   RETURNING cursor`;
 
@@ -49,6 +51,15 @@ export const RESUME_WATCHLIST_SQL = `UPDATE watchlists SET paused_at = NULL, con
   WHERE id = ? AND key_id = ? RETURNING id, consecutive_failures, paused_at, last_delivery_at, last_delivery_code`;
 
 const WEBHOOKS_OFF = { error: "webhooks not enabled for this plan" };
+
+// The two stored forms of a new webhook secret: [webhook_secret,
+// webhook_secret_enc]. With a usable WEBHOOK_KEK only the ciphertext is
+// stored (AAD = the list id); without one, the plaintext, as before TCS-82.
+async function storedSecret(env: AuthEnv["Bindings"], listId: string, secret: string | null): Promise<[string | null, string | null]> {
+  if (secret === null) return [null, null];
+  const kek = await loadKek(env, "watchlists");
+  return kek ? [null, await encryptSecret(kek, listId, secret)] : [secret, null];
+}
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -116,8 +127,9 @@ watchlists.post("/", capBody, async (c) => {
   const id = "wl_" + crypto.randomUUID();
   const created_at = new Date().toISOString();
   const secret = parsed.delivery.delivery === "webhook" ? newWebhookSecret() : null;
+  const [plain, sealed] = await storedSecret(c.env, id, secret);
   const row = await c.env.DB.prepare(CREATE_WATCHLIST_SQL)
-    .bind(id, keyId, parsed.name, JSON.stringify(parsed.filter), created_at, keyId, limits.max_watchlists, parsed.delivery.delivery, parsed.delivery.webhook_url, secret)
+    .bind(id, keyId, parsed.name, JSON.stringify(parsed.filter), created_at, keyId, limits.max_watchlists, parsed.delivery.delivery, parsed.delivery.webhook_url, plain, sealed)
     .first<{ cursor: number }>();
   if (!row) return answer(c, { error: "watch list limit reached", max_watchlists: limits.max_watchlists }, 403);
 
@@ -142,11 +154,12 @@ watchlists.patch("/:id", capBody, async (c) => {
 
   const id = c.req.param("id");
   const secret = parsed.value.delivery === "webhook" ? newWebhookSecret() : null;
+  const [plain, sealed] = await storedSecret(c.env, id, secret);
   // A new delivery setting starts with a clean health record (no pause).
   const res = await c.env.DB.prepare(
-    "UPDATE watchlists SET delivery = ?, webhook_url = ?, webhook_secret = ?, paused_at = NULL, consecutive_failures = 0 WHERE id = ? AND key_id = ?",
+    "UPDATE watchlists SET delivery = ?, webhook_url = ?, webhook_secret = ?, webhook_secret_enc = ?, paused_at = NULL, consecutive_failures = 0 WHERE id = ? AND key_id = ?",
   )
-    .bind(parsed.value.delivery, parsed.value.webhook_url, secret, id, keyId)
+    .bind(parsed.value.delivery, parsed.value.webhook_url, plain, sealed, id, keyId)
     .run();
   if (res.meta.changes === 0) return answer(c, { error: "not found" }, 404);
   const hook = secret ? { webhook_url: parsed.value.webhook_url, webhook_secret: secret } : { webhook_url: null };

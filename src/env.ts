@@ -11,6 +11,10 @@ export interface Env {
   IMPORT_TOKEN?: string;
   // MailChannels Email API key (wrangler secret). Unset: POST /v1/keys answers 503.
   MAILCHANNELS_API_KEY?: string;
+  // AES-256 key for webhook secrets at rest, 32 bytes as base64 (wrangler
+  // secret, src/lib/secret-box.ts). Unset: new webhook secrets are stored as
+  // plaintext and each use logs kek_missing.
+  WEBHOOK_KEK?: string;
   // "fake" selects the test mailer (src/mail/fake.ts). Set only in vitest.config.ts, never in wrangler.toml.
   MAIL_TRANSPORT?: string;
 }
