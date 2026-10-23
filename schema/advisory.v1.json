@@ -39,6 +39,11 @@
       "type": "string",
       "minLength": 1
     },
+    "ecosystem_qualifier": {
+      "description": "The full OSV ecosystem string when it has a suffix, for example Packagist:https://packages.drupal.org/8.",
+      "type": "string",
+      "minLength": 1
+    },
     "component": {
       "description": "Package name or runtime name.",
       "type": "string",

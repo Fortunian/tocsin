@@ -1,0 +1,26 @@
+{
+  "id": "DRUPAL-CONTRIB-2017-082",
+  "summary": "Permissions by Term - Moderately critical - Access bypass - SA-CONTRIB-2017-082",
+  "details": "This module enables you to restrict access to nodes by taxonomy terms.\n\nThe module does not sufficiently check access on the node listing, so a user can see nodes they have no permission to view.",
+  "modified": "2026-10-01T00:00:00Z",
+  "published": "2017-10-31T00:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "Packagist:https://packages.drupal.org/8",
+        "name": "drupal/permissions_by_term",
+        "purl": "pkg:composer/drupal/permissions_by_term"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [{ "introduced": "0" }, { "fixed": "1.35.0" }]
+        }
+      ],
+      "database_specific": { "affected_versions": "<1.35.0" }
+    }
+  ],
+  "references": [{ "type": "WEB", "url": "https://www.drupal.org/node/3113046" }],
+  "database_specific": { "severity": "MODERATE" },
+  "schema_version": "1.7.3"
+}
