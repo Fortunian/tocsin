@@ -1,6 +1,6 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { readZip, runBackfill, type BackfillRow, type ImportAnswer, type ImportBody } from "../../scripts/backfill/osv-import.mjs";
 import worker from "../../src/index";
 import { buildZip, jsonEntry, osvRecord } from "./zip-fixture.tcs-32";
@@ -63,9 +63,15 @@ beforeAll(async () => {
 beforeEach(async () => {
   await env.DB.prepare("UPDATE sources SET config_json = ? WHERE id = 'osv'").bind(JSON.stringify({ ecosystems: [ECO] })).run();
   await env.DB.prepare("DELETE FROM backfill").run();
+  // These tests cut 990 records with a server cap of 500 (the seed is 100).
+  await env.DB.prepare("UPDATE settings SET value = '500' WHERE key = 'import.max_batch'").run();
   // Each test starts with none of this file's advisories stored.
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source = 'osv' AND source_id LIKE 'RUSTSEC-202%')").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'osv' AND source_id LIKE 'RUSTSEC-202%'").run();
+});
+
+afterEach(async () => {
+  await env.DB.prepare("UPDATE settings SET value = '100' WHERE key = 'import.max_batch'").run();
 });
 
 const backfillRow = () => env.DB.prepare("SELECT * FROM backfill WHERE ecosystem = ?").bind(ECO).first<Record<string, unknown>>();

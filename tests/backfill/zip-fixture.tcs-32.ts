@@ -101,10 +101,10 @@ export async function buildZip(entries: ZipEntry[], opts: { zip64?: boolean } = 
 }
 
 // One OSV record in the shape of the OSV schema (the fields normalizeOsv reads).
-export function osvRecord(id: string, ecosystem: string, name: string, opts: { withdrawn?: boolean; published?: string; fixed?: string } = {}): Record<string, unknown> {
+export function osvRecord(id: string, ecosystem: string, name: string, opts: { withdrawn?: boolean; published?: string; fixed?: string; modified?: string } = {}): Record<string, unknown> {
   return {
     id,
-    modified: "2026-10-01T00:00:00Z",
+    modified: opts.modified ?? "2026-10-01T00:00:00Z",
     published: opts.published ?? "2020-01-01T00:00:00Z",
     ...(opts.withdrawn ? { withdrawn: "2026-09-01T00:00:00Z" } : {}),
     summary: `Fixture advisory ${id}`,

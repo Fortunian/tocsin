@@ -22,7 +22,7 @@ on:
       batch:
         description: Records per request (the server's settings row import.max_batch caps it)
         required: false
-        default: "500"
+        default: "100"
 
 # Two runs for one ecosystem never overlap.
 concurrency:
@@ -45,4 +45,7 @@ jobs:
         env:
           TOCSIN_URL: ${{ vars.TOCSIN_URL || 'https://tocsin.sh' }}
           IMPORT_TOKEN: ${{ secrets.TOCSIN_IMPORT_TOKEN }}
-        run: node scripts/backfill/run.mjs --ecosystem "${{ inputs.ecosystem }}" --batch "${{ inputs.batch }}"
+          # The inputs reach the shell as env values, never as script text.
+          ECOSYSTEM: ${{ inputs.ecosystem }}
+          BATCH: ${{ inputs.batch }}
+        run: node scripts/backfill/run.mjs --ecosystem "$ECOSYSTEM" --batch "$BATCH"

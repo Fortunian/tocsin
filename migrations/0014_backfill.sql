@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS backfill (
 ALTER TABLE sources ADD COLUMN coverage_since TEXT;
 
 -- Import limits (CLAUDE.md rule 5). INSERT OR IGNORE never overwrites an edited value.
--- Records per POST /v1/internal/import request.
-INSERT OR IGNORE INTO settings (key, value) VALUES ('import.max_batch', '500');
+-- Records per POST /v1/internal/import request. About 5 D1 queries per new record
+-- against the limit of 1,000 D1 queries per Worker invocation (src/routes/internal-import.ts).
+INSERT OR IGNORE INTO settings (key, value) VALUES ('import.max_batch', '100');
 -- Body cap of one import request in bytes (8 MB).
 INSERT OR IGNORE INTO settings (key, value) VALUES ('import.max_body_bytes', '8388608');

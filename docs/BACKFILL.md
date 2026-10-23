@@ -20,7 +20,7 @@ Without the worker secret, the route answers 403 to every request.
 ## Run
 
 1. Open Actions, workflow `backfill`, "Run workflow".
-2. Select one `ecosystem` (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io` or `RubyGems`). Keep `batch` at 500.
+2. Select one `ecosystem` (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io` or `RubyGems`). Keep `batch` at 100.
 3. Do this once per ecosystem. Two runs for one ecosystem never run at the same time.
 4. Read the progress line per batch in the run log. The last line is
    `backfill: <eco>: done at <time>: <n> imported, <n> unchanged, <n> skipped, <n> errors in <n> requests`.
@@ -29,9 +29,22 @@ A run that stops (a timeout, a 5xx after 3 retries) leaves the `backfill` row wi
 `done_at`. Run the workflow again for that ecosystem: it resumes after `last_id`. A run after
 `done_at` reads the whole file again and reports the records as `unchanged`.
 
-The batch size is capped by the settings row `import.max_batch` (default 500). If the worker
-answers 500 on a batch because of the D1 query limit per request, lower the row, for example to
-200, and run again. `import.max_body_bytes` (default 8 MB) caps one request body.
+The zip is a snapshot. It can be older than the record the cron already read from the OSV API.
+When the stored record (created by the same OSV id) has a later `modified` than the zip copy,
+the import does not write it. The answer counts it in `stale`, and the record counts as
+`unchanged`. An older snapshot never replaces a newer record.
+
+## Feed consumers
+
+Each record that the backfill inserts or updates gets a new feed cursor. A consumer that polls
+`GET /v1/events` sees the backfilled history (years of old advisories) as new events after the
+run. Use `published_at` to tell old advisories from new ones. A later delivery feature must not
+treat backfill events as new advisories.
+
+The batch size is capped by the settings row `import.max_batch` (default 100). One new record
+costs about 5 D1 queries, and a Worker invocation may run 1,000 D1 queries (paid plan). Do not
+set the row or the `batch` input above 150. If the worker answers 500 on a batch because of the
+D1 query limit, lower the row, for example to 50, and run again. `import.max_body_bytes` (default 8 MB) caps one request body.
 
 ## Read the result
 

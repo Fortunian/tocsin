@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { COVERAGE_SQL, SOURCE_COVERAGE_SQL } from "../../src/check/coverage";
-import { BACKFILL_GET_SQL, BACKFILL_UPSERT_SQL, OSV_COVERAGE_SQL } from "../../src/routes/internal-import";
+import { BACKFILL_GET_SQL, BACKFILL_UPSERT_SQL, OSV_COVERAGE_SQL, STORED_MODIFIED_SQL } from "../../src/routes/internal-import";
 
 // EXPLAIN QUERY PLAN for every query on the backfill table (repo iron rule 2),
 // on a seeded table: one row per enabled ecosystem plus 50 more rows.
@@ -27,6 +27,12 @@ describe("backfill query plans", () => {
     expect(osv).toMatch(/SEARCH sources USING INDEX sqlite_autoindex_sources_1 \(id=\?\)/);
     expect(osv.match(/SEARCH b USING INDEX sqlite_autoindex_backfill_1 \(ecosystem=\?\)/g)).toHaveLength(2);
     expect(osv).not.toMatch(/SCAN (b|backfill)\b/);
+
+    // The stale check of one request: PK seeks on advisory_sources and advisories, driven by the id list.
+    const stored = await plan(STORED_MODIFIED_SQL, JSON.stringify(["GHSA-aaaa-0000-0001", "GHSA-aaaa-0000-0002"]));
+    expect(stored).toMatch(/SEARCH s USING (PRIMARY KEY|INDEX sqlite_autoindex_advisory_sources_1) \(source=\? AND source_id=\?\)/);
+    expect(stored).toMatch(/SEARCH a USING INDEX sqlite_autoindex_advisories_1 \(id=\?\)/);
+    expect(stored).not.toMatch(/SCAN (s|a)\b/);
 
     // backfill has one row per ecosystem and sources one row per source: bounded full reads.
     expect(await plan(COVERAGE_SQL)).toMatch(/SCAN backfill/);

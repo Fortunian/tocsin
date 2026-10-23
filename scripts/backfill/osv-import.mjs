@@ -111,7 +111,7 @@ const idOf = (name) => name.replace(/^.*\//, "").replace(/\.json$/, "");
 // post(body): one POST /v1/internal/import; it throws when the request fails.
 // A row with last_id and no done_at resumes after last_id. Any other row
 // starts a new run (start: true), which resets the counters on the server.
-export async function runBackfill({ zip, ecosystem, post, get, batch = 500, log = () => {} }) {
+export async function runBackfill({ zip, ecosystem, post, get, batch = 100, log = () => {} }) {
   const z = await readZip(zip);
   const row = await get();
   const resume = row.last_id !== null && row.done_at === null ? row.last_id : null;

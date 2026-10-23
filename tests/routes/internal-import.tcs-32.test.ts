@@ -58,7 +58,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await env.DB.prepare("UPDATE sources SET config_json = '{}', coverage_since = NULL WHERE id = 'osv'").run();
   await env.DB.prepare("DELETE FROM settings WHERE key = 'import.max_batch'").run();
-  await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('import.max_batch', '500')").run();
+  await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('import.max_batch', '100')").run();
 });
 
 const batch = (ids: string[], over: Record<string, unknown> = {}) => ({
@@ -95,8 +95,8 @@ describe("auth (fail closed, before the body is read)", () => {
 });
 
 describe("limits", () => {
-  it("501 records -> 413 and nothing is written", async () => {
-    const ids = Array.from({ length: 501 }, (_, i) => `GHSA-bbbb-0000-${String(i).padStart(4, "0")}`);
+  it("101 records (the seeded import.max_batch is 100) -> 413 and nothing is written", async () => {
+    const ids = Array.from({ length: 101 }, (_, i) => `GHSA-bbbb-0000-${String(i).padStart(4, "0")}`);
     const res = await post(batch(ids));
     expect(res.status).toBe(413);
     expect(await row("npm")).toBeNull();
@@ -192,9 +192,38 @@ describe("import", () => {
     expect(await row("npm")).toMatchObject({ done_at: done, imported: 0, unchanged: 1 });
   });
 
+  it("an older zip copy never replaces a newer stored record; it counts as stale and unchanged", async () => {
+    const id = "GHSA-prob-0000-0001";
+    const newer = osvRecord(id, "npm", "tcs32-prob", { modified: "2026-10-22T00:00:00Z", fixed: "2.0.0" });
+    const older = osvRecord(id, "npm", "tcs32-prob", { modified: "2026-10-01T00:00:00Z", fixed: "1.0.1" });
+    const first = (await (await post({ ...batch([id]), records: [newer], start: true })).json()) as Answer;
+    expect(first.inserted).toBe(1);
+
+    const second = (await (await post({ ...batch([id]), records: [older], start: true })).json()) as Answer & { stale: number };
+    expect(second).toMatchObject({ inserted: 0, updated: 0, stale: 1, imported: 0, unchanged: 1, errors: [] });
+    expect(await row("npm")).toMatchObject({ imported: 0, unchanged: 1, coverage_since: "2020-01-01T00:00:00Z" });
+
+    const stored = await env.DB.prepare("SELECT a.modified_at, a.doc_json FROM advisory_sources s JOIN advisories a ON a.id = s.advisory_id WHERE s.source = 'osv' AND s.source_id = ?")
+      .bind(id)
+      .first<{ modified_at: string; doc_json: string }>();
+    expect(stored!.modified_at).toBe("2026-10-22T00:00:00Z");
+    expect(JSON.parse(stored!.doc_json).fixed_versions).toEqual(["2.0.0"]);
+  });
+
+  it("a zip copy with a later modified updates the stored record", async () => {
+    const id = "GHSA-prob-0000-0002";
+    await post({ ...batch([id]), records: [osvRecord(id, "npm", "tcs32-prob2", { modified: "2026-10-01T00:00:00Z", fixed: "1.0.1" })], start: true });
+    const res = (await (await post({ ...batch([id]), records: [osvRecord(id, "npm", "tcs32-prob2", { modified: "2026-10-22T00:00:00Z", fixed: "2.0.0" })], start: true })).json()) as Answer & { stale: number };
+    expect(res).toMatchObject({ updated: 1, stale: 0, imported: 1 });
+    const stored = await env.DB.prepare("SELECT a.modified_at FROM advisory_sources s JOIN advisories a ON a.id = s.advisory_id WHERE s.source = 'osv' AND s.source_id = ?")
+      .bind(id)
+      .first<{ modified_at: string }>();
+    expect(stored!.modified_at).toBe("2026-10-22T00:00:00Z");
+  });
+
   it("GET returns the row (or a zero row) with max_batch and skip_id_prefixes", async () => {
     const zero = (await (await call("/npm")).json()) as Record<string, unknown>;
-    expect(zero).toMatchObject({ ecosystem: "npm", last_id: null, done_at: null, imported: 0, max_batch: 500, skip_id_prefixes: ["MAL-"] });
+    expect(zero).toMatchObject({ ecosystem: "npm", last_id: null, done_at: null, imported: 0, max_batch: 100, skip_id_prefixes: ["MAL-"] });
     await post(batch(["GHSA-iiii-0000-0001"], { start: true }));
     const got = (await (await call("/npm")).json()) as Record<string, unknown>;
     expect(got).toMatchObject({ last_id: "GHSA-iiii-0000-0001", imported: 1 });

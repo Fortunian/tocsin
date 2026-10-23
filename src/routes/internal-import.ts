@@ -7,13 +7,18 @@ import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Env } from "../env";
 import { normalizeOsv, OSV_CONFIG_SQL, readConfig, type OsvVuln } from "../ingest/osv";
+import type { AdvisoryInput } from "../ingest/types";
 import { InvalidAdvisoryError, upsertAdvisory } from "../ingest/upsert";
 import { jsonUtf8 } from "../lib/http";
 import { getSettingInt } from "../lib/settings";
 
 // Code fallbacks only. The live values are the settings rows import.max_batch
 // and import.max_body_bytes (migrations/0014_backfill.sql).
-export const FALLBACK_MAX_BATCH = 500;
+// One new record costs about 5 D1 queries (findByPair, findByCve, insert,
+// insertSource, insertCve). A Worker invocation may run 1,000 D1 queries
+// (paid plan), so 100 records (about 500 queries) leave room for a record
+// with more than one doc or CVE.
+export const FALLBACK_MAX_BATCH = 100;
 export const FALLBACK_MAX_BODY_BYTES = 8 * 1024 * 1024;
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -39,6 +44,11 @@ ON CONFLICT(ecosystem) DO UPDATE SET
   done_at = CASE WHEN ?7 = 1 THEN COALESCE(backfill.done_at, excluded.started_at) ELSE backfill.done_at END,
   coverage_since = CASE WHEN backfill.coverage_since IS NULL THEN excluded.coverage_since WHEN excluded.coverage_since IS NULL THEN backfill.coverage_since ELSE MIN(backfill.coverage_since, excluded.coverage_since) END
 RETURNING ecosystem, started_at, done_at, imported, unchanged, skipped, last_id, coverage_since`;
+// ?1 the OSV source_ids of one request as a JSON array. One read for the batch:
+// the stored modified_at and creator of each (osv, source_id) that exists
+// (PK seek on advisory_sources, then PK of advisories).
+export const STORED_MODIFIED_SQL = `SELECT s.source_id, a.modified_at, json_extract(a.doc_json, '$.sources[0].source') AS creator_source, json_extract(a.doc_json, '$.sources[0].source_id') AS creator_id
+FROM json_each(?1) j CROSS JOIN advisory_sources s ON s.source = 'osv' AND s.source_id = j.value JOIN advisories a ON a.id = s.advisory_id`;
 // ?1 the enabled ecosystems as a JSON array. sources.osv.coverage_since moves
 // only when every one of them has a done backfill row.
 // Both subqueries drive from the JSON list and seek backfill by its primary key
@@ -144,15 +154,17 @@ internalImport.post(
     if (body.records.length > maxBatch) return answer(c, { error: `more than ${maxBatch} records in one request (settings import.max_batch)` }, 413);
 
     // Counts per record (imported: at least one doc written; unchanged: every
-    // doc unchanged) and per doc (inserted, updated). A record that does not
-    // normalize is an error and is counted in neither.
+    // doc unchanged or stale) and per doc (inserted, updated, stale). A record
+    // that does not normalize is an error and is counted in neither.
     let imported = 0;
     let unchanged = 0;
     let skipped = body.skipped;
     let inserted = 0;
     let updated = 0;
+    let stale = 0;
     let oldest: string | null = null;
     const errors: string[] = [];
+    const normalized: { source_id: string; doc: AdvisoryInput }[][] = [];
     for (const item of body.records) {
       const v = item as OsvVuln;
       const id = typeof v?.id === "string" ? v.id : "?";
@@ -165,21 +177,49 @@ internalImport.post(
         errors.push(`${id}: ${norm.reason}`);
         continue;
       }
+      normalized.push(norm.docs);
+    }
+
+    // The zip is a snapshot, older than the OSV API the cron reads. A doc whose
+    // stored copy was created by this same osv source_id and has a later
+    // modified_at is not written: an older snapshot never replaces a newer
+    // record. An equal modified_at still goes through upsertAdvisory (unchanged,
+    // or a parser upgrade). One read for the whole request.
+    const sourceIds = normalized.flatMap((docs) => docs.map((d) => d.source_id));
+    const storedModified = new Map<string, number>();
+    if (sourceIds.length > 0) {
+      const { results } = await db
+        .prepare(STORED_MODIFIED_SQL)
+        .bind(JSON.stringify(sourceIds))
+        .all<{ source_id: string; modified_at: string; creator_source: string | null; creator_id: string | null }>();
+      for (const r of results) {
+        if (r.creator_source === "osv" && r.creator_id === r.source_id) storedModified.set(r.source_id, Date.parse(r.modified_at));
+      }
+    }
+
+    for (const docs of normalized) {
       let wrote = false;
       let failed = false;
-      for (const d of norm.docs) {
-        try {
-          // D1 errors throw out of the request (500): the backfill row is not moved.
-          const outcome = await upsertAdvisory(db, d.doc, { source: "osv", source_id: d.source_id });
-          if (outcome === "inserted") inserted += 1;
-          if (outcome === "updated") updated += 1;
-          if (outcome !== "unchanged") wrote = true;
-          if (d.doc.ecosystem === body.ecosystem && (oldest === null || d.doc.published_at < oldest)) oldest = d.doc.published_at;
-        } catch (err) {
-          if (!(err instanceof InvalidAdvisoryError)) throw err;
-          errors.push(`${d.source_id}: ${err.message}`);
-          failed = true;
+      for (const d of docs) {
+        const stored = storedModified.get(d.source_id);
+        if (stored !== undefined && stored > Date.parse(d.doc.modified_at)) {
+          stale += 1;
+        } else {
+          try {
+            // D1 errors throw out of the request (500): the backfill row is not moved.
+            const outcome = await upsertAdvisory(db, d.doc, { source: "osv", source_id: d.source_id });
+            if (outcome === "inserted") inserted += 1;
+            if (outcome === "updated") updated += 1;
+            if (outcome !== "unchanged") wrote = true;
+          } catch (err) {
+            if (!(err instanceof InvalidAdvisoryError)) throw err;
+            errors.push(`${d.source_id}: ${err.message}`);
+            failed = true;
+            continue;
+          }
         }
+        // A stale doc is stored (in its newer copy), so it counts for coverage.
+        if (d.doc.ecosystem === body.ecosystem && (oldest === null || d.doc.published_at < oldest)) oldest = d.doc.published_at;
       }
       if (wrote) imported += 1;
       else if (!failed) unchanged += 1;
@@ -192,7 +232,7 @@ internalImport.post(
     if (body.final) stmts.push(db.prepare(OSV_COVERAGE_SQL).bind(JSON.stringify(cfg.ecosystems)));
     const [res] = await db.batch<BackfillRow>(stmts);
     const row = res.results[0];
-    return answer(c, { ecosystem: body.ecosystem, imported, unchanged, skipped, inserted, updated, errors, last_id: row.last_id, done_at: row.done_at, row });
+    return answer(c, { ecosystem: body.ecosystem, imported, unchanged, skipped, inserted, updated, stale, errors, last_id: row.last_id, done_at: row.done_at, row });
   },
 );
 

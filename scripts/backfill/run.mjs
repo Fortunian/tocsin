@@ -12,14 +12,14 @@
 //   IMPORT_BACKOFF_MS  first retry wait, doubled each time  default 2000
 // The server's settings row import.max_batch caps --batch.
 //
-//   IMPORT_TOKEN=... node scripts/backfill/run.mjs --ecosystem npm [--batch 500]
+//   IMPORT_TOKEN=... node scripts/backfill/run.mjs --ecosystem npm [--batch 100]
 //
 // Exit 0 when the final batch is recorded (done_at set). Exit 1 on a 4xx at
 // once, on a 5xx or network error after the retries, or on bad input.
 import { parseArgs } from "node:util";
 import { runBackfill } from "./osv-import.mjs";
 
-const DEFAULTS = { tocsin: "https://tocsin.sh", osv: "https://osv-vulnerabilities.storage.googleapis.com", batch: 500, retries: 3, backoffMs: 2000 };
+const DEFAULTS = { tocsin: "https://tocsin.sh", osv: "https://osv-vulnerabilities.storage.googleapis.com", batch: 100, retries: 3, backoffMs: 2000 };
 
 function fail(msg) {
   console.error(`backfill: ${msg}`);

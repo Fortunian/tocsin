@@ -19,7 +19,7 @@ describe("backfill.yml", () => {
     const inputs = w.on.workflow_dispatch.inputs;
     expect(inputs.ecosystem.type).toBe("choice");
     expect(inputs.ecosystem.options).toEqual(["npm", "PyPI", "Go", "Packagist", "crates.io", "RubyGems"]);
-    expect(String(inputs.batch.default)).toBe("500");
+    expect(String(inputs.batch.default)).toBe("100");
   });
 
   it("runs scripts/backfill/run.mjs with the secret TOCSIN_IMPORT_TOKEN as IMPORT_TOKEN", () => {
@@ -27,7 +27,10 @@ describe("backfill.yml", () => {
     const env = { ...job.env, ...runStep!.env };
     expect(env.IMPORT_TOKEN).toBe("${{ secrets.TOCSIN_IMPORT_TOKEN }}");
     expect(env.TOCSIN_URL).toContain("https://tocsin.sh");
-    expect(runStep!.run).toContain("${{ inputs.ecosystem }}");
+    // The inputs reach the shell as env values, never as script text.
+    expect(env.ECOSYSTEM).toBe("${{ inputs.ecosystem }}");
+    expect(env.BATCH).toBe("${{ inputs.batch }}");
+    expect(runStep!.run).not.toContain("${{");
   });
 
   it("never runs two imports of one ecosystem at once and has a 6 h timeout", () => {
