@@ -20,6 +20,7 @@ export interface CoverageRow {
   since: string | null;
   complete: boolean;
   imported: number | null;
+  skipped: number | null;
 }
 
 export interface StatusData {

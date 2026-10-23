@@ -85,7 +85,8 @@ the release docs of one request.
 
 ## Read the result
 
-- `GET /v1/status`: `coverage[]` has one item per OSV ecosystem with `complete` and `imported`.
+- `GET /v1/status`: `coverage[]` has one item per OSV ecosystem with `complete`, `imported` and
+  `skipped` (the withdrawn and MAL- ids the run left out; `null` on a runtime row).
 - `/status`: the Coverage table.
 - `GET /v1/internal/import/<eco>` with the bearer token: the raw `backfill` row.
 
@@ -97,6 +98,9 @@ Until an ecosystem is done, `/v1/check` reports its dependencies with no finding
 
 Set the repo variable `COVERAGE_CHECK_ENABLED=1`. The `launch-check` workflow then also runs
 `cov-lodash`, `cov-django` and `cov-count` (`scripts/launch-check.sh`).
+`cov-count` compares `imported` with the ids in OSV's `<eco>/modified_id.csv` less the ecosystem's
+`skipped` count (the cov-count line prints both numbers). It needs `COV_MIN_PCT` percent (default 90);
+an ecosystem with fewer than `COV_SMALL_IDS` OSV ids (default 50) needs every non-skipped id.
 
 ## Add an ecosystem
 
