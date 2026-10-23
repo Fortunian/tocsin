@@ -405,17 +405,24 @@ async function run(ctx: IngestContext): Promise<RunResult> {
 
   const result: RunResult = { fetched: 0, upserted: 0, unchanged: 0, errors: [] };
   for (const page of paginate(sorted, cfg.page_size).slice(0, cfg.max_pages)) {
+    const fetched: { rowId: string; vulnId: string; norm: ReturnType<typeof normalizeOsv> }[] = [];
     for (const row of page) {
       // HTTP and D1 errors throw out of the run: this page's cursor is not written.
       const vuln = (await getVuln(ctx.fetch, cfg.api_base, row.id)) as OsvVuln;
       result.fetched += 1;
-      const norm = normalizeOsv(vuln, cfg.ecosystems);
+      fetched.push({ rowId: row.id, vulnId: vuln.id, norm: normalizeOsv(vuln, cfg.ecosystems) });
+    }
+    // One BARE_KEY_SQL read per page (TCS-85).
+    await keepStoredKeys(
+      ctx.env.DB,
+      fetched.flatMap(({ vulnId, norm }) => (norm.ok ? [{ id: vulnId, docs: norm.docs }] : [])),
+    );
+    for (const { rowId, norm } of fetched) {
       if (!norm.ok) {
         // A permanent data problem: record it and let the page complete.
-        result.errors.push(`${row.id}: ${norm.reason}`);
+        result.errors.push(`${rowId}: ${norm.reason}`);
         continue;
       }
-      await keepStoredKeys(ctx.env.DB, [{ id: vuln.id, docs: norm.docs }]);
       // One advisory per package; an invalid doc does not stop the others.
       for (const d of norm.docs) {
         try {
