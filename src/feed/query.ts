@@ -7,6 +7,17 @@ export const MAX_LIST_ITEMS = 20;
 
 const SEVERITY_ORDER: Exclude<SeverityLabel, "unknown">[] = ["critical", "high", "medium", "low"];
 
+export type MinSeverity = Exclude<SeverityLabel, "unknown">;
+
+// The labels at or above min, for a severity_label IN (...) filter.
+export function severitiesAtLeast(min: MinSeverity): MinSeverity[] {
+  return SEVERITY_ORDER.slice(0, SEVERITY_ORDER.indexOf(min) + 1);
+}
+
+export function isMinSeverity(v: unknown): v is MinSeverity {
+  return SEVERITY_ORDER.some((s) => s === v);
+}
+
 export interface EventsFilters {
   since: number;
   limit: number;
@@ -84,7 +95,7 @@ export function buildEventsQuery(f: EventsFilters): { sql: string; params: unkno
   };
   if (f.ecosystem.length) inList("ecosystem", f.ecosystem);
   if (f.component.length) inList("component", f.component);
-  if (f.min_severity) inList("severity_label", SEVERITY_ORDER.slice(0, SEVERITY_ORDER.indexOf(f.min_severity) + 1));
+  if (f.min_severity) inList("severity_label", severitiesAtLeast(f.min_severity));
   if (f.exploited) where.push("exploited = 1");
   const sql = `SELECT cursor, doc_json FROM advisories WHERE ${where.join(" AND ")} ORDER BY cursor${f.order === "desc" ? " DESC" : ""} LIMIT ${f.limit + 1}`;
   return { sql, params };

@@ -23,7 +23,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepack": "npm run build && node -e \"const f=require('fs');f.mkdirSync('skills/tocsin',{recursive:true});f.copyFileSync('../../skills/tocsin/SKILL.md','skills/tocsin/SKILL.md')\"",
+    "prepack": "npm run build && node -e \"require('fs').cpSync('../../skills','skills',{recursive:true})\"",
     "postpack": "node -e \"require('fs').rmSync('skills',{recursive:true,force:true})\""
   }
 }

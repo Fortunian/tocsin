@@ -27,6 +27,25 @@ The CLI exits 1 when something is affected, 0 when clean, 2 on a usage error and
 
 The schema every advisory follows: https://tocsin.sh/schema/advisory.v1.json (source: `schema/advisory.v1.json`). API reference: https://tocsin.sh/docs (source: `docs/API.md`). Source health: https://tocsin.sh/status (JSON at `/v1/status`).
 
+## Codex
+
+```
+npx tocsin connect --codex
+```
+
+This adds the MCP server to `~/.codex/config.toml` and the Tocsin skill to `~/.codex/skills/tocsin/SKILL.md`. Codex also reads `AGENTS.md` in a repo. `npx tocsin connect --print-agents-md` prints this block for it:
+
+```
+## Security advisories (Tocsin)
+
+At session start and before a deploy, run `npx tocsin check --json`.
+Exit 1: a dependency has an advisory. Read `affected[]` and upgrade to `fixed_in`.
+Exit 3: the check failed. Do not report the project as safe.
+Docs: https://tocsin.sh/docs
+```
+
+In Claude Code, `npx tocsin connect --claude-code --hook` adds a `SessionStart` hook that runs the check and prints one line when a session starts.
+
 ## In CI
 
 The GitHub Action runs the same check on every pull request. It fails the job when a lockfile dependency has a known advisory, writes a job summary, and posts one PR comment (updated on each push) with the fixed version, the action and the upgrade command. Add these 6 lines as `.github/workflows/tocsin.yml`:

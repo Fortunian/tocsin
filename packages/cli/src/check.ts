@@ -158,12 +158,13 @@ function print(io: Io, data: CheckResult): void {
   if (coverage) io.out(coverage);
 }
 
-export async function runCheck(io: Io, values: Record<string, unknown>): Promise<number> {
+/** The check itself: the exit code, and the merged result when the API answered. Errors go to io.err. */
+async function checkResult(io: Io): Promise<{ code: 0 | 1 | 2 | 3; data?: CheckResult }> {
   const [lockfiles, runtimes] = await Promise.all([findLockfiles(io.cwd), detectRuntimes(io)]);
   const hasRuntimes = Object.keys(runtimes).length > 0;
   if (lockfiles.length === 0 && !hasRuntimes) {
     io.err(`tocsin check: no lockfile in ${io.cwd} and no runtime found; run in a project directory`);
-    return 2;
+    return { code: 2 };
   }
 
   const api = new Api(io);
@@ -177,15 +178,48 @@ export async function runCheck(io: Io, values: Record<string, unknown>): Promise
     // A failed or malformed answer is never a clean result.
     if (!r.ok || !isCheckResult(r.body)) {
       io.err(`check failed: ${describeFailure(r)}`);
-      return 3;
+      return { code: 3 };
     }
     parts.push(r.body);
   }
   const data = merge(parts);
+  // Affected wins over partial: it is the answer to act on first. Partial coverage is exit 3, never clean.
+  return { code: data.affected.length > 0 ? 1 : isPartial(data) ? 3 : 0, data };
+}
 
-  if (values.json) io.out(JSON.stringify(data));
-  else print(io, data);
-  // Affected wins over partial: it is the answer to act on first.
-  if (data.affected.length > 0) return 1;
-  return isPartial(data) ? 3 : 0;
+/**
+ * `check --summary`: one line for the Claude Code SessionStart hook. Always
+ * returns 0 so the hook never blocks a session; the line carries the real code.
+ */
+async function runSummary(io: Io): Promise<number> {
+  let r: Awaited<ReturnType<typeof checkResult>>;
+  try {
+    r = await checkResult({ ...io, err: () => undefined });
+  } catch (e) {
+    io.out(`tocsin: check failed (${e instanceof Error ? e.message : String(e)})`);
+    return 0;
+  }
+  if (r.code === 2) io.out("tocsin: nothing to check here (exit 2)");
+  else if (!r.data) io.out("tocsin: check failed (network)");
+  else if (r.code === 3) io.out(`tocsin: 0 affected of ${r.data.checked} checked, but coverage is partial (exit 3). Run npx tocsin check for details.`);
+  else {
+    const d = r.data;
+    const skipped = d.skipped.length > 0 ? `, ${d.skipped.length} skipped` : "";
+    if (r.code === 0) io.out(`tocsin: 0 affected of ${d.checked} checked${skipped} (exit 0)`);
+    else {
+      const exploited = d.affected.filter((a) => a.exploited).length;
+      io.out(`tocsin: ${d.affected.length} affected of ${d.checked} checked, ${exploited} exploited${skipped} (exit 1). Run npx tocsin check --json for details.`);
+    }
+  }
+  return 0;
+}
+
+export async function runCheck(io: Io, values: Record<string, unknown>): Promise<number> {
+  if (values.summary) return runSummary(io);
+  const { code, data } = await checkResult(io);
+  if (data) {
+    if (values.json) io.out(JSON.stringify(data));
+    else print(io, data);
+  }
+  return code;
 }

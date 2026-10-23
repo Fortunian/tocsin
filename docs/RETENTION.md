@@ -32,11 +32,27 @@ One key per source: the ETag of the first advisories page, sent as `If-None-Matc
 
 ## settings
 
-A small key/value table of run-time limits and knobs (today five rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `site.latest_rows`, `site.latest_cache_seconds`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (today eleven rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `site.latest_rows`, `site.latest_cache_seconds`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`). Rows change in place by key; the table does not grow with traffic. No delete job.
+
+## api_keys
+
+One row per email (TCS-8). It grows with sign-ups. Auth moves `last_used_at` forward at most once per `auth.last_used_resolution_seconds` (default 86400). A monthly cron (`17 3 1 * *`, `src/cron/retention.ts`) deletes every key whose `last_used_at` is older than `retention.api_key_unused_days` (default 365), and that key's watch lists, in one transaction. One run deletes at most `retention.api_keys_batch` keys (default 5000), oldest first; the rest wait for the next run. When `retention.api_keys_dry_run` is not `0`, the run counts what it would delete and deletes nothing. A key is not money or history, so it is deleted, not archived.
+
+## watchlists
+
+One row per watch list, at most `plans.max_watchlists` per key. A row is deleted by `DELETE /v1/watchlists/{id}`, or by the monthly `api_keys` job together with its key. Its `cursor` is overwritten in place, so a row does not grow.
+
+## plans
+
+A fixed set of plan rows (one today: `free`). It does not grow. No delete job.
+
+## KV `retention:api_keys:last` (CURSORS namespace)
+
+One key: the audit record of the last `api_keys` retention run, `{ran_at, cutoff, dry_run, keys, watchlists, has_more}`. It is written after the delete commits, never after a failed run, and each run overwrites it. Each run also writes the same record as one log line. No delete job.
 
 ## KV `rl:` keys (CURSORS namespace)
 
-The rate-limit counters, one key per client IP per minute: `rl:v1:<ip>:<minute>` for `/v1/events` and `rl:v1:check:<ip>:<minute>` for `/v1/check`. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
+The rate-limit counters, one key per client IP per minute: `rl:v1:<ip>:<minute>` for `/v1/events`, `rl:v1:check:<ip>:<minute>` for `/v1/check` and `rl:v1:keys:<ip>:<minute>` for `POST /v1/keys`. Each key is written with a 120-second TTL, so KV expires it on its own. No delete job.
 
 ## KV `nvd:queried:` keys (CURSORS namespace)
 

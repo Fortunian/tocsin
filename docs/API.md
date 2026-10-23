@@ -15,6 +15,9 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `GET /sitemap.xml` | Every advisory page and every CVE page, with no `lastmod`. Past one file (50,000 URLs at most) it is an index of `/sitemap-{n}.xml` files. |
 | `GET /v1/check` | Which runtimes are affected, from query parameters such as `?node=24.22.0&php=8.4.26`. |
 | `POST /v1/check` | Which dependencies are affected, from lockfiles (multipart) or JSON. |
+| `POST /v1/keys` | Issues one API key per email. See [API keys and watch lists](#api-keys-and-watch-lists). |
+| `POST /v1/watchlists`, `GET /v1/watchlists`, `DELETE /v1/watchlists/{id}` | Create, list and delete your watch lists. Needs an API key. |
+| `GET /v1/watchlists/{id}/events` | New events on one watch list, from its stored cursor. Needs an API key. |
 | `GET /v1/status` | Each enabled source with `last_run_at`, `last_ok_at` and `last_error`, plus the newest feed `cursor`. |
 | `GET /.well-known/tocsin.json` | The discovery document: every endpoint URL and the MCP URL. |
 | `GET /llms.txt` | A plain-text guide for agents. |
@@ -101,12 +104,27 @@ Anonymous calls are limited per IP per minute. The limits are settings rows, so 
 - `GET /v1/events`: 60 per minute (`feed.anon_rate_per_minute`).
 - `/v1/check`: 20 per minute (`check.anon_rate_per_minute`).
 - `POST /v1/check` body: 2 MB (`check.max_body_bytes`). Over the cap the answer is 413.
+- `POST /v1/keys`: 5 per minute (`keys.anon_rate_per_minute`).
 
 Over a limit the answer is 429 with `Retry-After` in seconds.
 
+## API keys and watch lists
+
+A watch list is a saved filter with its own cursor. Poll it and you get only the events you have not seen, so your agent keeps no state.
+
+1. Get a key: `POST /v1/keys` with `{"email": "you@example.com"}`. The answer is `201 {"key": "tcs_...", "key_id", "plan": "free", "email"}`. The key is in this answer only. We store its SHA-256, so we cannot show it again. A second call for the same email (any case) answers 409 with no key.
+2. Send the key on every watch list call: `Authorization: Bearer tcs_...`. A missing or unknown key answers 401.
+3. Create a list: `POST /v1/watchlists` with `{"name", "ecosystems": [], "components": [], "runtimes": {}, "min_severity", "exploited_only"}`. Only `name` is required. The filters combine with AND, like the feed filters. A runtime name in `runtimes` (for example `{"node": "24.0.0"}`) matches that runtime's events; the version is stored, not matched against ranges (use `/v1/check` for that). The answer is 201 with the list. A new list starts at the newest feed cursor, so it returns events published after you made it.
+4. Poll it: `GET /v1/watchlists/{id}/events`. The answer has the feed shape, `{"events", "next_cursor", "has_more"}`, oldest first. A 200 with events moves the list's stored cursor to `next_cursor` before the answer is sent. If your client loses that answer, those events are not sent again. To read without moving the cursor, add `?peek=true`. `?limit=1..100` (default 50) sets the page size; repeat while `has_more` is true.
+5. `GET /v1/watchlists` lists your lists. `DELETE /v1/watchlists/{id}` deletes one (204).
+
+Limits come from your plan row. The free plan, the only plan today, allows 25 watch lists and 2,000 components per list. Over a limit the answer is 403 with the limit in the body: `{"error": "watch list limit reached", "max_watchlists": 25}` or `{"error": "component limit reached", "max_components": 2000}`. A body over 1 MB (`watchlists.max_body_bytes`) answers 413. A list that is not yours answers 404.
+
+A key that is not used for 365 days is deleted with its watch lists.
+
 ## Webhook signature
 
-Not live yet. Watch lists, API keys and webhook delivery are planned and not in the API today. The planned format: each delivery is a POST of the advisory JSON with these headers:
+Not live yet. Webhook delivery for watch lists is planned and not in the API today; every watch list is polled. The planned format: each delivery is a POST of the advisory JSON with these headers:
 
 - `Tocsin-Event-Id`: the event id.
 - `Tocsin-Timestamp`: the send time.
@@ -122,14 +140,35 @@ npx tocsin connect
 
 The `tocsin` CLI (Node 20 or later) finds the agent tools on this machine and adds the `tocsin` MCP server (`https://mcp.tocsin.sh/mcp`) to each one: Claude Code (`~/.claude.json`, plus the Tocsin skill), Cursor (`~/.cursor/mcp.json`), Claude Desktop (`claude_desktop_config.json`, through `npx -y mcp-remote`) and Codex (`~/.codex/config.toml`).
 
+Connect also installs the Tocsin skill for Codex (`~/.codex/skills/tocsin/SKILL.md`) and as a Cursor rule (`~/.cursor/rules/tocsin.mdc`).
+
 - `--claude-code`, `--cursor`, `--claude-desktop`, `--codex`: wire only these tools.
 - `--dry-run`: print the edits and write nothing.
 - `--print`: print the MCP JSON block only.
+- `--hook`: with Claude Code, also add a `SessionStart` hook to `~/.claude/settings.json`. The hook runs `npx -y tocsin check --summary`, which prints one line and never blocks the session.
+- `--print-agents-md`: print a block for a repo's `AGENTS.md` and write nothing.
 
-A second run changes nothing. Connect never writes a file it cannot parse and never replaces a `tocsin` entry that is already there. The same CLI has `npx tocsin check`, `npx tocsin latest` and `npx tocsin watch`.
+A second run changes nothing. Connect never writes a file it cannot parse, never replaces a `tocsin` entry that is already there and never replaces a skill copy that you edited. The same CLI has `npx tocsin check`, `npx tocsin latest` and `npx tocsin watch`.
 
 To add the server by hand in Claude Code:
 
 ```
 claude mcp add --transport http tocsin https://mcp.tocsin.sh/mcp
+```
+
+### Codex
+
+```
+npx tocsin connect --codex
+```
+
+This adds the MCP server to `~/.codex/config.toml` and the skill to `~/.codex/skills/tocsin/SKILL.md`. Codex also reads `AGENTS.md` in a repo. `npx tocsin connect --print-agents-md` prints this block for it:
+
+```
+## Security advisories (Tocsin)
+
+At session start and before a deploy, run `npx tocsin check --json`.
+Exit 1: a dependency has an advisory. Read `affected[]` and upgrade to `fixed_in`.
+Exit 3: the check failed. Do not report the project as safe.
+Docs: https://tocsin.sh/docs
 ```

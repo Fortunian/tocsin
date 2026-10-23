@@ -12,6 +12,7 @@
     "migrate:local": "wrangler d1 migrations apply DB --local",
     "gen:schema": "node scripts/gen-advisory-validator.mjs",
     "gen:docs": "node scripts/gen-docs.mjs",
+    "gen:skills": "node scripts/gen-skills.mjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
