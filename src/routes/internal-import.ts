@@ -6,7 +6,7 @@
 import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Env } from "../env";
-import { normalizeOsv, OSV_CONFIG_SQL, readConfig, type OsvVuln } from "../ingest/osv";
+import { normalizeOsv, NOT_ENABLED_REASON, OSV_CONFIG_SQL, readConfig, type OsvVuln } from "../ingest/osv";
 import type { AdvisoryInput } from "../ingest/types";
 import { InvalidAdvisoryError, upsertAdvisory } from "../ingest/upsert";
 import { jsonUtf8 } from "../lib/http";
@@ -155,10 +155,12 @@ internalImport.post(
 
     // Counts per record (imported: at least one doc written; unchanged: every
     // doc unchanged or stale) and per doc (inserted, updated, stale). A record
-    // that does not normalize is an error and is counted in neither.
+    // with no package in an enabled ecosystem is skipped (ecosystem_not_enabled).
+    // Any other record that does not normalize is an error and is counted in neither.
     let imported = 0;
     let unchanged = 0;
     let skipped = body.skipped;
+    let notEnabled = 0;
     let inserted = 0;
     let updated = 0;
     let stale = 0;
@@ -174,7 +176,12 @@ internalImport.post(
       }
       const norm = normalizeOsv(v, cfg.ecosystems);
       if (!norm.ok) {
-        errors.push(`${id}: ${norm.reason}`);
+        if (norm.reason === NOT_ENABLED_REASON) {
+          skipped += 1;
+          notEnabled += 1;
+        } else {
+          errors.push(`${id}: ${norm.reason}`);
+        }
         continue;
       }
       normalized.push(norm.docs);
@@ -232,7 +239,20 @@ internalImport.post(
     if (body.final) stmts.push(db.prepare(OSV_COVERAGE_SQL).bind(JSON.stringify(cfg.ecosystems)));
     const [res] = await db.batch<BackfillRow>(stmts);
     const row = res.results[0];
-    return answer(c, { ecosystem: body.ecosystem, imported, unchanged, skipped, inserted, updated, stale, errors, last_id: row.last_id, done_at: row.done_at, row });
+    return answer(c, {
+      ecosystem: body.ecosystem,
+      imported,
+      unchanged,
+      skipped,
+      skipped_reasons: { ecosystem_not_enabled: notEnabled },
+      inserted,
+      updated,
+      stale,
+      errors,
+      last_id: row.last_id,
+      done_at: row.done_at,
+      row,
+    });
   },
 );
 

@@ -25,6 +25,12 @@ Without the worker secret, the route answers 403 to every request.
 4. Read the progress line per batch in the run log. The last line is
    `backfill: <eco>: done at <time>: <n> imported, <n> unchanged, <n> skipped, <n> errors in <n> requests`.
 
+A record with no package in an enabled ecosystem (for example a `Debian:12` record while Debian is
+not enabled) counts as `skipped`, not as an error. The answer of the request names it in
+`skipped_reasons.ecosystem_not_enabled`. OSV ecosystem strings with a suffix
+(`Packagist:https://packages.drupal.org/8`) match on the part before the first `:`; the advisory
+stores `ecosystem` as that base name and keeps the full string in `ecosystem_qualifier`.
+
 A run that stops (a timeout, a 5xx after 3 retries) leaves the `backfill` row with `last_id` and no
 `done_at`. Run the workflow again for that ecosystem: it resumes after `last_id`. A run after
 `done_at` reads the whole file again and reports the records as `unchanged`.
@@ -33,6 +39,14 @@ The zip is a snapshot. It can be older than the record the cron already read fro
 When the stored record (created by the same OSV id) has a later `modified` than the zip copy,
 the import does not write it. The answer counts it in `stale`, and the record counts as
 `unchanged`. An older snapshot never replaces a newer record.
+
+## Re-run one ecosystem after a normalizer change
+
+Run the `backfill` workflow again with that `ecosystem` (for example `ecosystem=Packagist`).
+The row has `done_at`, so the script reads the whole zip again and sends `start: true`, which
+resets the counters of the row. Records already stored count as `unchanged`; records the old
+normalizer dropped (the `DRUPAL-*` records before TCS-71) count as `imported`. The cron reads
+new ones from then on.
 
 ## Feed consumers
 

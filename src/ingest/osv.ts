@@ -204,19 +204,36 @@ export function osvSourceId(id: string, index: number, ecosystem: string, name: 
   return index === 0 ? id : `${id}#${ecosystem}/${name}`;
 }
 
+// The reason normalizeOsv gives when no affected package is in an enabled
+// ecosystem. The import route counts such a record as skipped.
+export const NOT_ENABLED_REASON = "no affected package in a listed ecosystem";
+
+// The base name of an OSV ecosystem string: the part before the first ":"
+// ("Packagist:https://packages.drupal.org/8" -> "Packagist", "Debian:12" -> "Debian").
+export function baseEcosystem(e: string): string {
+  const i = e.indexOf(":");
+  return i === -1 ? e : e.slice(0, i);
+}
+
 export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult {
   if (typeof v?.id !== "string" || v.id === "") return { ok: false, reason: "record has no id" };
   if (typeof v.modified !== "string") return { ok: false, reason: "record has no modified" };
   const affectedList = Array.isArray(v.affected) ? v.affected : [];
-  // Distinct enabled (ecosystem, name) pairs, in first-appearance order.
-  const packages: { ecosystem: string; component: string }[] = [];
+  // Distinct enabled (base ecosystem, name) pairs, in first-appearance order.
+  // OSV writes some ecosystems with a suffix (Packagist:https://packages.drupal.org/8):
+  // the match is on the base name; the first suffixed string is kept as the qualifier.
+  const packages: { ecosystem: string; component: string; qualifier?: string }[] = [];
   for (const a of affectedList) {
-    const ecosystem = a.package?.ecosystem;
+    const raw = a.package?.ecosystem;
     const component = a.package?.name;
-    if (typeof ecosystem !== "string" || !ecosystems.includes(ecosystem) || typeof component !== "string" || component === "") continue;
-    if (!packages.some((p) => p.ecosystem === ecosystem && p.component === component)) packages.push({ ecosystem, component });
+    if (typeof raw !== "string" || typeof component !== "string" || component === "") continue;
+    const ecosystem = baseEcosystem(raw);
+    if (!ecosystems.includes(ecosystem)) continue;
+    let p = packages.find((x) => x.ecosystem === ecosystem && x.component === component);
+    if (!p) packages.push((p = { ecosystem, component }));
+    if (p.qualifier === undefined && raw !== ecosystem) p.qualifier = raw;
   }
-  if (packages.length === 0) return { ok: false, reason: "no affected package in a listed ecosystem" };
+  if (packages.length === 0) return { ok: false, reason: NOT_ENABLED_REASON };
 
   const modified_at = schemaTimestamp(v.modified);
   const published_at = schemaTimestamp(typeof v.published === "string" ? v.published : v.modified);
@@ -231,8 +248,10 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
     .filter((u): u is string => typeof u === "string" && /^https?:\/\//.test(u));
   const severity = severityOf(v);
 
-  const docs = packages.map(({ ecosystem, component }, i) => {
-    const same = affectedList.filter((a) => a.package?.ecosystem === ecosystem && a.package?.name === component);
+  const docs = packages.map(({ ecosystem, component, qualifier }, i) => {
+    const same = affectedList.filter(
+      (a) => typeof a.package?.ecosystem === "string" && baseEcosystem(a.package.ecosystem) === ecosystem && a.package?.name === component,
+    );
     const { affected, fixed } = rangesOf(same);
     const lowest = [...fixed].sort(compareVersions)[0];
     const source_id = osvSourceId(v.id, i, ecosystem, component);
@@ -240,6 +259,7 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
       cve_ids,
       ...(ghsa_id ? { ghsa_id } : {}),
       ecosystem,
+      ...(qualifier !== undefined ? { ecosystem_qualifier: qualifier } : {}),
       component,
       affected,
       fixed_versions: fixed,
