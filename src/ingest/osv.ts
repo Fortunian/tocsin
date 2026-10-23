@@ -304,6 +304,50 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
   return { ok: true, doc: docs[0].doc, docs };
 }
 
+// The (ecosystem, component, qualifier) stored under each bare OSV id of a list.
+// ?1 a JSON array of OSV ids. Drives from json_each and seeks advisory_sources by
+// its primary key (source, source_id), then advisories by its primary key.
+export const BARE_KEY_SQL = `SELECT s.source_id, a.ecosystem, a.component, json_extract(a.doc_json, '$.ecosystem_qualifier') AS qualifier
+FROM json_each(?1) j CROSS JOIN advisory_sources s ON s.source = 'osv' AND s.source_id = j.value JOIN advisories a ON a.id = s.advisory_id`;
+
+function suffixKey(id: string, doc: AdvisoryInput): string {
+  const scope = RELEASE_SCOPED.has(doc.ecosystem) && doc.ecosystem_qualifier !== undefined ? doc.ecosystem_qualifier : doc.ecosystem;
+  return `${id}#${scope}/${doc.component}`;
+}
+
+// normalizeOsv gives the bare OSV id to the first enabled package. When the
+// list of enabled ecosystems grows (TCS-38), a newly enabled package can come
+// first in a record, and the bare id would move to it: the stored advisory
+// would be rewritten as a different package, and its own package would be
+// stored again under a new advisory id. This keeps the bare id on the package
+// that holds it: that doc takes the bare id and every other doc takes its
+// suffixed key. If no doc is that package, no doc takes the bare id, so the
+// stored row is never rewritten as a different package. One read per call.
+export async function keepStoredKeys(
+  db: D1Database,
+  records: { id: string; docs: { source_id: string; doc: AdvisoryInput }[] }[],
+): Promise<void> {
+  if (records.length === 0) return;
+  const { results } = await db
+    .prepare(BARE_KEY_SQL)
+    .bind(JSON.stringify(records.map((r) => r.id)))
+    .all<{ source_id: string; ecosystem: string; component: string; qualifier: string | null }>();
+  const stored = new Map(results.map((r) => [r.source_id, r]));
+  for (const r of records) {
+    const row = stored.get(r.id);
+    if (!row) continue;
+    const same = (d: AdvisoryInput) => d.ecosystem === row.ecosystem && d.component === row.component;
+    const owner =
+      r.docs.find((d) => same(d.doc) && (d.doc.ecosystem_qualifier ?? null) === row.qualifier) ?? r.docs.find((d) => same(d.doc));
+    for (const d of r.docs) {
+      const key = d === owner ? r.id : suffixKey(r.id, d.doc);
+      if (key === d.source_id) continue;
+      d.source_id = key;
+      d.doc.sources = d.doc.sources.map((s, i) => (i === 0 ? { ...s, source_id: key } : s));
+    }
+  }
+}
+
 export function readConfig(raw: Record<string, unknown>): OsvConfig {
   const cfg: OsvConfig = { ...DEFAULTS };
   const posInt = (k: "page_size" | "max_pages" | "backfill_days" | "max_csv_rows") => {
@@ -372,6 +416,7 @@ async function run(ctx: IngestContext): Promise<RunResult> {
         result.errors.push(`${row.id}: ${norm.reason}`);
         continue;
       }
+      await keepStoredKeys(ctx.env.DB, [{ id: vuln.id, docs: norm.docs }]);
       // One advisory per package; an invalid doc does not stop the others.
       for (const d of norm.docs) {
         try {
