@@ -4,6 +4,7 @@ import { NODE_DIST_KEY } from "../../src/ingest/node-runtime-dist";
 import {
   isNodePreAnnouncement,
   normalizeNodePost,
+  NODE_PARSER_REV,
   nodeRuntime,
   parseNodeSecurityPost,
 } from "../../src/ingest/node-runtime";
@@ -327,8 +328,8 @@ describe("parser revision (parser revision)", () => {
     expect(r1.errors).toEqual([]);
     expect(r1.upserted).toBe(21);
     expect(await nodeRowCount()).toBe(21);
-    expect(await nodePostRow(JULY)).toMatchObject({ state: "ok", parser_rev: "3" });
-    expect(await nodePostRow(OCT)).toMatchObject({ state: "ok", parser_rev: "3", published: PUB });
+    expect(await nodePostRow(JULY)).toMatchObject({ state: "ok", parser_rev: NODE_PARSER_REV });
+    expect(await nodePostRow(OCT)).toMatchObject({ state: "ok", parser_rev: NODE_PARSER_REV, published: PUB });
 
     const r2 = await nodeRuntime.run(ctxAt(f.fetch, Date.parse(NOW) + 10 * MIN));
     expect(r2.unchanged).toBe(10);

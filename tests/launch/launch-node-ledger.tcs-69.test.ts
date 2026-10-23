@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { NODE_PARSER_REV } from "../../src/ingest/node-runtime";
 import { type LocalWorker, startLocalWorker } from "./local-worker.tcs-14";
 
 // TCS-69: the launch gate (scripts/launch-check.sh) against the real worker in
@@ -16,7 +17,8 @@ const LOCAL_CLI = "node packages/cli/bin/tocsin.js";
 const BASE = "https://nodejs.org/en/blog/vulnerability/";
 const NO_UPDATES = `${BASE}september-2019-openssl-no-updates`;
 const PENDING = `${BASE}june-2026-security-releases`;
-const PARSER_REV = "3";
+// The rows were read by the current parser revision (TCS-76 bumped it).
+const PARSER_REV = NODE_PARSER_REV;
 
 // The Security Release items of the recorded feed (the rule of parseNodeFeed:
 // title match, pubDate as RFC3339 UTC without millis).

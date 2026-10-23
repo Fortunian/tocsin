@@ -10,14 +10,15 @@ import { hasUnreadRecent, readLedger, writePost, type Ledger, type PostRow, type
 import { compareVersions } from "./osv";
 import { htmlSections, htmlText, isoUtc, oneLine, readRuntimeConfig, RETRY_SCHEDULE, retryWaitMinutes, xmlBlocks, xmlText } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
-import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
-import type { SeverityLabel } from "../schema/advisory";
+import { InvalidAdvisoryError, UPSERT_SQL, upsertAdvisory } from "./upsert";
+import type { Advisory, SeverityLabel } from "../schema/advisory";
 
 // The parser revision a ledger row was read with (node_runtime_posts.parser_rev).
 // A row with another value is read again once, so posts the old parser could
 // not read are picked up (TCS-30: the July 2026 wording; TCS-32: the whole feed
-// history once). Parser identity, not a limit.
-export const NODE_PARSER_REV = "3";
+// history once; TCS-76: the December 2025, March and June 2026 wordings).
+// Parser identity, not a limit.
+export const NODE_PARSER_REV = "4";
 const SOURCE = "node-runtime";
 
 // Code fallbacks for sources.config_json of row "node-runtime" (repo iron rule 5).
@@ -62,6 +63,9 @@ export interface PostCve {
   title: string;
   rating: SeverityLabel;
   lines: number[];
+  // Release line (major) -> fixed version the CVE's own section names
+  // ("already fixed on Node.js 24.12.0"); it overrides ParsedPost.fixed for that line.
+  fixed?: Map<number, string>;
 }
 
 export interface ParsedPost {
@@ -96,6 +100,59 @@ const AFFECTS =
 // It counts only for a post with no CVE heading: the final post keeps this text.
 const PRE_ANNOUNCE = /pre-announcement|will be released|will release new versions|releases will be available/i;
 const DOWNLOADS = /^Downloads and release details$/i;
+// TCS-76 wordings, read only when AFFECTS finds no line. An "affect(s)" clause
+// runs to "Thank you", a sentence end, the next "affect(s)" or the end of the text.
+const AFFECT_WORD = /\baffects?\b/gi;
+const CLAUSE_END = /Thank you|\.\s+[A-Z]|\baffects?\b/;
+const EOL_CLAUSE = /end-of-life|\bEOL\b/i;
+// "20.x", "v25.x"; "Node.js 22", "Node.js 20, 22, 24 and 25" (not "Node.js 24.12.0").
+const LINE_X = /\bv?(\d{1,2})\.x\b/g;
+const NODE_LINES = /Node\.js\s+(\d{1,2}(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)\d{1,2})*)(?!\.?\d)/g;
+// "This vulnerability was already fixed on Node.js 24.12.0."
+const FIXED_ON = /\bfixed\s+(?:on|in)\s+Node\.js\s+v?(\d+)\.(\d+)\.(\d+)\b/gi;
+// "affects TLS servers ... across Node.js versions where ...": the lines of the
+// post's "Updates are now available for the 25.x, 24.x ... release lines".
+const ALL_VERSIONS = /\bNode\.js versions\b/i;
+const RELEASES_AVAILABLE = /security releases available/i;
+const UPDATES_FOR = /Updates are now available for (?:the )?(.*?)\s*Node\.js release lines/i;
+
+const sortedLines = (xs: Iterable<number>) => [...new Set(xs)].sort((a, b) => a - b);
+
+function affectClauses(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(AFFECT_WORD)) {
+    const rest = text.slice(m.index + m[0].length);
+    const end = CLAUSE_END.exec(rest);
+    out.push(m[0] + (end ? rest.slice(0, end.index) : rest));
+  }
+  return out;
+}
+
+function clauseLines(clause: string): number[] {
+  const lines = [...clause.matchAll(LINE_X)].map((x) => Number(x[1]));
+  for (const n of clause.matchAll(NODE_LINES)) lines.push(...[...n[1].matchAll(/\d+/g)].map((x) => Number(x[0])));
+  return sortedLines(lines);
+}
+
+function putFixed(fixed: Map<number, string>, major: number, version: string): void {
+  const prev = fixed.get(major);
+  if (prev === undefined || compareVersions(version, prev) > 0) fixed.set(major, version);
+}
+
+// The lines of a CVE section the AFFECTS wordings do not read (TCS-76), in
+// order: an "affect(s)" clause that names lines; the lines of the versions the
+// section says are fixed; for "Node.js versions", the lines the post's
+// "Updates are now available" sentence names. Otherwise no line.
+function fallbackLines(text: string, fixed: Map<number, string>, updateLines: number[]): number[] {
+  const clauses = affectClauses(text).filter((c) => !EOL_CLAUSE.test(c));
+  for (const c of clauses) {
+    const lines = clauseLines(c);
+    if (lines.length > 0) return lines;
+  }
+  if (fixed.size > 0) return sortedLines(fixed.keys());
+  if (clauses.some((c) => ALL_VERSIONS.test(c))) return updateLines;
+  return [];
+}
 
 export function parseNodeFeed(xml: string): FeedItem[] {
   const items: FeedItem[] = [];
@@ -113,21 +170,28 @@ export function parseNodeSecurityPost(html: string): ParsedPost {
   const cves: PostCve[] = [];
   const unparsed: string[] = [];
   const fixed = new Map<number, string>();
-  for (const s of htmlSections(html)) {
+  const sections = htmlSections(html);
+  const available = sections.find((s) => RELEASES_AVAILABLE.test(s.heading));
+  const updates = available ? UPDATES_FOR.exec(htmlText(available.body)) : null;
+  const updateLines = updates ? sortedLines([...updates[1].matchAll(/(\d+)\.x/g)].map((x) => Number(x[1]))) : [];
+  for (const s of sections) {
     const m = CVE_HEADING.exec(s.heading);
     if (m) {
-      const affects = AFFECTS.exec(htmlText(s.body));
-      const lines = affects ? [...new Set([...affects[1].matchAll(/(\d+)\.x/g)].map((x) => Number(x[1])))].sort((a, b) => a - b) : [];
-      cves.push({ cve: m[2].toUpperCase(), title: m[1], rating: m[3].toLowerCase() as SeverityLabel, lines });
+      const text = htmlText(s.body);
+      const affects = AFFECTS.exec(text);
+      const cve: PostCve = { cve: m[2].toUpperCase(), title: m[1], rating: m[3].toLowerCase() as SeverityLabel, lines: [] };
+      if (affects) cve.lines = sortedLines([...affects[1].matchAll(/(\d+)\.x/g)].map((x) => Number(x[1])));
+      else {
+        const own = new Map<number, string>();
+        for (const v of text.matchAll(FIXED_ON)) putFixed(own, Number(v[1]), `${v[1]}.${v[2]}.${v[3]}`);
+        cve.lines = fallbackLines(text, own, updateLines);
+        if (own.size > 0) cve.fixed = own;
+      }
+      cves.push(cve);
     } else if (HAS_CVE.test(s.heading)) {
       unparsed.push(s.heading);
     } else if (DOWNLOADS.test(s.heading)) {
-      for (const v of htmlText(s.body).matchAll(/Node\.js v(\d+)\.(\d+)\.(\d+)\b/g)) {
-        const major = Number(v[1]);
-        const version = `${v[1]}.${v[2]}.${v[3]}`;
-        const prev = fixed.get(major);
-        if (prev === undefined || compareVersions(version, prev) > 0) fixed.set(major, version);
-      }
+      for (const v of htmlText(s.body).matchAll(/Node\.js v?(\d+)\.(\d+)\.(\d+)\b/g)) putFixed(fixed, Number(v[1]), `${v[1]}.${v[2]}.${v[3]}`);
     }
   }
   return { cves, unparsed, fixed };
@@ -168,7 +232,7 @@ export function normalizeNodePost(post: { link: string; published: string }, htm
     }
     const perLine: { line: number; fixed: string }[] = [];
     for (const line of c.lines) {
-      const fixed = parsed.fixed.get(line);
+      const fixed = c.fixed?.get(line) ?? parsed.fixed.get(line);
       if (fixed === undefined) missing.add(`no fixed version for ${line}.x`);
       else if (!dist.has(`v${fixed}`)) {
         missing.add(`${fixed} is not in the dist index`);
@@ -343,6 +407,18 @@ async function normalize(w: Walk, post: FeedItem, html: string): Promise<Normali
   return norm;
 }
 
+// True when a newer post already created the advisory of this CVE (TCS-76:
+// the March 2026 "incomplete fix" post names CVE-2026-21637 again with later
+// fixed versions). An older post then never overwrites it.
+async function ownedByNewerPost(db: D1Database, doc: AdvisoryInput): Promise<boolean> {
+  const key = doc.sources[0];
+  const stored = await db.prepare(UPSERT_SQL.findByPair).bind(SOURCE, key.source_id).first<{ doc_json: string }>();
+  if (!stored) return false;
+  const prev = JSON.parse(stored.doc_json) as Advisory;
+  const creator = prev.sources[0];
+  return creator?.source === SOURCE && creator.source_id === key.source_id && Date.parse(prev.published_at) > Date.parse(doc.published_at);
+}
+
 // Stores the post's advisories; an advisory that fails validation is a warning.
 async function storeDocs(w: Walk, d: DuePost, norm: NormalizedPost): Promise<void> {
   const { result } = w;
@@ -352,6 +428,11 @@ async function storeDocs(w: Walk, d: DuePost, norm: NormalizedPost): Promise<voi
   for (const doc of norm.docs) {
     result.fetched += 1;
     try {
+      if (await ownedByNewerPost(w.ctx.env.DB, doc)) {
+        result.unchanged += 1;
+        ok += 1;
+        continue;
+      }
       const outcome = await upsertAdvisory(w.ctx.env.DB, doc, { source: SOURCE, source_id: doc.sources[0].source_id });
       if (outcome === "unchanged") result.unchanged += 1;
       else result.upserted += 1;
