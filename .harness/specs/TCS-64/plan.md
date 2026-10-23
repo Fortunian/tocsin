@@ -10,7 +10,7 @@ none
 
 ## Scope
 1. `POST /v1/keys {email}` no longer answers a key. It stores a one-time token in KV (TTL from a settings row, 3600 s) and sends a link to the email through one mail seam (`src/mail/send.ts`). It answers 202 with one fixed body, for a new email and for a registered email alike. No 409.
-2. `GET /v1/keys/confirm?token=...` consumes the token once. It answers 200 `{key, key_id, plan, email}` with the plaintext key. A used, unknown or expired token answers 410.
+2. Confirm is POST (round 2): `GET /v1/keys/confirm?token=...` only renders a Confirm page and writes nothing; `POST /v1/keys/confirm` (form or JSON `token`) consumes the token once and answers the key; a second POST is 410.
 3. `POST /v1/keys/rotate {email}` sends a confirm link with rotate copy. Opening it replaces the key hash of that email in place (same `key_id`, plan and watch lists). The old key answers 401 after that.
 4. Rate limits on the send: per IP per hour and per email per hour (settings rows), plus the existing per-IP per-minute row `keys.anon_rate_per_minute`. A daily send cap (settings row). When the cap is hit, the worker writes one alert log line.
 5. Mail provider is a settings row `mail.provider` (`mailchannels`). Sender is a settings row `mail.from_address`. The first adapter is the MailChannels Email API. In tests the seam returns a fake: 0 network calls.

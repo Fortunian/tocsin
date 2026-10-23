@@ -44,8 +44,25 @@ async function tokenCount(): Promise<number> {
   return (await env.CURSORS.list({ prefix: "keyconfirm:v1:" })).keys.length;
 }
 
-function confirm(token: string, ip?: string): Promise<Response> {
+// The mailed link: GET shows the confirm page and must write nothing.
+function openLink(token: string, ip?: string): Promise<Response> {
   return call("GET", `/v1/keys/confirm?token=${encodeURIComponent(token)}`, { ip });
+}
+
+// The Confirm button (or an agent): POST consumes the token once.
+function confirm(token: string, ip?: string): Promise<Response> {
+  return call("POST", "/v1/keys/confirm", { ip, body: { token } });
+}
+
+function confirmForm(token: string, headers: Record<string, string> = {}): Promise<Response> {
+  return call("POST", "/v1/keys/confirm", {
+    rawBody: new URLSearchParams({ token }).toString(),
+    headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
+  });
+}
+
+async function hasToken(token: string): Promise<boolean> {
+  return (await env.CURSORS.get(`keyconfirm:v1:${await sha256HexOf(token)}`)) !== null;
 }
 
 async function keyFor(email: string): Promise<{ key: string; key_id: string; plan: string; email: string }> {
@@ -92,6 +109,7 @@ describe("POST /v1/keys sends a link", () => {
     expect(mails[0].subject).toBe("Your Tocsin API key link");
     expect(mails[0].text).toContain("https://tocsin.sh/v1/keys/confirm?token=tct_");
     expect(mails[0].text).toContain("to get your Tocsin API key");
+    expect(mails[0].text).toContain("open the link and press Confirm");
   });
 
   it("POST: a registered email (also upper case with spaces) gets a byte-identical 202, a second mail with the replace text, no 409", async () => {
@@ -210,7 +228,115 @@ describe("POST /v1/keys sends a link", () => {
   });
 });
 
-describe("GET /v1/keys/confirm", () => {
+describe("GET /v1/keys/confirm writes nothing", () => {
+  it("GET: a live create link shows the Confirm page with a same-origin POST form, and makes no row and spends no token", async () => {
+    const email = uniqueEmail("get-create");
+    expect((await call("POST", "/v1/keys", { body: { email } })).status).toBe(202);
+    const token = await lastToken(email);
+    for (let i = 0; i < 3; i++) {
+      const page = await openLink(token);
+      expect(page.status).toBe(200);
+      expect(page.headers.get("Content-Type")).toContain("text/html");
+      expect(page.headers.get("Cache-Control")).toBe("no-store");
+      expect(page.headers.get("Referrer-Policy")).toBe("no-referrer");
+      const html = await page.text();
+      expect(html).toContain("Confirm your Tocsin key");
+      expect(html).toContain('<form method="post" action="/v1/keys/confirm">');
+      expect(html).toContain(`<input type="hidden" name="token" value="${token}">`);
+      expect(html).not.toContain("tcs_");
+      expect(html).not.toContain(email);
+    }
+    expect(await rowsFor(email)).toHaveLength(0);
+    expect(await hasToken(token)).toBe(true);
+    expect((await confirm(token)).status).toBe(200);
+    expect(await rowsFor(email)).toHaveLength(1);
+  });
+
+  it("GET: a live replace link changes no row; the old key still works after the GET, and only the POST rotates it", async () => {
+    const email = uniqueEmail("get-rotate");
+    const k1 = await keyFor(email);
+    const before = await rowsFor(email);
+    expect((await call("POST", "/v1/keys/rotate", { body: { email } })).status).toBe(202);
+    const token = await lastToken(email);
+    const page = await openLink(token);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Confirm your Tocsin key");
+    expect(await rowsFor(email)).toEqual(before);
+    expect(await hasToken(token)).toBe(true);
+    expect((await call("GET", "/v1/watchlists", { key: k1.key })).status).toBe(200);
+
+    const ok = await confirm(token);
+    expect(ok.status).toBe(200);
+    expect((await call("GET", "/v1/watchlists", { key: k1.key })).status).toBe(401);
+  });
+
+  it("GET: a spent, unknown, expired, malformed or missing token shows one neutral 410 page", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = Date.UTC(2031, 0, 7, 9, 0, 0);
+    vi.setSystemTime(t0);
+    const spentEmail = uniqueEmail("get-spent");
+    expect((await call("POST", "/v1/keys", { body: { email: spentEmail } })).status).toBe(202);
+    const spent = await lastToken(spentEmail);
+    expect((await confirm(spent)).status).toBe(200);
+    const lateEmail = uniqueEmail("get-late");
+    expect((await call("POST", "/v1/keys", { body: { email: lateEmail } })).status).toBe(202);
+    const late = await lastToken(lateEmail);
+    vi.setSystemTime(t0 + 3601_000);
+
+    const bodies: string[] = [];
+    for (const path of [`?token=${spent}`, `?token=${late}`, `?token=tct_${"0".repeat(64)}`, "?token=abc", ""]) {
+      const res = await call("GET", `/v1/keys/confirm${path}`);
+      expect(res.status, path).toBe(410);
+      expect(res.headers.get("Content-Type")).toContain("text/html");
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+      bodies.push(await res.text());
+    }
+    expect(new Set(bodies).size).toBe(1);
+    expect(bodies[0]).toContain("This link is used or expired");
+    expect(bodies[0]).not.toContain("<form");
+    expect(await hasToken(late)).toBe(true); // the GET did not even delete the expired token
+    expect(await rowsFor(lateEmail)).toHaveLength(0);
+  });
+});
+
+describe("POST /v1/keys/confirm (the Confirm button)", () => {
+  it("POST form: the button answers an HTML page with the key once; a second press is 410", async () => {
+    const email = uniqueEmail("form");
+    expect((await call("POST", "/v1/keys", { body: { email } })).status).toBe(202);
+    const token = await lastToken(email);
+    const res = await confirmForm(token, { Origin: "https://tocsin.test" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const html = await res.text();
+    const key = /tcs_[0-9a-f]{64}/.exec(html)?.[0];
+    expect(key).toBeDefined();
+    expect((await rowsFor(email))[0].key_hash).toBe(await sha256HexOf(key!));
+    const again = await confirmForm(token, { Origin: "https://tocsin.test" });
+    expect(again.status).toBe(410);
+    expect(await again.text()).not.toMatch(/tcs_[0-9a-f]{64}/);
+  });
+
+  it("POST: a cross-origin form is 403 and spends no token", async () => {
+    const email = uniqueEmail("xorigin");
+    expect((await call("POST", "/v1/keys", { body: { email } })).status).toBe(202);
+    const token = await lastToken(email);
+    expect((await confirmForm(token, { Origin: "https://evil.test" })).status).toBe(403);
+    expect(await hasToken(token)).toBe(true);
+    expect(await rowsFor(email)).toHaveLength(0);
+  });
+
+  it("POST: the per-IP limiter (keys.anon_rate_per_minute) answers 429 on the 6th POST in a minute", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.UTC(2031, 0, 8, 10, 0, 5));
+    const ip = nextIp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) statuses.push((await confirm(`tct_${"1".repeat(64)}`, ip)).status);
+    expect(statuses).toEqual([410, 410, 410, 410, 410, 429]);
+  });
+});
+
+describe("POST /v1/keys/confirm (JSON)", () => {
   it("confirm: answers the key once, stores only its sha256; the same link again is 410", async () => {
     const email = uniqueEmail("confirm");
     expect((await call("POST", "/v1/keys", { body: { email } })).status).toBe(202);
@@ -268,7 +394,8 @@ describe("GET /v1/keys/confirm", () => {
   });
 
   it("confirm: answers 400 with no token or a malformed token, 410 for an unknown one", async () => {
-    expect((await call("GET", "/v1/keys/confirm")).status).toBe(400);
+    expect((await call("POST", "/v1/keys/confirm", { body: {} })).status).toBe(400);
+    expect((await call("POST", "/v1/keys/confirm", { rawBody: "{not json" })).status).toBe(400);
     expect((await confirm("abc")).status).toBe(400);
     expect((await confirm(`tct_${"0".repeat(64)}`)).status).toBe(410);
   });
@@ -287,7 +414,7 @@ describe("POST /v1/keys/rotate", () => {
     expect(await res.text()).toBe(await fresh.text());
     const mails = await outbox(email);
     expect(mails).toHaveLength(2);
-    expect(mails[1].text).toContain("The old key stops working when you open it");
+    expect(mails[1].text).toContain("The old key stops working when you press Confirm");
 
     const ok = await confirm(await lastToken(email));
     expect(ok.status).toBe(200);

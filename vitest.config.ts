@@ -6,7 +6,8 @@ import { defineConfig } from "vitest/config";
 // `cli` is the npm package in packages/cli; it runs in plain Node.
 // `action` is the GitHub Action in action/; it runs in plain Node too.
 // `launch` runs scripts/launch-check.sh in Node against the worker in Miniflare.
-// `contract` calls real vendors (mail) and skips when their secret is unset.
+// `contract` calls real vendors (mail). It is not in `npm test` (an explicit
+// project list); `npm run test:contract` runs it with TOCSIN_CONTRACT=1.
 export default defineConfig(async () => {
   const migrations = await readD1Migrations("./migrations");
   return {

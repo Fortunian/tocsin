@@ -40,8 +40,8 @@ export async function newKey(email: string = uniqueEmail("k")): Promise<{ key: s
   const mails = await readFakeOutbox(env.CURSORS, email.trim().toLowerCase());
   const m = /token=(tct_[0-9a-f]{64})/.exec(mails[mails.length - 1]?.text ?? "");
   if (!m) throw new Error(`no confirm link was mailed to ${email}`);
-  const ok = await call("GET", `/v1/keys/confirm?token=${m[1]}`);
-  if (ok.status !== 200) throw new Error(`GET /v1/keys/confirm answered ${ok.status}: ${await ok.text()}`);
+  const ok = await call("POST", "/v1/keys/confirm", { body: { token: m[1] } });
+  if (ok.status !== 200) throw new Error(`POST /v1/keys/confirm answered ${ok.status}: ${await ok.text()}`);
   return (await ok.json()) as { key: string; key_id: string; email: string };
 }
 

@@ -27,4 +27,4 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx vitest run --project contract --maxWorkers=1
+      - run: npm run test:contract

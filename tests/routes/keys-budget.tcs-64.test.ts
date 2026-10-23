@@ -2,6 +2,9 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeMailer, readFakeOutbox } from "../../src/mail/fake";
 import { MailChannelsMailer, MailSendError, getMailer } from "../../src/mail/send";
+import contractSource from "../contract/mail.contract.tcs-64.test.ts?raw";
+import vitestConfig from "../../vitest.config.ts?raw";
+import pkg from "../../package.json";
 import { call, uniqueEmail } from "./keys-helpers.tcs-8";
 
 // TCS-64 budget: the PR suite makes 0 vendor calls. The api project binds
@@ -12,12 +15,29 @@ const TOKEN_RE = /token=(tct_[0-9a-f]{64})/;
 async function openLastLink(email: string): Promise<Response> {
   const mails = await readFakeOutbox(env.CURSORS, email);
   const token = TOKEN_RE.exec(mails[mails.length - 1].text)![1];
-  return call("GET", `/v1/keys/confirm?token=${token}`);
+  expect((await call("GET", `/v1/keys/confirm?token=${token}`)).status).toBe(200);
+  return call("POST", "/v1/keys/confirm", { body: { token } });
 }
 
 afterEach(() => vi.restoreAllMocks());
 
+// The --project names of one npm script, in order.
+function projectsOf(script: string): string[] {
+  return [...script.matchAll(/--project\s+(\S+)/g)].map((m) => m[1]);
+}
+
 describe("mail seam budget", () => {
+  it("npm test runs every vitest project except contract; only test:contract sets TOCSIN_CONTRACT=1", () => {
+    const declared = [...vitestConfig.matchAll(/name:\s*"([^"]+)"/g)].map((m) => m[1]);
+    expect(declared).toContain("contract");
+    expect(projectsOf(pkg.scripts.test).sort()).toEqual(declared.filter((n) => n !== "contract").sort());
+    expect(pkg.scripts.test).not.toContain("TOCSIN_CONTRACT");
+    expect(projectsOf(pkg.scripts["test:contract"])).toEqual(["contract"]);
+    expect(pkg.scripts["test:contract"]).toContain("TOCSIN_CONTRACT=1");
+    expect(contractSource).toContain('process.env.TOCSIN_CONTRACT === "1"');
+    expect(contractSource).toContain("describe.skipIf(!CONTRACT_ENABLED)");
+  });
+
   it("a full create + confirm + rotate + confirm flow makes 0 fetch calls", async () => {
     const spy = vi.spyOn(globalThis, "fetch");
     const email = uniqueEmail("budget");

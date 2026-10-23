@@ -16,7 +16,8 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `GET /v1/check` | Which runtimes are affected, from query parameters such as `?node=24.22.0&php=8.4.26`. |
 | `POST /v1/check` | Which dependencies are affected, from lockfiles (multipart) or JSON. |
 | `POST /v1/keys` | Mails a one-time link to the email. The answer is 202 and holds no key. See [API keys and watch lists](#api-keys-and-watch-lists). |
-| `GET /v1/keys/confirm?token=...` | Opens the mailed link once and answers the API key. |
+| `GET /v1/keys/confirm?token=...` | The mailed link. An HTML page with one Confirm button. It changes nothing: no key, no spent token. |
+| `POST /v1/keys/confirm` | Spends the token once and answers the API key. Form body `token=tct_...` (the button) or JSON `{"token": "tct_..."}`. |
 | `POST /v1/keys/rotate` | Mails a link that replaces the API key of the email. |
 | `POST /v1/watchlists`, `GET /v1/watchlists`, `DELETE /v1/watchlists/{id}` | Create, list and delete your watch lists. Needs an API key. |
 | `GET /v1/watchlists/{id}/events` | New events on one watch list, from its stored cursor. Needs an API key. |
@@ -116,15 +117,15 @@ Over a limit the answer is 429 with `Retry-After` in seconds.
 
 A watch list is a saved filter with its own cursor. Poll it and you get only the events you have not seen, so your agent keeps no state.
 
-1. Get a key: `POST /v1/keys` with `{"email": "you@example.com"}`. The answer is `202 {"status": "sent", "expires_in_seconds": 3600}` and holds no key. We mail a link to that address. Open it within 60 minutes (`keys.confirm_ttl_seconds`): `GET /v1/keys/confirm?token=tct_...` answers `200 {"key": "tcs_...", "key_id", "plan": "free", "email"}`. The key is in that answer only. We store its SHA-256, so we cannot show it again. A link works once; a used or expired link answers 410. The 202 is the same for every email, so it does not tell whether an email has a key. If the email already has a key, the link replaces it.
+1. Get a key: `POST /v1/keys` with `{"email": "you@example.com"}`. The answer is `202 {"status": "sent", "expires_in_seconds": 3600}` and holds no key. We mail a link to that address. Open it and press Confirm within 60 minutes (`keys.confirm_ttl_seconds`). Opening the link (`GET /v1/keys/confirm?token=tct_...`) only shows the Confirm page, so a mail scanner that opens it changes nothing. A used, expired or unknown link shows one neutral page (410). The Confirm button sends `POST /v1/keys/confirm` with the token and answers a page with the key. An agent can send the same POST with JSON `{"token": "tct_..."}` and gets `200 {"key": "tcs_...", "key_id", "plan": "free", "email"}`. The key is in that answer only. We store its SHA-256, so we cannot show it again. A token works once; a second POST answers 410. A POST with an `Origin` header of another site answers 403. The 202 is the same for every email, so it does not tell whether an email has a key. If the email already has a key, the link replaces it.
 2. Send the key on every watch list call: `Authorization: Bearer tcs_...`. A missing or unknown key answers 401.
 3. Create a list: `POST /v1/watchlists` with `{"name", "ecosystems": [], "components": [], "runtimes": {}, "min_severity", "exploited_only"}`. Only `name` is required. The filters combine with AND, like the feed filters. A runtime name in `runtimes` (for example `{"node": "24.0.0"}`) matches that runtime's events; the version is stored, not matched against ranges (use `/v1/check` for that). The answer is 201 with the list. A new list starts at the newest feed cursor, so it returns events published after you made it.
 4. Poll it: `GET /v1/watchlists/{id}/events`. The answer has the feed shape, `{"events", "next_cursor", "has_more"}`, oldest first. A 200 with events moves the list's stored cursor to `next_cursor` before the answer is sent. If your client loses that answer, those events are not sent again. To read without moving the cursor, add `?peek=true`. `?limit=1..100` (default 50) sets the page size; repeat while `has_more` is true.
 5. `GET /v1/watchlists` lists your lists. `DELETE /v1/watchlists/{id}` deletes one (204).
 
-To replace a key, `POST /v1/keys/rotate` with `{"email"}`. It answers the same 202 and mails a link. Opening it answers a new key with the same `key_id`, plan and watch lists. The old key answers 401 from then on.
+To replace a key, `POST /v1/keys/rotate` with `{"email"}`. It answers the same 202 and mails a link. Pressing Confirm on it answers a new key with the same `key_id`, plan and watch lists. The old key answers 401 from then on.
 
-Other answers of the key routes: 400 for a bad body or a malformed token, 429 over a send limit, 503 when mail is not set up or the daily mail cap (`mail.daily_send_cap`, 500) is reached, 502 when the mail provider refused the message. None of them depends on whether the email has a key.
+Other answers of the key routes: 400 for a bad body or a malformed token, 429 over a send limit or over 5 requests a minute from one IP (`keys.anon_rate_per_minute`), 503 when mail is not set up or the daily mail cap (`mail.daily_send_cap`, 500) is reached, 502 when the mail provider refused the message. None of them depends on whether the email has a key.
 
 Limits come from your plan row. The free plan, the only plan today, allows 25 watch lists and 2,000 components per list. Over a limit the answer is 403 with the limit in the body: `{"error": "watch list limit reached", "max_watchlists": 25}` or `{"error": "component limit reached", "max_components": 2000}`. A body over 1 MB (`watchlists.max_body_bytes`) answers 413. A list that is not yours answers 404.
 

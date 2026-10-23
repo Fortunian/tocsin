@@ -7,8 +7,12 @@ import { MailChannelsMailer, MailSendError } from "../../src/mail/send";
 // nightly and on PRs that change src/mail/. Every call uses ?dry-run=true, so
 // no mail leaves and nothing is spent. Without MAILCHANNELS_API_KEY each test
 // skips. A 5xx or network error is a vendor failure: skip plus an alert line.
+// The suite also refuses to run unless TOCSIN_CONTRACT=1, which only
+// `npm run test:contract` (mail-contract.yml) sets: a MAILCHANNELS_API_KEY
+// added to the CI test job can never make `npm test` call the vendor.
 
-const KEY = process.env.MAILCHANNELS_API_KEY ?? "";
+export const CONTRACT_ENABLED = process.env.TOCSIN_CONTRACT === "1";
+const KEY = CONTRACT_ENABLED ? (process.env.MAILCHANNELS_API_KEY ?? "") : "";
 const FROM = process.env.MAIL_CONTRACT_FROM ?? "keys@tocsin.sh";
 const TO = process.env.MAIL_CONTRACT_TO ?? "contract-fixture@tocsin.sh";
 const NO_KEY = "MAILCHANNELS_API_KEY not set";
@@ -32,7 +36,7 @@ async function attempt(m: MailChannelsMailer, msg: Parameters<MailChannelsMailer
   }
 }
 
-describe("MailChannels adapter against the real API (dry run)", () => {
+describe.skipIf(!CONTRACT_ENABLED)("MailChannels adapter against the real API (dry run)", () => {
   it("accepts a well-formed message (2xx)", async (ctx) => {
     if (!KEY) return ctx.skip(NO_KEY);
     const err = await attempt(new MailChannelsMailer(KEY, true), { to: TO, from: FROM, subject: "Tocsin contract test", text: "dry run" }, ctx.skip);
