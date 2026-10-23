@@ -3,10 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type MockIns
 import { NODE_DIST_KEY } from "../../src/ingest/node-runtime-dist";
 import {
   isNodePreAnnouncement,
-  NODE_CURSOR_KEY,
-  NODE_PARSER_KEY,
-  NODE_PARSER_REV,
   normalizeNodePost,
+  NODE_PARSER_REV,
   nodeRuntime,
   parseNodeSecurityPost,
 } from "../../src/ingest/node-runtime";
@@ -19,6 +17,7 @@ import octHtml from "../fixtures/node-runtime/2026-10-21.html?raw";
 import indexJuly from "../fixtures/node-runtime/index-since-2026-07.json?raw";
 import indexJson from "../fixtures/node-runtime/index.json?raw";
 import feedXml from "../fixtures/node-runtime/vulnerability.xml?raw";
+import { clearNodeLedger, markNodePostsRead, nodePostRow, nodePostState } from "./node-ledger-seed.tcs-69";
 import { createRuntimeFake, type FakeAnswer } from "./runtime-fake.tcs-6";
 
 // TCS-30. Fixtures: recorded from nodejs.org and web.archive.org (tests/fixtures/node-runtime/README.md).
@@ -118,16 +117,17 @@ afterAll(() => {
   fetchSpy.mockRestore();
 });
 
-// Each test starts with no node-runtime rows, a cursor before the October post,
-// no cached dist index and the current parser revision (T5 cases override it).
+// Each test starts with no node-runtime rows, every post before START read
+// (TCS-69: ok ledger rows with the current parser revision, where it was a KV
+// cursor before the October post) and no cached dist index (T5 cases override the revision).
 beforeEach(async () => {
   vi.spyOn(console, "log").mockImplementation(() => {});
   await env.DB.prepare("DELETE FROM advisories WHERE id IN (SELECT advisory_id FROM advisory_sources WHERE source = 'node-runtime')").run();
   await env.DB.prepare("DELETE FROM advisory_sources WHERE source = 'node-runtime'").run();
   await env.DB.prepare("UPDATE sources SET last_run_at = NULL, last_ok_at = NULL, last_error = NULL, config_json = '{}' WHERE id = 'node-runtime'").run();
-  await env.CURSORS.put(NODE_CURSOR_KEY, START);
   await env.CURSORS.delete(NODE_DIST_KEY);
-  await env.CURSORS.put(NODE_PARSER_KEY, NODE_PARSER_REV);
+  await clearNodeLedger();
+  await markNodePostsRead(START);
 });
 
 describe("AFFECTS wordings (affects)", () => {
@@ -197,22 +197,24 @@ describe("pre-announcement (pre-announcement)", () => {
     expect(r.errors.join("\n")).toContain("CVE-2026-1234");
   });
 
-  it("pre-announcement run: 0 advisories, no error, cursor unchanged, no dist index read; the release post then yields 10", async () => {
+  it("pre-announcement run: 0 advisories, no error, a pending row, no dist index read; the release post then yields 10", async () => {
     const pre = fakeWith({ [OCT]: preHtml });
     const r1 = await nodeRuntime.run(ctxAt(pre.fetch));
     expect(r1.errors).toEqual([]);
     expect(r1.upserted + r1.unchanged).toBe(0);
     expect(pre.indexCalls).toHaveLength(0);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(START);
-    expect(r1.summary).toBe("october-2026-security-releases: pre-announcement, read again next run");
+    // TCS-69: the post waits in a pending row for pending_recheck_minutes (60).
+    const next = new Date(Date.parse(NOW) + 60 * MIN).toISOString();
+    expect(await nodePostRow(OCT)).toMatchObject({ state: "pending", next_check_at: next });
+    expect(r1.summary).toBe(`october-2026-security-releases: pre-announcement, read again after ${next}`);
     expect(await nodeRowCount()).toBe(0);
 
     const rel = fakeWith();
-    const r2 = await nodeRuntime.run(ctxAt(rel.fetch, Date.parse(NOW) + 10 * MIN));
+    const r2 = await nodeRuntime.run(ctxAt(rel.fetch, Date.parse(NOW) + 61 * MIN));
     expect(r2.errors).toEqual([]);
     expect(r2.upserted).toBe(10);
     expect(rel.base.count(OCT)).toBe(1);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(PUB);
+    expect(await nodePostRow(OCT)).toMatchObject({ state: "ok", next_check_at: null });
     expect(await nodeRowCount()).toBe(10);
   });
 
@@ -281,24 +283,31 @@ describe("dist index cache (dist index)", () => {
     const f = fakeWith({}, without);
     const r = await nodeRuntime.run(ctxAt(f.fetch));
     expect(r.upserted).toBe(0);
-    expect(r.errors.join("\n")).toContain("24.22.1");
+    // TCS-69 round 2: a warning and the 1-hour backoff, not a run error.
+    expect(r.errors).toEqual([]);
+    expect((r.warnings ?? []).join("\n")).toContain("24.22.1");
     expect(f.indexCalls).toHaveLength(1);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(START);
+    expect(await nodePostRow(OCT)).toMatchObject({ state: "failed", attempts: 1, next_check_at: new Date(Date.parse(NOW) + 60 * MIN).toISOString() });
   });
 });
 
 describe("per-post summary (summary)", () => {
-  it("summary: through runIngesters, last_error starts with a count per post before the detail", async () => {
-    await env.CURSORS.put(NODE_CURSOR_KEY, "2026-07-01T00:00:00Z");
+  // TCS-69 round 2: a CVE heading that is not emitted is a warning of an ok
+  // run (sources.last_warning); the per-post summary is on the run result.
+  it("summary: through runIngesters, a not-emitted CVE is last_warning, the run is ok, the summary has a count per post", async () => {
+    await clearNodeLedger();
+    await markNodePostsRead("2026-07-01T00:00:00Z");
     const sentence = "This vulnerability affects all users in active release lines: 24.x, 22.x";
     expect(julyHtml.split(sentence)).toHaveLength(2);
     const july = julyHtml.replace(sentence, "This vulnerability is bad");
     const out = await viaRegistry(fakeWith({ [JULY]: july }, indexJuly).fetch);
-    expect(out.find((o) => o.source === "node-runtime")?.status).toBe("failed");
+    const node = out.find((o) => o.source === "node-runtime");
+    expect(node?.status).toBe("ok");
+    expect(node?.status === "ok" ? node.result.summary : undefined).toBe("july-2026-security-releases: 10 ok, 1 not emitted; october-2026-security-releases: 10 ok");
     const row = await nodeSourceRow();
-    expect(row?.last_error).toMatch(
-      /^july-2026-security-releases: 10 ok, 1 not emitted; october-2026-security-releases: 10 ok \| 1 record error\(s\): https:\/\/nodejs\.org\/en\/blog\/vulnerability\/july-2026-security-releases: CVE-2026-56846: no affected release lines, not emitted$/,
-    );
+    expect(row?.last_error).toBeNull();
+    const warn = await env.DB.prepare("SELECT last_warning FROM sources WHERE id = 'node-runtime'").first<{ last_warning: string | null }>();
+    expect(warn?.last_warning).toBe("https://nodejs.org/en/blog/vulnerability/july-2026-security-releases: CVE-2026-56846: no affected release lines, not emitted");
     expect(await nodeRowCount()).toBe(20);
   });
 
@@ -309,33 +318,44 @@ describe("per-post summary (summary)", () => {
 });
 
 describe("parser revision (parser revision)", () => {
-  it("parser revision: with no revision key, a cursor past July still reads the July post once; the next run does not", async () => {
-    await env.CURSORS.put(NODE_CURSOR_KEY, PUB);
-    await env.CURSORS.delete(NODE_PARSER_KEY);
+  // TCS-69: the premise "a cursor past July with no revision key" is "every
+  // post to the October post has an ok row read by parser revision 2".
+  it("parser revision: rows of another parser revision are read once: the July post is read; the next run does not read it", async () => {
+    await clearNodeLedger();
+    await markNodePostsRead("2026-10-22T00:00:00Z", "2");
     const f = fakeWith({ [JULY]: julyHtml }, indexJuly);
     const r1 = await nodeRuntime.run(ctxAt(f.fetch));
     expect(r1.errors).toEqual([]);
     expect(r1.upserted).toBe(21);
     expect(await nodeRowCount()).toBe(21);
-    expect(await env.CURSORS.get(NODE_PARSER_KEY)).toBe(NODE_PARSER_REV);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(PUB);
+    expect(await nodePostRow(JULY)).toMatchObject({ state: "ok", parser_rev: NODE_PARSER_REV });
+    expect(await nodePostRow(OCT)).toMatchObject({ state: "ok", parser_rev: NODE_PARSER_REV, published: PUB });
 
     const r2 = await nodeRuntime.run(ctxAt(f.fetch, Date.parse(NOW) + 10 * MIN));
     expect(r2.unchanged).toBe(10);
     expect(f.base.count(JULY)).toBe(1);
   });
 
-  it("parser revision: an incomplete July post during the re-read is read again on the next run", async () => {
-    await env.CURSORS.put(NODE_CURSOR_KEY, PUB);
-    await env.CURSORS.delete(NODE_PARSER_KEY);
+  // TCS-69 round 2: the walk goes past the incomplete July post (the October
+  // post is read in the same run), and July is read again after its 1-hour backoff.
+  it("parser revision: an incomplete July post during the re-read is read again after its backoff", async () => {
+    await clearNodeLedger();
+    await markNodePostsRead("2026-10-22T00:00:00Z", "2");
     const r1 = await nodeRuntime.run(ctxAt(fakeWith({ [JULY]: julyHtml }, indexJson).fetch));
-    expect(r1.upserted).toBe(0);
-    expect(r1.errors.join("\n")).toContain("post incomplete");
+    expect(r1.upserted).toBe(10);
+    expect(r1.errors).toEqual([]);
+    expect((r1.warnings ?? []).join("\n")).toContain("post incomplete");
+    expect(await nodePostRow(JULY)).toMatchObject({ state: "failed", attempts: 1 });
+
+    const early = fakeWith({ [JULY]: julyHtml }, indexJuly);
+    await nodeRuntime.run(ctxAt(early.fetch, Date.parse(NOW) + 10 * MIN));
+    expect(early.base.count(JULY)).toBe(0);
 
     const f = fakeWith({ [JULY]: julyHtml }, indexJuly);
-    const r2 = await nodeRuntime.run(ctxAt(f.fetch, Date.parse(NOW) + 10 * MIN));
+    const r2 = await nodeRuntime.run(ctxAt(f.fetch, Date.parse(NOW) + 61 * MIN));
     expect(f.base.count(JULY)).toBe(1);
-    expect(r2.upserted).toBe(21);
-    expect(await env.CURSORS.get(NODE_CURSOR_KEY)).toBe(PUB);
+    expect(r2.upserted + r2.unchanged).toBe(21);
+    expect(await nodePostState(JULY)).toBe("ok");
+    expect(await nodePostState(OCT)).toBe("ok");
   });
 });
