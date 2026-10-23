@@ -16,8 +16,12 @@ interface Composer {
   dev: boolean;
 }
 
+// Drupal contrib legacy form <core>.x-<version> (8.x-1.0). The packages.drupal.org
+// Composer facade maps it to <version>, so the prefix is dropped before the parse.
+const DRUPAL_CORE_PREFIX = /^\d+\.x-/;
+
 export function parseComposer(v: string): Composer | null {
-  const m = COMPOSER.exec(v.trim());
+  const m = COMPOSER.exec(v.trim().replace(DRUPAL_CORE_PREFIX, ""));
   if (!m) return null;
   const [, p1, p2, p3, p4, label, nums, dev] = m;
   const parts = [p1, p2, p3, p4].map((p) => (p ? Number(p) : 0));

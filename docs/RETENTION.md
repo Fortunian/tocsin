@@ -98,6 +98,10 @@ One key: `{etag, versions}` from the last full read of the CPython `v3.` tag ref
 
 One key: `{etag, fetched_at, versions}` from the last read of the nodejs.org dist index (TCS-30). A run uses it as is while it is younger than `dist_cache_seconds` (config of the `node-runtime` sources row, default 3600). After that the run sends one conditional GET, and a 304 only moves `fetched_at`. It has no KV TTL, so the ETag outlives the window. Each read overwrites it in place, and its size follows the number of Node.js releases. Losing it costs one download. No delete job.
 
-## KV `cursor:node-runtime:parser` (CURSORS namespace)
+## node_runtime_posts
 
-One key: the parser revision (`"2"` since TCS-30) that the `cursor:node-runtime` cursor was read with. A run that finds another value moves the cursor back to the backfill window once and writes the revision. It does not grow. No delete job.
+The node-runtime post ledger (TCS-69). It has one row per post URL of the nodejs.org vulnerability feed, with the outcome (`ok`, `empty`, `pending`, `failed`), the attempt count, the parser revision the post was read with and the next check time. It also keeps the feed title of the post and the count of CVE headings that the last read did not emit. `ok` and `empty` are terminal (only the newest feed post in state `ok` or `empty` is read again, because Node edits a post in place). `pending` is a pre-announcement read again at its next check time. `failed` retries on `retry_schedule_minutes` until `next_check_at` is NULL. A pending or failed row that reaches `max_attempts` reads is `empty`. Rows are kept forever, the same as `advisories`. If a row is deleted, the ingester reads that post again. The feed sets the limit on the row count: 48 Security Release posts on 2026-10-23, with about 12 new posts each year. No delete job.
+
+## KV `cursor:node-runtime` and `cursor:node-runtime:parser` (CURSORS namespace)
+
+Two keys: the node-runtime cursor and the parser revision it was read with (TCS-6, TCS-30). Since TCS-69 no code reads or writes them: `node_runtime_posts` holds the per-post state and the parser revision. The old values stay in KV. They do not grow. No delete job.

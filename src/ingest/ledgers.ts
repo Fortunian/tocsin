@@ -3,6 +3,7 @@
 // a request or a DB value, because it goes into SQL text.
 export const LEDGER_TABLES: Record<string, string> = {
   "python-runtime": "python_runtime_records",
+  "node-runtime": "node_runtime_posts",
 };
 
 export interface LedgerCounts {

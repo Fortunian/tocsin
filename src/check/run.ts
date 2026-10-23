@@ -2,6 +2,7 @@
 // each dependency against them, and answer the affected ones in a fixed order.
 // Read-only over D1: one batch per check.
 import type { Advisory, SeverityLabel } from "../schema/advisory";
+import { matchAction } from "./action";
 import {
   CANDIDATE_SQL,
   CHUNK_SIZE,
@@ -99,7 +100,7 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
           severity: a.severity,
           exploited: a.exploited,
           fixed_in: r.fixed_in ?? null,
-          action: a.action,
+          action: matchAction(a, r.fixed_in),
           url: a.sources[0].url,
         });
       } else if (r.skipped) {

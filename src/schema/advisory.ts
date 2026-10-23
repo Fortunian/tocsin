@@ -21,6 +21,8 @@ export interface Advisory {
   cve_ids: string[];
   ghsa_id?: string;
   ecosystem: string;
+  // The full OSV ecosystem string when it has a suffix (Packagist:https://packages.drupal.org/8).
+  ecosystem_qualifier?: string;
   component: string;
   affected: AffectedRange[];
   fixed_versions: string[];
