@@ -4,6 +4,7 @@ import { eventsEtag, ifNoneMatchHits } from "../feed/etag";
 import { buildEventsQuery, parseEventsFilters } from "../feed/query";
 import { jsonUtf8 } from "../lib/http";
 import { rateLimit } from "../middleware/ratelimit";
+import { ADVISORIES_BY_CVE_SQL } from "./advisory";
 
 const CACHE_CONTROL = "public, max-age=60";
 const CVE_RE = /^CVE-\d{4}-\d{4,}$/;
@@ -37,15 +38,13 @@ events.get("/", async (c) => {
 });
 
 // Registered before /:id. Several advisories can share a CVE (one per
-// package); this answers the earliest one by cursor.
+// package); this answers the earliest one by cursor among every advisory that
+// lists the CVE in any cve_ids entry (advisory_cves, migration 0010), the same
+// read as the /cve/<CVE> page. The 1 is the response shape (one object), not a cap.
 events.get("/cve/:cve", async (c) => {
   const cve = c.req.param("cve").toUpperCase();
   if (!CVE_RE.test(cve)) return jsonUtf8(c, { error: "not a CVE id (CVE-YYYY-NNNN)" }, 400);
-  const row = await c.env.DB.prepare(
-    "SELECT doc_json FROM advisories WHERE cve_primary = ? ORDER BY cursor LIMIT 1",
-  )
-    .bind(cve)
-    .first<{ doc_json: string }>();
+  const row = await c.env.DB.prepare(ADVISORIES_BY_CVE_SQL).bind(cve, 1).first<{ doc_json: string }>();
   if (!row) return jsonUtf8(c, { error: "not found" }, 404);
   return jsonUtf8(c, JSON.parse(row.doc_json));
 });
