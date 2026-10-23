@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-// TCS-38: migrations/0021_osv_more_ecosystems.sql appends Maven, NuGet, Hex,
+// TCS-38: migrations/0024_osv_more_ecosystems.sql appends Maven, NuGet, Hex,
 // Pub, Alpine and Debian to sources.config_json.ecosystems of row osv. It
 // never removes or reorders a list an operator edited, and a second apply
 // changes nothing. Each test sets the row it starts from.
@@ -10,8 +10,8 @@ const NEW = ["Maven", "NuGet", "Hex", "Pub", "Alpine", "Debian"];
 const OLD = ["npm", "PyPI", "Go", "Packagist", "crates.io", "RubyGems"];
 
 const migration = () => {
-  const m = env.TEST_MIGRATIONS.find((x) => x.name === "0021_osv_more_ecosystems.sql");
-  expect(m, "migrations/0021_osv_more_ecosystems.sql").toBeDefined();
+  const m = env.TEST_MIGRATIONS.find((x) => x.name === "0024_osv_more_ecosystems.sql");
+  expect(m, "migrations/0024_osv_more_ecosystems.sql").toBeDefined();
   return m!;
 };
 
@@ -28,10 +28,10 @@ async function config(): Promise<Record<string, unknown>> {
 
 const setConfig = (json: string) => env.DB.prepare("UPDATE sources SET config_json = ? WHERE id = 'osv'").bind(json).run();
 
-describe("0021_osv_more_ecosystems.sql", () => {
+describe("0024_osv_more_ecosystems.sql", () => {
   it("is applied by the setup: row osv lists the 12 ecosystems, old ones first", async () => {
     const names = (await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id").all<{ name: string }>()).results.map((r) => r.name);
-    expect(names).toContain("0021_osv_more_ecosystems.sql");
+    expect(names).toContain("0024_osv_more_ecosystems.sql");
     expect((await config()).ecosystems).toEqual([...OLD, ...NEW]);
   });
 
