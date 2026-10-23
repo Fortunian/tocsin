@@ -117,14 +117,35 @@ npx tocsin connect
 
 The `tocsin` CLI (Node 20 or later) finds the agent tools on this machine and adds the `tocsin` MCP server (`https://mcp.tocsin.sh/mcp`) to each one: Claude Code (`~/.claude.json`, plus the Tocsin skill), Cursor (`~/.cursor/mcp.json`), Claude Desktop (`claude_desktop_config.json`, through `npx -y mcp-remote`) and Codex (`~/.codex/config.toml`).
 
+Connect also installs the Tocsin skill for Codex (`~/.codex/skills/tocsin/SKILL.md`) and as a Cursor rule (`~/.cursor/rules/tocsin.mdc`).
+
 - `--claude-code`, `--cursor`, `--claude-desktop`, `--codex`: wire only these tools.
 - `--dry-run`: print the edits and write nothing.
 - `--print`: print the MCP JSON block only.
+- `--hook`: with Claude Code, also add a `SessionStart` hook to `~/.claude/settings.json`. The hook runs `npx -y tocsin check --summary`, which prints one line and never blocks the session.
+- `--print-agents-md`: print a block for a repo's `AGENTS.md` and write nothing.
 
-A second run changes nothing. Connect never writes a file it cannot parse and never replaces a `tocsin` entry that is already there. The same CLI has `npx tocsin check`, `npx tocsin latest` and `npx tocsin watch`.
+A second run changes nothing. Connect never writes a file it cannot parse, never replaces a `tocsin` entry that is already there and never replaces a skill copy that you edited. The same CLI has `npx tocsin check`, `npx tocsin latest` and `npx tocsin watch`.
 
 To add the server by hand in Claude Code:
 
 ```
 claude mcp add --transport http tocsin https://mcp.tocsin.sh/mcp
+```
+
+### Codex
+
+```
+npx tocsin connect --codex
+```
+
+This adds the MCP server to `~/.codex/config.toml` and the skill to `~/.codex/skills/tocsin/SKILL.md`. Codex also reads `AGENTS.md` in a repo. `npx tocsin connect --print-agents-md` prints this block for it:
+
+```
+## Security advisories (Tocsin)
+
+At session start and before a deploy, run `npx tocsin check --json`.
+Exit 1: a dependency has an advisory. Read `affected[]` and upgrade to `fixed_in`.
+Exit 3: the check failed. Do not report the project as safe.
+Docs: https://tocsin.sh/docs
 ```
