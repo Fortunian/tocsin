@@ -6,7 +6,7 @@
 import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Env } from "../env";
-import { normalizeOsv, NOT_ENABLED_REASON, OSV_CONFIG_SQL, readConfig, type OsvVuln } from "../ingest/osv";
+import { keepStoredKeys, normalizeOsv, NOT_ENABLED_REASON, OSV_CONFIG_SQL, readConfig, type OsvVuln } from "../ingest/osv";
 import type { AdvisoryInput } from "../ingest/types";
 import { InvalidAdvisoryError, upsertAdvisory } from "../ingest/upsert";
 import { jsonUtf8 } from "../lib/http";
@@ -20,6 +20,9 @@ import { getSettingInt } from "../lib/settings";
 // with more than one doc or CVE.
 export const FALLBACK_MAX_BATCH = 100;
 export const FALLBACK_MAX_BODY_BYTES = 8 * 1024 * 1024;
+// Release docs per request (settings import.max_docs, migrations/0024). One doc
+// costs about 3 D1 queries; a Debian record holds up to 66 docs.
+export const FALLBACK_MAX_DOCS = 200;
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -125,10 +128,14 @@ internalImport.use("*", auth);
 
 internalImport.get("/:ecosystem", async (c) => {
   const ecosystem = c.req.param("ecosystem");
-  const [cfg, maxBatch] = await Promise.all([osvConfig(c.env.DB), getSettingInt(c.env.DB, "import.max_batch", FALLBACK_MAX_BATCH)]);
+  const [cfg, maxBatch, maxDocs] = await Promise.all([
+    osvConfig(c.env.DB),
+    getSettingInt(c.env.DB, "import.max_batch", FALLBACK_MAX_BATCH),
+    getSettingInt(c.env.DB, "import.max_docs", FALLBACK_MAX_DOCS),
+  ]);
   if (!cfg.ecosystems.includes(ecosystem)) return answer(c, { error: `ecosystem ${ecosystem} is not enabled in the osv source config`, enabled: cfg.ecosystems }, 400);
   const row = (await c.env.DB.prepare(BACKFILL_GET_SQL).bind(ecosystem).first<BackfillRow>()) ?? zeroRow(ecosystem);
-  return answer(c, { ...row, max_batch: maxBatch, skip_id_prefixes: cfg.skip_id_prefixes });
+  return answer(c, { ...row, max_batch: maxBatch, max_docs: maxDocs, skip_id_prefixes: cfg.skip_id_prefixes });
 });
 
 internalImport.post(
@@ -147,7 +154,11 @@ internalImport.post(
     const body = parseBody(raw);
     if (typeof body === "string") return answer(c, { error: body }, 400);
     const db = c.env.DB;
-    const [cfg, maxBatch] = await Promise.all([osvConfig(db), getSettingInt(db, "import.max_batch", FALLBACK_MAX_BATCH)]);
+    const [cfg, maxBatch, maxDocs] = await Promise.all([
+      osvConfig(db),
+      getSettingInt(db, "import.max_batch", FALLBACK_MAX_BATCH),
+      getSettingInt(db, "import.max_docs", FALLBACK_MAX_DOCS),
+    ]);
     if (!cfg.ecosystems.includes(body.ecosystem)) {
       return answer(c, { error: `ecosystem ${body.ecosystem} is not enabled in the osv source config`, enabled: cfg.ecosystems }, 400);
     }
@@ -166,7 +177,7 @@ internalImport.post(
     let stale = 0;
     let oldest: string | null = null;
     const errors: string[] = [];
-    const normalized: { source_id: string; doc: AdvisoryInput }[][] = [];
+    const normalized: { id: string; docs: { source_id: string; doc: AdvisoryInput }[] }[] = [];
     for (const item of body.records) {
       const v = item as OsvVuln;
       const id = typeof v?.id === "string" ? v.id : "?";
@@ -184,15 +195,23 @@ internalImport.post(
         }
         continue;
       }
-      normalized.push(norm.docs);
+      normalized.push({ id, docs: norm.docs });
     }
+    // The docs cap is checked before any read or write, so a refused batch writes nothing.
+    const docs = normalized.reduce((n, r) => n + r.docs.length, 0);
+    if (docs > maxDocs) {
+      return answer(c, { error: `${docs} release docs in one request, more than ${maxDocs} (settings import.max_docs); send fewer records`, max_docs: maxDocs, docs }, 413);
+    }
+
+    // A bare OSV id stays on the package stored under it (TCS-38). One read.
+    await keepStoredKeys(db, normalized);
 
     // The zip is a snapshot, older than the OSV API the cron reads. A doc whose
     // stored copy was created by this same osv source_id and has a later
     // modified_at is not written: an older snapshot never replaces a newer
     // record. An equal modified_at still goes through upsertAdvisory (unchanged,
     // or a parser upgrade). One read for the whole request.
-    const sourceIds = normalized.flatMap((docs) => docs.map((d) => d.source_id));
+    const sourceIds = normalized.flatMap((r) => r.docs.map((d) => d.source_id));
     const storedModified = new Map<string, number>();
     if (sourceIds.length > 0) {
       const { results } = await db
@@ -204,7 +223,7 @@ internalImport.post(
       }
     }
 
-    for (const docs of normalized) {
+    for (const { docs } of normalized) {
       let wrote = false;
       let failed = false;
       for (const d of docs) {

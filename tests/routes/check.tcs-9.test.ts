@@ -338,7 +338,8 @@ describe("POST /v1/check (JSON body)", () => {
   });
 
   it("an unsupported ecosystem is skipped, not counted as checked", async () => {
-    const dep = { ecosystem: "Maven", name: "org.example:fixture", version: "1.0.0" };
+    // TCS-38 made Maven supported; Hackage has no comparator.
+    const dep = { ecosystem: "Hackage", name: "fixture", version: "1.0.0" };
     const body = await ok(
       await postJson("192.0.2.25", { dependencies: [dep, { ecosystem: "npm", name: "tcs9-safe-fixture", version: "2.0.0" }] }),
     );

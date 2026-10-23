@@ -47,12 +47,24 @@ An invalid filter answers 400 with `{ "error": "<reason>" }`.
 
 ### Check
 
-`GET /v1/check?node=24.22.0&php=8.4.26` checks runtimes only. `POST /v1/check` takes one or more lockfiles as multipart fields, where the field name is the file name (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `requirements.txt`, `go.sum`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`), or a JSON body:
+`GET /v1/check?node=24.22.0&php=8.4.26` checks runtimes only. `POST /v1/check` takes one or more lockfiles as multipart fields, where the field name is the file name (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `requirements.txt`, `go.sum`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `pom.xml`, `gradle.lockfile`, `packages.lock.json`, `mix.lock`, `pubspec.lock`), or a JSON body:
 
 ```
 curl -F "package-lock.json=@package-lock.json" https://tocsin.sh/v1/check
 curl -H "Content-Type: application/json" -d '{"dependencies":[{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}],"runtimes":{"node":"24.22.0"}}' https://tocsin.sh/v1/check
 ```
+
+`pom.xml` lists direct dependencies only. A version from a parent POM, an unknown property or a version range is in `skipped` with its reason; Tocsin never guesses it. A `${property}` value that resolves to more than 256 characters, or a file that needs more than 200 property expansions, is in `skipped` with the reason `unresolved_property`. `gradle.lockfile` is the complete, resolved list.
+
+An OS package list is checked like a runtime: send the release as `alpine` (`3.18`, `v3.18` or `3.18.4`) or `debian` (`12` or `12.5`), and the list text as `os_packages`. The list is the output of `apk list --installed` (Alpine) or `dpkg-query -W -f='${source:Package} ${Version}\n'` (Debian). In JSON, the release goes in `runtimes` and the list at the top level; in multipart, both are form fields. A dependency of an OS list has the ecosystem `Alpine:v3.18` or `Debian:12` and is matched only against advisories of that release. OSV names Alpine and Debian packages by their source package. The Alpine name is the origin from `apk list`. The `dpkg-query` form above gives the source package. `dpkg -l` gives binary names (`libssl3` from `openssl`), and Tocsin has no map from a binary name to its source package. Each `dpkg -l` row is therefore in `skipped` with the reason `binary_package_name` and is never counted as clean. Send the `dpkg-query` form to check a Debian system.
+
+```
+curl -F alpine=3.18 --form-string "os_packages=$(apk list --installed)" https://tocsin.sh/v1/check
+curl -F debian=12 --form-string "os_packages=$(dpkg-query -W -f='${source:Package} ${Version}\n')" https://tocsin.sh/v1/check
+curl -H "Content-Type: application/json" -d '{"runtimes":{"debian":"12"},"os_packages":"openssl 3.0.11-1~deb12u2\n"}' https://tocsin.sh/v1/check
+```
+
+A release without `os_packages`, `os_packages` without a release, both `alpine` and `debian`, or an unknown release answers 400 with `{ "error", "field" }`. `GET /v1/check?debian=12` answers 400: a query string has no package list.
 
 Runtime parameters are `node=`, `php=`, `python=`, `go=`, `deno=` and `bun=`. `go=` takes the Go toolchain version as `go version` prints it (`go=1.22.3` or `go=go1.22.3`). It matches the OSV `Go` advisories on the toolchain itself (package `stdlib`, `toolchain` or `cmd/<tool>`) by their OSV range events, and `fixed_in` is the lowest OSV `fixed` version above yours. Those advisories stay `Go` advisories for module matching; the runtime match does not add a second advisory. An affected item for `go=1.22.3` has `dependency` `{ "ecosystem": "go", "name": "go", "version": "1.22.3" }`. The version is echoed as given: `go=go1.22.3` answers `"version": "go1.22.3"`.
 
@@ -82,7 +94,7 @@ Each event is one advisory. The schema is at [/schema/advisory.v1.json](/schema/
 | `id` | string | The Tocsin id. |
 | `cve_ids` | string[] | CVE ids. Can be empty. |
 | `ghsa_id` | string | GitHub advisory id, when there is one. |
-| `ecosystem` | string | OSV ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`) or runtime (`node`, `php`, `python`, `go`, `deno`, `bun`). |
+| `ecosystem` | string | OSV ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `Maven`, `NuGet`, `Hex`, `Pub`, `Alpine`, `Debian`) or runtime (`node`, `php`, `python`, `go`, `deno`, `bun`). For `Alpine` and `Debian`, `ecosystem_qualifier` holds the release (`Alpine:v3.18`, `Debian:12`); there is one advisory per release. |
 | `component` | string | Package or runtime name. |
 | `affected` | object[] | Version ranges: `introduced`, `fixed`, `last_affected`. |
 | `fixed_versions` | string[] | Versions that fix it. |

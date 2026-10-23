@@ -10,6 +10,7 @@ import {
   GO_RUNTIME_CANDIDATE_SQL,
   PYPI_CANDIDATE_SQL,
   candidateKeys,
+  lookupEcosystem,
   lookupName,
 } from "./candidates";
 import { COVERAGE_SQL, SOURCE_COVERAGE_SQL, coverageFor, type Coverage, type CoverageRows } from "./coverage";
@@ -39,7 +40,12 @@ export interface CheckResult {
 
 const SEVERITY_RANK: Record<SeverityLabel, number> = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
 
-const groupKey = (ecosystem: string, component: string) => `${ecosystem}\u0000${component}`;
+// Advisories and dependencies meet on the base ecosystem (a Debian:12
+// dependency reads the Debian group); the matcher checks the release.
+const groupKey = (ecosystem: string, component: string) => {
+  const e = lookupEcosystem(ecosystem);
+  return `${e}\u0000${lookupName(e, component)}`;
+};
 
 export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped: object[]): Promise<CheckResult> {
   const skipped: object[] = [...parseSkipped];
@@ -86,7 +92,7 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
 
   const affected: AffectedItem[] = [];
   for (const dep of checkedDeps) {
-    const candidates = byKey.get(groupKey(dep.ecosystem, lookupName(dep.ecosystem, dep.name))) ?? [];
+    const candidates = byKey.get(groupKey(dep.ecosystem, dep.name)) ?? [];
     const skippedIds = new Map<string, string[]>();
     let hit = false;
     for (const a of candidates) {
@@ -131,7 +137,7 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
 }
 
 function addCandidate(byKey: Map<string, Advisory[]>, a: Advisory): void {
-  const k = groupKey(a.ecosystem, lookupName(a.ecosystem, a.component));
+  const k = groupKey(a.ecosystem, a.component);
   const list = byKey.get(k);
   if (list) list.push(a);
   else byKey.set(k, [a]);

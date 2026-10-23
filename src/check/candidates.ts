@@ -1,6 +1,7 @@
 // Candidate advisories for a check: the rows whose (ecosystem, component)
 // matches a dependency. The keys go in as one JSON parameter per chunk, because
 // D1 allows at most 100 bound parameters per statement.
+import { baseEcosystem } from "../ingest/osv";
 import { normalizePypiName } from "./match/pep440";
 import type { Dependency } from "./parsers";
 
@@ -48,6 +49,15 @@ export function isPypi(ecosystem: string): boolean {
   return ecosystem === "PyPI" || ecosystem === "python";
 }
 
+/**
+ * The ecosystem a dependency or advisory is grouped and queried by: the base
+ * name (a Debian:12 dependency reads the Debian rows; the release is checked
+ * by the matcher). Stored advisories already hold the base name.
+ */
+export function lookupEcosystem(ecosystem: string): string {
+  return baseEcosystem(ecosystem);
+}
+
 /** The name a dependency or advisory is grouped and queried by: the PEP 503 name for PyPI and python. */
 export function lookupName(ecosystem: string, name: string): string {
   return isPypi(ecosystem) ? normalizePypiName(name) : name;
@@ -59,11 +69,12 @@ export function candidateKeys(deps: Dependency[]): { exact: CandidateKey[]; pypi
   const exact: CandidateKey[] = [];
   const pypi: CandidateKey[] = [];
   for (const d of deps) {
-    const name = lookupName(d.ecosystem, d.name);
-    const k = `${d.ecosystem}\u0000${name}`;
+    const ecosystem = lookupEcosystem(d.ecosystem);
+    const name = lookupName(ecosystem, d.name);
+    const k = `${ecosystem}\u0000${name}`;
     if (seen.has(k)) continue;
     seen.add(k);
-    (isPypi(d.ecosystem) ? pypi : exact).push([d.ecosystem, name]);
+    (isPypi(ecosystem) ? pypi : exact).push([ecosystem, name]);
   }
   return { exact, pypi };
 }

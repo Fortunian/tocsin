@@ -40,6 +40,7 @@ export interface BackfillRow {
   last_id: string | null;
   done_at: string | null;
   max_batch?: number;
+  max_docs?: number;
   skip_id_prefixes?: string[];
 }
 
@@ -56,6 +57,7 @@ export interface BackfillTotals {
 export function runBackfill(opts: {
   zip: Uint8Array;
   ecosystem: string;
+  // A thrown error with status 413 halves the batch and sends the records again.
   post: (body: ImportBody) => Promise<ImportAnswer>;
   get: () => Promise<BackfillRow>;
   batch?: number;

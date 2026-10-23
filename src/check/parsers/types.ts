@@ -23,7 +23,13 @@ export type ParserId =
   | "go-sum"
   | "composer-lock"
   | "cargo-lock"
-  | "gemfile-lock";
+  | "gemfile-lock"
+  | "pom-xml"
+  | "gradle-lockfile"
+  | "nuget-lock"
+  | "mix-lock"
+  | "pubspec-lock"
+  | "os-packages";
 
 /** The file could not be read as its format. Distinct from a file with no dependencies. */
 export class LockfileParseError extends Error {
