@@ -32,7 +32,7 @@ One key per source: the ETag of the first advisories page, sent as `If-None-Matc
 
 ## settings
 
-A small key/value table of run-time limits and knobs (today eleven rows: `feed.anon_rate_per_minute`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `site.latest_rows`, `site.latest_cache_seconds`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (today 26 rows: `feed.anon_rate_per_minute`, `site.latest_rows`, `site.latest_cache_seconds`, `import.max_batch`, `import.max_body_bytes`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`, `webhooks.backoff_seconds`, `webhooks.timeout_ms`, `webhooks.lease_seconds`, `webhooks.sweep_grace_seconds`, `webhooks.sweep_batch`, `webhooks.enqueue_max_lists`, `webhooks.enqueue_per_list`, `webhooks.max_event_age_days`, `webhooks.max_url_length`, `webhooks.deliveries_list_limit`, `retention.deliveries_days`, `retention.deliveries_batch`, `retention.deliveries_dry_run`). Rows change in place by key; the table does not grow with traffic. No delete job.
 
 ## api_keys
 
@@ -40,7 +40,19 @@ One row per email (TCS-8). It grows with sign-ups. Auth moves `last_used_at` for
 
 ## watchlists
 
-One row per watch list, at most `plans.max_watchlists` per key. A row is deleted by `DELETE /v1/watchlists/{id}`, or by the monthly `api_keys` job together with its key. Its `cursor` is overwritten in place, so a row does not grow.
+One row per watch list, at most `plans.max_watchlists` per key. A row is deleted by `DELETE /v1/watchlists/{id}`, or by the monthly `api_keys` job together with its key. Its `cursor` is overwritten in place (by `GET /v1/watchlists/{id}/events` and by webhook enqueue), so a row does not grow.
+
+## deliveries
+
+One row per (watch list, advisory) that webhook delivery found (TCS-11). The primary key `(watchlist_id, advisory_id)` is the exactly-once gate. It grows with every advisory a webhook list matches. A daily cron (`41 4 * * *`, `src/cron/deliveries-retention.ts`) deletes `delivered` rows whose `delivered_at` is older than `retention.deliveries_days` (default 90), and `failed` and `skipped` rows whose `next_at` (the time of their last write) is older than the same window. `pending` and `sending` rows are never deleted by the job: they end as `delivered` or `failed` within about 15 hours. One run deletes at most `retention.deliveries_batch` rows of each status (default 5000), in one transaction; the rest wait for the next run. When `retention.deliveries_dry_run` is not `0`, the run counts what it would delete and deletes nothing. `DELETE /v1/watchlists/{id}` deletes the list's rows in the same transaction as the list. A row is a delivery receipt, not money or history, so it is deleted, not archived.
+
+## KV `retention:deliveries:last` (CURSORS namespace)
+
+One key: the audit record of the last `deliveries` retention run, `{ran_at, cutoff, dry_run, delivered, failed, skipped, has_more}`. It is written after the delete commits, never after a failed run, and each run overwrites it. Each run also writes the same record as one log line. No delete job.
+
+## KV `webhooks:enqueue:after` (CURSORS namespace)
+
+One key: the last watch list id one enqueue run reached when it hit `webhooks.enqueue_max_lists`, or empty. The next run starts after it, so no list waits forever behind the cap. It is overwritten in place and does not grow. Losing it only restarts the rotation at the first list. No delete job.
 
 ## plans
 

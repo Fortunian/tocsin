@@ -30,5 +30,7 @@ queue = "deliveries"
 queue = "deliveries"
 
 [triggers]
-# */10: ingest. 17 3 1 * *: monthly API key retention (src/cron/run.ts RETENTION_CRON).
-crons = ["*/10 * * * *", "17 3 1 * *"]
+# */10: ingest, then webhook enqueue and sweep. 17 3 1 * *: monthly API key
+# retention (src/cron/run.ts RETENTION_CRON). 41 4 * * *: daily deliveries
+# retention (DELIVERY_RETENTION_CRON).
+crons = ["*/10 * * * *", "17 3 1 * *", "41 4 * * *"]
