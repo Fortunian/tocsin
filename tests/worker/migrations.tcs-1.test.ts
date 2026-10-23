@@ -18,7 +18,7 @@ const SOURCES = ["bun-runtime", "deno-runtime", "epss", "kev", "node-eol", "node
 // TCS-32: migration 0015 seeds the node-runtime history window; every other row keeps "{}".
 // TCS-69: migration 0020 adds the node-runtime recheck knobs.
 const SEEDED_CONFIG: Record<string, string> = {
-  "node-runtime": '{"max_posts":20,"backfill_days":4000,"retry_incomplete_days":365,"pending_recheck_minutes":60,"pending_old_recheck_minutes":10080,"max_attempts":10}',
+  "node-runtime": '{"max_posts":20,"backfill_days":4000,"retry_incomplete_days":365,"pending_recheck_minutes":60,"pending_old_recheck_minutes":10080,"max_attempts":10,"retry_schedule_minutes":"60,360,1440,10080"}',
 };
 const ECOSYSTEMS = ["node", "php", "npm", "PyPI", "Go", "crates.io"];
 

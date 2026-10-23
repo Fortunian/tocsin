@@ -126,7 +126,9 @@ describe("node-runtime history", () => {
       now: () => NOW,
       fetch: createRuntimeFake(routes({ [old.link]: post(1, "4.99.99") })).fetch,
     });
-    expect(r.errors.join("\n")).toMatch(/post incomplete, older than 365 days, not read again/);
+    // TCS-69 round 2: the note of one post is a warning, never a run error.
+    expect(r.errors).toEqual([]);
+    expect((r.warnings ?? []).join("\n")).toMatch(/post incomplete, older than 365 days, not read again/);
     expect(await nodeRows()).toBe(47);
     expect(await nodePostRow(old.link)).toMatchObject({ state: "failed", next_check_at: null });
     expect(await nodePostRow(POSTS[47].link)).toMatchObject({ state: "ok" });
@@ -136,7 +138,8 @@ describe("node-runtime history", () => {
     const fake = createRuntimeFake({ ...routes(), [POSTS[2].link]: { status: 404 } });
     const ctx = { env, source: { id: "node-runtime", kind: "node-runtime", config: { max_posts: 100, backfill_days: 4000 }, coverage_since: null }, now: () => NOW, fetch: fake.fetch };
     const r = await nodeRuntime.run(ctx);
-    expect(r.errors.join("\n")).toContain("HTTP 404");
+    expect(r.errors).toEqual([]);
+    expect((r.warnings ?? []).join("\n")).toContain("HTTP 404");
     expect(await nodeRows()).toBe(47);
     expect(await nodePostRow(POSTS[2].link)).toMatchObject({ state: "failed", next_check_at: null });
     expect(await nodePostRow(POSTS[47].link)).toMatchObject({ state: "ok" });

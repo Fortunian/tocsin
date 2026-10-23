@@ -1,8 +1,8 @@
 // The node-runtime post ledger: table node_runtime_posts (migrations/0020).
 // One row per post URL. ok and empty are terminal (the newest feed post in
-// state ok is read again, because Node edits a release post in place);
+// state ok or empty is read again, because Node edits a post in place);
 // pending waits for next_check_at; failed retries until next_check_at is
-// NULL, and is then terminal.
+// NULL, and is then terminal. A post that reaches max_attempts is empty.
 
 export type PostState = "ok" | "empty" | "pending" | "failed";
 
@@ -13,9 +13,11 @@ export interface PostRow {
   attempts: number;
   parser_rev: string;
   next_check_at: string | null;
+  // NULL on a row written before the column was filled (a seeded test row).
+  title: string | null;
 }
 
-const COLS = "url, published, state, attempts, parser_rev, next_check_at";
+const COLS = "url, published, state, attempts, parser_rev, next_check_at, title";
 const MAX_ERROR_CHARS = 500;
 
 export const POST_SQL = {
@@ -23,12 +25,10 @@ export const POST_SQL = {
   known: `SELECT ${COLS} FROM node_runtime_posts WHERE url IN (SELECT value FROM json_each(?))`,
   // idx_node_runtime_posts_state_next.
   due: `SELECT ${COLS} FROM node_runtime_posts WHERE state = ? AND next_check_at <= ? ORDER BY next_check_at LIMIT ?`,
-  // idx_node_runtime_posts_state_next: a failed row that still retries.
-  retrying: "SELECT 1 AS r FROM node_runtime_posts WHERE state = 'failed' AND next_check_at IS NOT NULL LIMIT 1",
   write:
-    "INSERT INTO node_runtime_posts (url, published, state, attempts, last_error, parser_rev, next_check_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+    "INSERT INTO node_runtime_posts (url, published, state, attempts, last_error, parser_rev, next_check_at, updated_at, title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
     "ON CONFLICT(url) DO UPDATE SET published = excluded.published, state = excluded.state, attempts = excluded.attempts, last_error = excluded.last_error, " +
-    "parser_rev = excluded.parser_rev, next_check_at = excluded.next_check_at, updated_at = excluded.updated_at",
+    "parser_rev = excluded.parser_rev, next_check_at = excluded.next_check_at, updated_at = excluded.updated_at, title = COALESCE(excluded.title, title)",
 } as const;
 
 export interface PostWrite {
@@ -37,6 +37,8 @@ export interface PostWrite {
   state: PostState;
   attempts: number;
   parser_rev: string;
+  // Empty or absent keeps the stored title.
+  title?: string;
   last_error?: string;
   next_check_at?: string;
 }
@@ -70,10 +72,7 @@ export async function writePost(db: D1Database, w: PostWrite, now: Date): Promis
       w.parser_rev,
       w.next_check_at ?? null,
       now.toISOString(),
+      w.title === undefined || w.title === "" ? null : w.title,
     )
     .run();
-}
-
-export async function hasRetrying(db: D1Database): Promise<boolean> {
-  return (await db.prepare(POST_SQL.retrying).first<{ r: number }>()) !== null;
 }

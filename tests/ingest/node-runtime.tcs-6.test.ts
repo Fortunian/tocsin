@@ -254,10 +254,12 @@ describe("nodeRuntime.run (run)", () => {
 
   it("N6 ledger: an ok post that is not the newest feed post is skipped: 1 fetch (feed only), 0 upserts", async () => {
     // TCS-69: the ledger premise of "a cursor after the post". A newer feed
-    // post has a terminal empty row, so the October post is not the newest.
+    // post has a terminal failed row, so the October post is not the newest.
+    // (TCS-69 round 2: the newest post in state empty is read again, so the
+    // premise row is a terminal failed one.)
     const newer = "https://nodejs.org/en/blog/vulnerability/tcs-69-newer";
     await markNodePostsRead("2026-10-22T00:00:00Z");
-    await seedNodePosts([{ url: newer, published: "2026-10-22T01:00:00Z", state: "empty" }]);
+    await seedNodePosts([{ url: newer, published: "2026-10-22T01:00:00Z", state: "failed", attempts: 1, next_check_at: null }]);
     const fake = createRuntimeFake(routes({ [FEED]: feedWithExtraItem(newer, "Thu, 22 Oct 2026 01:00:00 GMT") }));
     const res = await nodeRuntime.run(ctxFor(fake.fetch));
     expect(fake.urls()).toEqual([FEED]);
@@ -274,13 +276,14 @@ describe("nodeRuntime.run (run)", () => {
     expect(res.unchanged).toBe(10);
   });
 
-  it("N8: an index without v24.22.1 stores nothing, names 24.22.1 and leaves the post due now", async () => {
+  it("N8: an index without v24.22.1 stores nothing, names 24.22.1 in a warning and leaves the post failed with the 1-hour backoff", async () => {
     const index = JSON.stringify((JSON.parse(indexJson) as { version: string }[]).filter((e) => e.version !== "v24.22.1"));
     const res = await nodeRuntime.run(ctxFor(createRuntimeFake(routes({ [INDEX]: index })).fetch));
     expect(res.upserted).toBe(0);
-    expect(res.errors).toHaveLength(1);
-    expect(res.errors[0]).toContain("24.22.1");
-    expect(await nodePostRow(POST)).toMatchObject({ state: "failed", attempts: 1, next_check_at: new Date(NOW).toISOString() });
+    expect(res.errors).toEqual([]);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.warnings?.[0]).toContain("24.22.1");
+    expect(await nodePostRow(POST)).toMatchObject({ state: "failed", attempts: 1, next_check_at: new Date(Date.parse(NOW) + 60 * 60_000).toISOString() });
     expect(await nodeRowCount()).toBe(0);
   });
 
@@ -316,9 +319,11 @@ describe("nodeRuntime.run (run)", () => {
     expect(fake.urls().filter((u) => u.includes("evil.example"))).toEqual([]);
     // TCS-30: the dist index is read after the post that needs it.
     expect(fake.urls()).toEqual([FEED, POST, INDEX]);
-    expect(res.errors).toHaveLength(1);
-    expect(res.errors[0]).toContain(evil);
-    expect(res.errors[0]).toContain("https://nodejs.org");
+    // TCS-69 round 2: a note of one post is a warning; the run stays ok.
+    expect(res.errors).toEqual([]);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.warnings?.[0]).toContain(evil);
+    expect(res.warnings?.[0]).toContain("https://nodejs.org");
     expect(res.upserted).toBe(10);
     expect(await nodeRowCount()).toBe(10);
     // The off-origin post counts as done: its row is failed and terminal.
@@ -331,8 +336,9 @@ describe("nodeRuntime.run (run)", () => {
     const fake = createRuntimeFake(routes({ [FEED]: feedWithExtraItem(plain, "Thu, 22 Oct 2026 01:00:00 GMT") }));
     const res = await nodeRuntime.run(ctxFor(fake.fetch));
     expect(fake.count(plain)).toBe(0);
-    expect(res.errors).toHaveLength(1);
-    expect(res.errors[0]).toContain(plain);
+    expect(res.errors).toEqual([]);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.warnings?.[0]).toContain(plain);
   });
 
   it("N11 F2 near miss: a nodejs.org link with a query string is read (source: assumed, in-test edit)", async () => {

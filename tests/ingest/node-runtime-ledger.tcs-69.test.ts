@@ -123,9 +123,9 @@ beforeEach(async () => {
 });
 
 describe("migration 0020 (migration)", () => {
-  it("migration: the table, its index and the 3 knobs exist; an edited knob is kept", async () => {
+  it("migration: the table, its index and the 4 knobs exist; an edited knob is kept", async () => {
     const cols = (await env.DB.prepare("PRAGMA table_info(node_runtime_posts)").all<{ name: string; pk: number }>()).results;
-    expect(cols.map((c) => c.name)).toEqual(["url", "published", "state", "attempts", "last_error", "parser_rev", "next_check_at", "updated_at"]);
+    expect(cols.map((c) => c.name)).toEqual(["url", "published", "state", "attempts", "last_error", "parser_rev", "next_check_at", "updated_at", "title"]);
     expect(cols.find((c) => c.name === "url")?.pk).toBe(1);
     const idx = (await env.DB.prepare("PRAGMA index_info(idx_node_runtime_posts_state_next)").all<{ name: string }>()).results;
     expect(idx.map((c) => c.name)).toEqual(["state", "next_check_at"]);
@@ -135,7 +135,7 @@ describe("migration 0020 (migration)", () => {
 
     const cfg = async () => JSON.parse((await env.DB.prepare("SELECT config_json FROM sources WHERE id = 'node-runtime'").first<{ config_json: string }>())!.config_json);
     const seeded = await cfg();
-    expect(seeded).toMatchObject({ pending_recheck_minutes: 60, pending_old_recheck_minutes: 10080, max_attempts: 10 });
+    expect(seeded).toMatchObject({ pending_recheck_minutes: 60, pending_old_recheck_minutes: 10080, max_attempts: 10, retry_schedule_minutes: "60,360,1440,10080" });
     const update = migration0020.split(";").find((s) => s.includes("UPDATE sources"))!;
     try {
       await env.DB.prepare("UPDATE sources SET config_json = json_set(config_json, '$.pending_recheck_minutes', 15) WHERE id = 'node-runtime'").run();
@@ -143,7 +143,7 @@ describe("migration 0020 (migration)", () => {
       expect(await cfg()).toMatchObject({ pending_recheck_minutes: 15, max_attempts: 10 });
       await env.DB.prepare("UPDATE sources SET config_json = '{}' WHERE id = 'node-runtime'").run();
       await env.DB.prepare(update).run();
-      expect(await cfg()).toEqual({ pending_recheck_minutes: 60, pending_old_recheck_minutes: 10080, max_attempts: 10 });
+      expect(await cfg()).toEqual({ pending_recheck_minutes: 60, pending_old_recheck_minutes: 10080, max_attempts: 10, retry_schedule_minutes: "60,360,1440,10080" });
     } finally {
       await env.DB.prepare("UPDATE sources SET config_json = ? WHERE id = 'node-runtime'").bind(JSON.stringify(seeded)).run();
     }
@@ -153,6 +153,7 @@ describe("migration 0020 (migration)", () => {
     const fake = createRuntimeFake(routes());
     await expect(nodeRuntime.run(ctxAt(fake.fetch, NOW, { pending_recheck_minutes: 0 }))).rejects.toThrow(/pending_recheck_minutes/);
     await expect(nodeRuntime.run(ctxAt(fake.fetch, NOW, { max_attempts: -1 }))).rejects.toThrow(/max_attempts/);
+    await expect(nodeRuntime.run(ctxAt(fake.fetch, NOW, { retry_schedule_minutes: "60,0" }))).rejects.toThrow(/retry_schedule_minutes/);
     expect(fake.calls).toHaveLength(0);
   });
 });
@@ -220,28 +221,71 @@ describe("pre-announcement (pre-announcement)", () => {
 });
 
 describe("recent post with no CVE heading (recent no CVE)", () => {
-  it("recent no CVE: a 10-day-old post with no CVE heading is failed with an error; after max_attempts reads it is terminal with one warning", async () => {
+  // TCS-69 round 2: a warning per read (never a run error), the retry
+  // schedule (1 h, 6 h, ...), then terminal empty at max_attempts.
+  it("recent no CVE: a 10-day-old post with no CVE heading is failed with a warning and the backoff; after max_attempts reads it is terminal empty", async () => {
     const link = `${BASE}tcs-69-recent-no-cve`;
     const extra = [{ link, published: iso(NOW - 10 * DAY).replace(/\.\d{3}Z$/, "Z") }];
     await readAllBut();
     const fake = createRuntimeFake(routes({ [link]: NO_HEADINGS }, extra));
     const o1 = await viaRegistry(fake.fetch, NOW);
-    expect(o1.status).toBe("failed");
-    expect((await sourceRow())?.last_error).toContain(`${link}: no CVE headings`);
-    expect(await nodePostRow(link)).toMatchObject({ state: "failed", attempts: 1, next_check_at: iso(NOW + 60 * MIN) });
+    expect(o1.status).toBe("ok");
+    expect(await sourceRow()).toMatchObject({ last_error: null, last_ok_at: iso(NOW) });
+    expect((await sourceRow())?.last_warning).toBe(`tcs-69-recent-no-cve: no CVE headings, read 1 of 10, read again after ${iso(NOW + 60 * MIN)}`);
+    expect(await nodePostRow(link)).toMatchObject({ state: "failed", attempts: 1, next_check_at: iso(NOW + 60 * MIN), last_error: `${link}: no CVE headings` });
 
     const cfg = { ...CONFIG, max_attempts: 3 };
     const r2 = await nodeRuntime.run(ctxAt(fake.fetch, NOW + 61 * MIN, cfg));
-    expect(r2.errors).toEqual([`${link}: no CVE headings`]);
-    expect(await nodePostRow(link)).toMatchObject({ state: "failed", attempts: 2, next_check_at: iso(NOW + 121 * MIN) });
-    const r3 = await nodeRuntime.run(ctxAt(fake.fetch, NOW + 122 * MIN, cfg));
+    expect(r2.errors).toEqual([]);
+    expect(await nodePostRow(link)).toMatchObject({ state: "failed", attempts: 2, next_check_at: iso(NOW + 61 * MIN + 360 * MIN) });
+    await nodeRuntime.run(ctxAt(fake.fetch, NOW + 61 * MIN + 359 * MIN, cfg));
+    expect(fake.count(link)).toBe(2);
+    const r3 = await nodeRuntime.run(ctxAt(fake.fetch, NOW + 61 * MIN + 360 * MIN, cfg));
     expect(r3.errors).toEqual([]);
-    expect(r3.warnings).toEqual(["tcs-69-recent-no-cve: no CVE headings after 3 reads, not read again"]);
-    expect(await nodePostRow(link)).toMatchObject({ state: "failed", attempts: 3, next_check_at: null });
+    expect(r3.warnings).toEqual(["tcs-69-recent-no-cve: no CVE headings, after 3 reads, not read again"]);
+    expect(await nodePostRow(link)).toMatchObject({ state: "empty", attempts: 3, next_check_at: null });
     const r4 = await nodeRuntime.run(ctxAt(fake.fetch, NOW + 10 * DAY, cfg));
     expect(r4.errors).toEqual([]);
     expect(r4.warnings).toBeUndefined();
     expect(fake.count(link)).toBe(3);
+  });
+});
+
+describe("pending attempt cap (pending cap)", () => {
+  // TCS-69 round 2: a pre-announcement that never turns into a release is
+  // terminal empty after max_attempts reads, with one warning.
+  it("pending cap: a pre-announcement that is not the newest post is empty after max_attempts reads, then never read", async () => {
+    const link = `${BASE}tcs-69-stale-pre`;
+    const extra = [{ link, published: iso(NOW - 20 * DAY).replace(/\.\d{3}Z$/, "Z") }];
+    await readAllBut();
+    const fake = createRuntimeFake(routes({ [link]: preHtml }, extra));
+    const cfg = { ...CONFIG, max_attempts: 3 };
+    const r1 = await nodeRuntime.run(ctxAt(fake.fetch, NOW, cfg));
+    expect(r1.warnings).toBeUndefined();
+    expect(await nodePostRow(link)).toMatchObject({ state: "pending", attempts: 1, next_check_at: iso(NOW + 60 * MIN) });
+    await nodeRuntime.run(ctxAt(fake.fetch, NOW + 60 * MIN, cfg));
+    expect(await nodePostRow(link)).toMatchObject({ state: "pending", attempts: 2 });
+    const r3 = await nodeRuntime.run(ctxAt(fake.fetch, NOW + 120 * MIN, cfg));
+    expect(r3.errors).toEqual([]);
+    expect(r3.warnings).toEqual(["tcs-69-stale-pre: pre-announcement with no release after 3 reads, not read again"]);
+    expect(await nodePostRow(link)).toMatchObject({ state: "empty", attempts: 3, next_check_at: null });
+    const r4 = await nodeRuntime.run(ctxAt(fake.fetch, NOW + 30 * DAY, cfg));
+    expect(r4.warnings).toBeUndefined();
+    expect(fake.count(link)).toBe(3);
+  });
+
+  it("pending cap: the newest feed post in state empty is still read each run, so its release is found; no new warning", async () => {
+    await readAllBut(OCT);
+    await seedNodePosts([{ url: OCT, published: pubOf(OCT), state: "empty", attempts: 10 }]);
+    const pre = createRuntimeFake(routes({ [OCT]: preHtml }));
+    const r1 = await nodeRuntime.run(ctxAt(pre.fetch, NOW));
+    expect(pre.count(OCT)).toBe(1);
+    expect(r1.warnings).toBeUndefined();
+    expect(await nodePostState(OCT)).toBe("empty");
+    const rel = createRuntimeFake(routes());
+    const r2 = await nodeRuntime.run(ctxAt(rel.fetch, NOW + 10 * MIN));
+    expect(r2.upserted).toBe(10);
+    expect(await nodePostRow(OCT)).toMatchObject({ state: "ok", attempts: 0 });
   });
 });
 
@@ -327,6 +371,22 @@ describe("read selection (selection)", () => {
     expect(await nodePostRow(gone)).toMatchObject({ state: "ok", published: "2026-10-10T00:00:00Z", next_check_at: null });
   });
 
+  it("selection: a due row whose post left the feed keeps its stored title", async () => {
+    const gone = `${BASE}tcs-69-left-with-title`;
+    const extra = [{ link: gone, published: iso(NOW - 5 * DAY).replace(/\.\d{3}Z$/, "Z") }];
+    await readAllBut();
+    const f1 = createRuntimeFake(routes({ [gone]: NO_HEADINGS }, extra));
+    await nodeRuntime.run(ctxAt(f1.fetch, NOW));
+    const title = async () => (await env.DB.prepare("SELECT title FROM node_runtime_posts WHERE url = ?").bind(gone).first<{ title: string | null }>())?.title;
+    expect(await title()).toBe("TCS-69 fixture Security Releases");
+    // The next read: the post is no longer in the feed.
+    const f2 = createRuntimeFake(routes({ [gone]: NO_HEADINGS }));
+    await nodeRuntime.run(ctxAt(f2.fetch, NOW + 61 * MIN));
+    expect(f2.count(gone)).toBe(1);
+    expect(await nodePostRow(gone)).toMatchObject({ state: "failed", attempts: 2 });
+    expect(await title()).toBe("TCS-69 fixture Security Releases");
+  });
+
   it("selection: past the max_posts cap the due posts wait for the next run, no row is lost", async () => {
     const r1 = await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW, { ...CONFIG, max_posts: 30 }));
     expect(r1.deferred).toBe(18);
@@ -343,17 +403,23 @@ describe("read selection (selection)", () => {
 });
 
 describe("coverage (coverage)", () => {
-  it("coverage: a failed row that still retries holds coverage_since back; once terminal, the next run sets it", async () => {
+  // TCS-69 round 2: every feed post has a row with a known outcome, a failed
+  // post with its backoff included, so the history is read (the reviewer's
+  // walk: the December 2025 post must not hold coverage_since back for weeks).
+  it("coverage: a failed row with its backoff counts as read; a feed post with no row holds coverage_since back", async () => {
     const p = POSTS[7];
     const cov = async () => (await env.DB.prepare("SELECT coverage_since FROM sources WHERE id = 'node-runtime'").first<{ coverage_since: string | null }>())!.coverage_since;
-    await readAllBut(p.link);
-    await seedNodePosts([{ url: p.link, published: p.published, state: "failed", attempts: 2, next_check_at: iso(NOW + 30 * MIN) }]);
-    await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW));
+    await readAllBut(p.link, OCT);
+    await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW, { ...CONFIG, max_posts: 1 }));
+    expect(await nodePostRow(OCT)).toBeNull();
     expect(await cov()).toBeNull();
-    await seedNodePosts([{ url: p.link, published: p.published, state: "failed", attempts: 10, next_check_at: null }]);
-    await nodeRuntime.run(ctxAt(createRuntimeFake(routes()).fetch, NOW));
-    // markCoverage stores the oldest advisory held: this run stored only the October post.
-    expect(await cov()).toBe(pubOf(OCT));
+    await seedNodePosts([{ url: p.link, published: p.published, state: "failed", attempts: 2, next_check_at: iso(NOW + 30 * MIN) }]);
+    const f2 = createRuntimeFake(routes());
+    await nodeRuntime.run(ctxAt(f2.fetch, NOW));
+    expect(f2.count(p.link)).toBe(0);
+    expect(await nodePostRow(p.link)).toMatchObject({ state: "failed", next_check_at: iso(NOW + 30 * MIN) });
+    // markCoverage stores the oldest advisory held (here: the synthetic post the first run read).
+    expect(await cov()).not.toBeNull();
   });
 });
 
@@ -363,18 +429,18 @@ describe("the empty classifier (negative list)", () => {
     { name: "recorded 2019 no-updates post", link: NO_UPDATES, published: pubOf(NO_UPDATES), html: noUpdatesHtml, state: "empty", error: false, warning: true },
     { name: "no heading, 366 days old (edge)", link: `${BASE}tcs-69-366`, published: iso(NOW - 366 * DAY), html: NO_HEADINGS, state: "empty", error: false, warning: true },
     { name: "recorded 2026-10-14 pre-announcement", link: `${BASE}tcs-69-pre`, published: iso(NOW - 9 * DAY), html: preHtml, state: "pending", error: false, warning: false },
-    { name: "unrated CVE heading", link: `${BASE}tcs-69-unrated`, published: iso(NOW - 400 * DAY), html: "<main><h2>Thing (CVE-2026-1234)</h2><p>x</p></main>", state: "ok", error: true, warning: false },
+    { name: "unrated CVE heading", link: `${BASE}tcs-69-unrated`, published: iso(NOW - 400 * DAY), html: "<main><h2>Thing (CVE-2026-1234)</h2><p>x</p></main>", state: "ok", error: false, warning: true },
     {
       name: "CVE heading with no release lines",
       link: `${BASE}tcs-69-nolines`,
       published: iso(NOW - 400 * DAY),
       html: "<main><h2>Thing (CVE-2026-1235) - (high)</h2><p>This vulnerability affects all users</p></main>",
       state: "ok",
-      error: true,
-      warning: false,
+      error: false,
+      warning: true,
     },
-    { name: "no heading, 10 days old", link: `${BASE}tcs-69-10d`, published: iso(NOW - 10 * DAY), html: NO_HEADINGS, state: "failed", error: true, warning: false },
-    { name: "no heading, 364 days old (edge)", link: `${BASE}tcs-69-364`, published: iso(NOW - 364 * DAY), html: NO_HEADINGS, state: "failed", error: true, warning: false },
+    { name: "no heading, 10 days old", link: `${BASE}tcs-69-10d`, published: iso(NOW - 10 * DAY), html: NO_HEADINGS, state: "failed", error: false, warning: true },
+    { name: "no heading, 364 days old (edge)", link: `${BASE}tcs-69-364`, published: iso(NOW - 364 * DAY), html: NO_HEADINGS, state: "failed", error: false, warning: true },
     { name: "recorded July release post", link: JULY, published: pubOf(JULY), html: julyHtml, state: "ok", error: false, warning: false },
     { name: "recorded October release post", link: OCT, published: pubOf(OCT), html: octHtml, state: "ok", error: false, warning: false },
   ];
@@ -387,7 +453,9 @@ describe("the empty classifier (negative list)", () => {
     const r = await nodeRuntime.run(ctxAt(fake.fetch, NOW));
     expect(fake.count(link)).toBe(1);
     expect(await nodePostState(link)).toBe(state);
+    // TCS-69 round 2: a post's note is never a run error.
     expect(r.errors.some((e) => e.includes(link)), "error").toBe(error);
+    expect(r.errors).toEqual([]);
     expect((r.warnings ?? []).length > 0, "warning").toBe(warning);
   });
 });
@@ -412,8 +480,6 @@ describe("query plans (EXPLAIN)", () => {
     const known = await plan(POST_SQL.known, JSON.stringify([`${BASE}tcs-69-explain-1`, `${BASE}tcs-69-explain-2`]));
     expect(known).toMatch(/SEARCH node_runtime_posts USING INDEX sqlite_autoindex_node_runtime_posts_1 \(url=\?\)/);
     expect(known).not.toMatch(/SCAN node_runtime_posts(?! USING)/);
-    const retrying = await plan(POST_SQL.retrying);
-    expect(retrying).toContain("idx_node_runtime_posts_state_next");
     const grouped = await plan(ledgerSql("node_runtime_posts"));
     expect(grouped).toContain("idx_node_runtime_posts_state_next");
     expect(grouped).not.toMatch(/SCAN node_runtime_posts(?! USING)/);
