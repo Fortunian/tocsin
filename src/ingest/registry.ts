@@ -71,7 +71,7 @@ export async function runIngesters(env: Env, registry: Record<string, Ingester>,
       outcome =
         result.errors.length === 0
           ? { source: row.id, status: "ok", result }
-          : { source: row.id, status: "failed", error: `${result.errors.length} record error(s): ${result.errors.join("; ")}`, result };
+          : { source: row.id, status: "failed", error: `${result.summary ? `${result.summary} | ` : ""}${result.errors.length} record error(s): ${result.errors.join("; ")}`, result };
     } catch (err) {
       outcome = { source: row.id, status: "failed", error: errorText(err) };
     }

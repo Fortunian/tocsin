@@ -51,3 +51,11 @@ One key: the ETag of the last full PSF listing. Each run overwrites it in place.
 ## KV `python:tags` (CURSORS namespace)
 
 One key: `{etag, versions}` from the last full read of the CPython `v3.` tag refs, so a 304 answer can reuse the released set. Each full read overwrites it in place, and its size follows the number of CPython 3.x tags (471 on 2026-10-22). No delete job.
+
+## KV `node-dist-index` (CURSORS namespace)
+
+One key: `{etag, fetched_at, versions}` from the last read of the nodejs.org dist index (TCS-30). A run uses it as is while it is younger than `dist_cache_seconds` (config of the `node-runtime` sources row, default 3600). After that the run sends one conditional GET, and a 304 only moves `fetched_at`. It has no KV TTL, so the ETag outlives the window. Each read overwrites it in place, and its size follows the number of Node.js releases. Losing it costs one download. No delete job.
+
+## KV `cursor:node-runtime:parser` (CURSORS namespace)
+
+One key: the parser revision (`"2"` since TCS-30) that the `cursor:node-runtime` cursor was read with. A run that finds another value moves the cursor back to the backfill window once and writes the revision. It does not grow. No delete job.
