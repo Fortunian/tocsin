@@ -16,7 +16,10 @@ const INDEXES = [
 ];
 const SOURCES = ["bun-runtime", "deno-runtime", "epss", "kev", "node-eol", "node-runtime", "nvd", "osv", "php-runtime", "python-runtime"];
 // TCS-32: migration 0015 seeds the node-runtime history window; every other row keeps "{}".
-const SEEDED_CONFIG: Record<string, string> = { "node-runtime": '{"max_posts":20,"backfill_days":4000,"retry_incomplete_days":365}' };
+// TCS-69: migration 0020 adds the node-runtime recheck knobs.
+const SEEDED_CONFIG: Record<string, string> = {
+  "node-runtime": '{"max_posts":20,"backfill_days":4000,"retry_incomplete_days":365,"pending_recheck_minutes":60,"pending_old_recheck_minutes":10080,"max_attempts":10,"retry_schedule_minutes":"60,360,1440,10080"}',
+};
 const ECOSYSTEMS = ["node", "php", "npm", "PyPI", "Go", "crates.io"];
 
 async function plan(sql: string, ...params: unknown[]): Promise<string> {
@@ -53,9 +56,9 @@ async function seedAdvisories(prefix: string, count: number, cursorBase: number)
 }
 
 describe("migrations on a fresh local D1", () => {
-  it("applies 0001..0018", async () => {
+  it("applies 0001..0022", async () => {
     const { results } = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id").all<{ name: string }>();
-    expect(results.map((r) => r.name)).toEqual(["0001_init.sql", "0002_seed_sources.sql", "0003_settings.sql", "0004_check_settings.sql", "0005_pypi_name_index.sql", "0006_site_settings.sql", "0007_nvd_pending_index.sql", "0008_published_at_index.sql", "0009_python_runtime_source.sql", "0010_advisory_cves.sql", "0011_python_runtime_records.sql", "0012_source_last_warning.sql", "0013_deno_bun_runtime_sources.sql", "0014_backfill.sql", "0015_node_history.sql", "0016_watchlists.sql", "0017_deliveries.sql", "0018_advisories_exploited_at.sql"]);
+    expect(results.map((r) => r.name)).toEqual(["0001_init.sql", "0002_seed_sources.sql", "0003_settings.sql", "0004_check_settings.sql", "0005_pypi_name_index.sql", "0006_site_settings.sql", "0007_nvd_pending_index.sql", "0008_published_at_index.sql", "0009_python_runtime_source.sql", "0010_advisory_cves.sql", "0011_python_runtime_records.sql", "0012_source_last_warning.sql", "0013_deno_bun_runtime_sources.sql", "0014_backfill.sql", "0015_node_history.sql", "0016_watchlists.sql", "0017_watchlist_limits.sql", "0020_node_runtime_posts.sql", "0021_deliveries.sql", "0022_advisories_exploited_at.sql"]);
   });
 
   it("creates the 3 tables and the 5 named indexes", async () => {

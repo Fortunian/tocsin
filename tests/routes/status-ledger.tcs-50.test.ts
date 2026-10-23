@@ -8,7 +8,8 @@ import { get } from "./seed.tcs-3";
 // entry (src/index.ts -> app). Each case seeds its own python_runtime_records.
 const ip = "198.51.100.50";
 const AT = "2026-10-22T22:00:00Z";
-const NO_LEDGER = ["osv", "nvd", "kev", "epss", "node-runtime", "php-runtime"];
+// TCS-69: node-runtime has a ledger (node_runtime_posts).
+const NO_LEDGER = ["osv", "nvd", "kev", "epss", "php-runtime"];
 
 interface Src {
   id: string;

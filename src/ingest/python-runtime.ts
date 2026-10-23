@@ -19,7 +19,7 @@ import { fetchCveRecord, fetchListing, fetchPsfRecord } from "./python-runtime-c
 import { comparePsfIds, normalizePythonAdvisory, parsePsfListing, publishedDoc, readPsf } from "./python-runtime-normalize";
 import { attemptsOf, dueRows, knownIds, readPendingState, writeRecord, type PendingState, type RecordRow } from "./python-runtime-records";
 import { releasedVersions } from "./python-runtime-releases";
-import { readRuntimeConfig } from "./runtime-text";
+import { readRuntimeConfig, retryWaitMinutes, RETRY_SCHEDULE } from "./runtime-text";
 import { markCoverage } from "./coverage";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
 import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
@@ -67,15 +67,10 @@ const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.
 function readConfig(raw: Record<string, unknown>): PyConfig {
   const cfg = readRuntimeConfig(SOURCE, raw, PY_DEFAULTS);
   if (!/^\d+\.\d+$/.test(cfg.min_line)) throw new Error(`${SOURCE} config: min_line must look like "3.9"`);
-  if (!/^[1-9]\d*(,[1-9]\d*)*$/.test(cfg.retry_schedule_minutes)) throw new Error(`${SOURCE} config: retry_schedule_minutes must be a comma list of positive integers`);
+  if (!RETRY_SCHEDULE.test(cfg.retry_schedule_minutes)) throw new Error(`${SOURCE} config: retry_schedule_minutes must be a comma list of positive integers`);
   return cfg;
 }
 
-// The wait after failed attempt n (1-based) on the retry schedule; the last value repeats.
-export function retryWaitMinutes(schedule: string, attempt: number): number {
-  const waits = schedule.split(",").map(Number);
-  return waits[Math.min(attempt, waits.length) - 1];
-}
 
 async function store(state: RunState, doc: AdvisoryInput): Promise<boolean> {
   try {

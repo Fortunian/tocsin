@@ -5,6 +5,7 @@ import { DEFAULT_LIMIT, MAX_LIMIT } from "../feed/query";
 import { jsonUtf8 } from "../lib/http";
 import { getSettingInt } from "../lib/settings";
 import { requireApiKey, type AuthEnv } from "../middleware/auth";
+import { keyRateLimit } from "../middleware/ratelimit";
 import { newWebhookSecret } from "../queue/sign";
 import { FALLBACK_MAX_URL_LENGTH, parseDelivery, parseWatchlistBody, type WatchlistFilter } from "../watchlists/filter";
 import { buildWatchlistEventsQuery } from "../watchlists/query";
@@ -25,9 +26,10 @@ export const CREATE_WATCHLIST_SQL = `INSERT INTO watchlists (id, key_id, name, f
   WHERE (SELECT COUNT(*) FROM watchlists WHERE key_id = ?6) < ?7
   RETURNING cursor`;
 
-// Bounded by plans.max_watchlists. Never selects webhook_secret.
+// LIMIT is plans.max_watchlists, so the answer is at most that many lists of
+// at most MAX_FILTER_BYTES each. Never selects webhook_secret.
 export const LIST_WATCHLISTS_SQL =
-  "SELECT id, name, filter_json, cursor, delivery, webhook_url, created_at FROM watchlists WHERE key_id = ? ORDER BY created_at, id";
+  "SELECT id, name, filter_json, cursor, delivery, webhook_url, created_at FROM watchlists WHERE key_id = ? ORDER BY created_at, id LIMIT ?";
 
 // Scoped to the caller's key in the same statement. idx_deliveries_watchlist_cursor.
 export const DELIVERIES_LIST_SQL = `SELECT d.advisory_id, d.cursor, d.status, d.attempt, d.last_code, d.next_at, d.delivered_at
@@ -53,7 +55,9 @@ interface ListRow {
 
 const watchlists = new Hono<AuthEnv>();
 
-watchlists.use("*", requireApiKey);
+// Auth first, so the per-key counter has a key id; an unknown key is 401 and
+// is never counted.
+watchlists.use("*", requireApiKey, keyRateLimit);
 
 // The body cap of POST and PATCH (settings.watchlists.max_body_bytes).
 const capBody: MiddlewareHandler<AuthEnv> = async (c, next) => {
@@ -122,7 +126,7 @@ watchlists.patch("/:id", capBody, async (c) => {
 });
 
 watchlists.get("/", async (c) => {
-  const { results } = await c.env.DB.prepare(LIST_WATCHLISTS_SQL).bind(c.var.apiKey.id).all<ListRow>();
+  const { results } = await c.env.DB.prepare(LIST_WATCHLISTS_SQL).bind(c.var.apiKey.id, c.var.apiKey.limits.max_watchlists).all<ListRow>();
   return answer(c, {
     watchlists: results.map(({ filter_json, ...r }) => ({ ...r, filter: JSON.parse(filter_json) as WatchlistFilter })),
   });

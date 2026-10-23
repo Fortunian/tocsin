@@ -2,8 +2,10 @@ import { Hono } from "hono";
 import { renderDocs } from "../../site/docs";
 import { renderBadge } from "../../site/freshness";
 import { renderLanding } from "../../site/landing";
+import { POST_ETAG, POST_PATH, renderPost } from "../../site/post";
 import { renderStatus } from "../../site/status";
 import type { Env } from "../env";
+import { ifNoneMatchHits } from "../feed/etag";
 import { freshnessOf, loadHome, loadStatus } from "../site/data";
 
 // The tocsin.sh pages. Only these paths: discovery owns /llms.txt,
@@ -15,6 +17,14 @@ site.get("/", async (c) => {
   return c.html(renderLanding(home.rows, home.freshness), 200, { "Cache-Control": "public, max-age=60" });
 });
 site.get("/docs", (c) => c.html(renderDocs(), 200, { "Cache-Control": "public, max-age=60" }));
+// The launch post (TCS-14). The ETag is the hash of the generated post, so it
+// changes only when docs/LAUNCH_POST.md does. /blog has one post for now.
+site.get(POST_PATH, (c) => {
+  const headers = { ETag: POST_ETAG, "Cache-Control": "public, max-age=300" };
+  if (ifNoneMatchHits(c.req.header("If-None-Match"), POST_ETAG)) return c.body(null, 304, headers);
+  return c.html(renderPost(), 200, headers);
+});
+site.get("/blog", (c) => c.redirect(POST_PATH, 302));
 site.get("/status", async (c) => c.html(renderStatus(await loadStatus(c.env.DB, { ledger: true, coverage: true })), 200, { "Cache-Control": "no-cache" }));
 
 // The README badge (TCS-35). A failed status read draws "degraded" with a short cache.

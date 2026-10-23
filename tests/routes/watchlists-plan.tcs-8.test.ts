@@ -36,7 +36,6 @@ beforeAll(async () => {
     stmts.push(adv.bind(`plan_adv_${i}`, ECOSYSTEMS[i % ECOSYSTEMS.length], `pkg-fixture-${i % 50}`, 1 + i));
   }
   for (let i = 0; i < stmts.length; i += 500) await env.DB.batch(stmts.slice(i, i + 500));
-  await env.DB.prepare("ANALYZE").run();
 });
 
 describe("query plans on 2,000 keys, 2,000 watch lists and 2,000 advisories", () => {
@@ -54,7 +53,7 @@ describe("query plans on 2,000 keys, 2,000 watch lists and 2,000 advisories", ()
   });
 
   it("the list read and the create count use idx_watchlists_key_id", async () => {
-    const list = await plan(LIST_WATCHLISTS_SQL, "key_plan_5");
+    const list = await plan(LIST_WATCHLISTS_SQL, "key_plan_5", 25);
     expect(list).toMatch(/USING (COVERING )?INDEX idx_watchlists_key_id/);
     expect(list).not.toMatch(BARE_SCAN("watchlists"));
 
@@ -70,17 +69,20 @@ describe("query plans on 2,000 keys, 2,000 watch lists and 2,000 advisories", ()
     expect(p).not.toMatch(BARE_SCAN("api_keys"));
   });
 
-  it("the watch list events query never does a bare SCAN of advisories", async () => {
+  // Each filter shape reads advisories through one named index: an ecosystem
+  // list seeks (ecosystem, cursor), a component list seeks component, the
+  // exploited flag seeks (exploited, cursor), and no filter walks the cursor.
+  it("the watch list events query reads advisories through the named index for each filter shape", async () => {
     const variants = [
-      { ecosystems: ["node"], components: [], runtimes: {}, min_severity: null, exploited_only: false },
-      { ecosystems: [], components: Array.from({ length: 2000 }, (_, i) => `pkg-fixture-${i}`), runtimes: {}, min_severity: null, exploited_only: false },
-      { ecosystems: ["php"], components: [], runtimes: { node: "24.0.0" }, min_severity: "high", exploited_only: true },
-      { ecosystems: [], components: [], runtimes: {}, min_severity: null, exploited_only: false },
+      [{ ecosystems: ["node"], components: [], runtimes: {}, min_severity: null, exploited_only: false }, "idx_advisories_ecosystem_cursor"],
+      [{ ecosystems: [], components: Array.from({ length: 2000 }, (_, i) => `pkg-fixture-${i}`), runtimes: {}, min_severity: null, exploited_only: false }, "idx_advisories_component_ecosystem"],
+      [{ ecosystems: ["php"], components: [], runtimes: { node: "24.0.0" }, min_severity: "high", exploited_only: true }, "idx_advisories_exploited_cursor"],
+      [{ ecosystems: [], components: [], runtimes: {}, min_severity: null, exploited_only: false }, "idx_advisories_cursor"],
     ] as const;
-    for (const f of variants) {
+    for (const [f, index] of variants) {
       const q = buildWatchlistEventsQuery({ ...f, ecosystems: [...f.ecosystems], components: [...f.components] }, 1000, 50);
       const p = await plan(q.sql, ...q.params);
-      expect(p, JSON.stringify(f).slice(0, 80)).toContain("USING");
+      expect(p, JSON.stringify(f).slice(0, 80)).toMatch(new RegExp(`SEARCH advisories USING (COVERING )?INDEX ${index} \\(`));
       expect(p).not.toMatch(BARE_SCAN("advisories"));
     }
   });

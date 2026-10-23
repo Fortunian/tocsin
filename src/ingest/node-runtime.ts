@@ -1,23 +1,24 @@
 // The node-runtime ingester: reads the nodejs.org vulnerability feed, opens
-// each "Security Release" post newer than the KV cursor, and emits one
-// advisory per CVE heading. The post is the source of truth for fixed
-// versions; the dist index confirms each fixed version exists.
+// each "Security Release" post that the post ledger (node_runtime_posts,
+// src/ingest/node-runtime-posts.ts) says is due, and emits one advisory per
+// CVE heading. The post is the source of truth for fixed versions; the dist
+// index confirms each fixed version exists.
 import { markCoverage } from "./coverage";
 import { fetchFeed, fetchPost, NodeHttpError, NodeLinkError } from "./node-runtime-client";
 import { loadNodeDistIndex, type DistIndex } from "./node-runtime-dist";
+import { hasUnreadRecent, readLedger, writePost, type Ledger, type PostRow, type PostWrite } from "./node-runtime-posts";
 import { compareVersions } from "./osv";
-import { htmlSections, htmlText, isoUtc, oneLine, readRuntimeConfig, readSince, xmlBlocks, xmlText } from "./runtime-text";
+import { htmlSections, htmlText, isoUtc, oneLine, readRuntimeConfig, RETRY_SCHEDULE, retryWaitMinutes, xmlBlocks, xmlText } from "./runtime-text";
 import type { AdvisoryInput, IngestContext, Ingester, RunResult } from "./types";
-import { InvalidAdvisoryError, upsertAdvisory } from "./upsert";
-import type { SeverityLabel } from "../schema/advisory";
+import { InvalidAdvisoryError, UPSERT_SQL, upsertAdvisory } from "./upsert";
+import type { Advisory, SeverityLabel } from "../schema/advisory";
 
-export const NODE_CURSOR_KEY = "cursor:node-runtime";
-// The parser revision the stored cursor was read with. A run that finds another
-// value reads the backfill window again once, so posts the old parser could not
-// read are picked up (TCS-30: the July 2026 wording; TCS-32: the whole feed
-// history once, with backfill_days 4000). Parser identity, not a limit.
-export const NODE_PARSER_KEY = "cursor:node-runtime:parser";
-export const NODE_PARSER_REV = "3";
+// The parser revision a ledger row was read with (node_runtime_posts.parser_rev).
+// A row with another value is read again once, so posts the old parser could
+// not read are picked up (TCS-30: the July 2026 wording; TCS-32: the whole feed
+// history once; TCS-76: the December 2025, March and June 2026 wordings).
+// Parser identity, not a limit.
+export const NODE_PARSER_REV = "4";
 const SOURCE = "node-runtime";
 
 // Code fallbacks for sources.config_json of row "node-runtime" (repo iron rule 5).
@@ -31,8 +32,24 @@ export const NODE_DEFAULTS = {
   dist_cache_seconds: 3600,
   // An incomplete post older than this is reported and passed, not read
   // again: an old post the parser cannot complete must not stop the history read.
+  // A post older than this with no CVE heading is a terminal "empty" post.
   // Seeded in the node-runtime row by migrations/0015_node_history.sql.
   retry_incomplete_days: 365,
+  // Minutes until a pending post (a pre-announcement) younger than
+  // retry_incomplete_days, or a recent post with no CVE heading, is read again.
+  // Seeded in the node-runtime row by migrations/0020_node_runtime_posts.sql.
+  pending_recheck_minutes: 60,
+  // Minutes until a pending post older than retry_incomplete_days is read again.
+  // Seeded in the node-runtime row by migrations/0020_node_runtime_posts.sql.
+  pending_old_recheck_minutes: 10080,
+  // Reads of a post before it is terminal "empty": a recent post that is
+  // incomplete or has no CVE heading, and a pending post (a pre-announcement).
+  // Seeded in the node-runtime row by migrations/0020_node_runtime_posts.sql.
+  max_attempts: 10,
+  // Wait after failed read 1, 2, 3, ... of a recent post; the last value
+  // repeats (1 hour, 6 hours, 24 hours, then weekly).
+  // Seeded in the node-runtime row by migrations/0020_node_runtime_posts.sql.
+  retry_schedule_minutes: "60,360,1440,10080",
 };
 
 export interface FeedItem {
@@ -46,6 +63,9 @@ export interface PostCve {
   title: string;
   rating: SeverityLabel;
   lines: number[];
+  // Release line (major) -> fixed version the CVE's own section names
+  // ("already fixed on Node.js 24.12.0"); it overrides ParsedPost.fixed for that line.
+  fixed?: Map<number, string>;
 }
 
 export interface ParsedPost {
@@ -60,7 +80,7 @@ export interface NormalizedPost {
   docs: AdvisoryInput[];
   errors: string[];
   // True when a fixed version is missing from the post or the dist index:
-  // the post emits nothing and is read again on the next run.
+  // the post emits nothing (run: a failed row with the retry schedule).
   incomplete: boolean;
   // True for a pre-announcement: no CVE headings yet, so nothing to emit and no error.
   preAnnouncement: boolean;
@@ -80,6 +100,59 @@ const AFFECTS =
 // It counts only for a post with no CVE heading: the final post keeps this text.
 const PRE_ANNOUNCE = /pre-announcement|will be released|will release new versions|releases will be available/i;
 const DOWNLOADS = /^Downloads and release details$/i;
+// TCS-76 wordings, read only when AFFECTS finds no line. An "affect(s)" clause
+// runs to "Thank you", a sentence end, the next "affect(s)" or the end of the text.
+const AFFECT_WORD = /\baffects?\b/gi;
+const CLAUSE_END = /Thank you|\.\s+[A-Z]|\baffects?\b/;
+const EOL_CLAUSE = /end-of-life|\bEOL\b/i;
+// "20.x", "v25.x"; "Node.js 22", "Node.js 20, 22, 24 and 25" (not "Node.js 24.12.0").
+const LINE_X = /\bv?(\d{1,2})\.x\b/g;
+const NODE_LINES = /Node\.js\s+(\d{1,2}(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)\d{1,2})*)(?!\.?\d)/g;
+// "This vulnerability was already fixed on Node.js 24.12.0."
+const FIXED_ON = /\bfixed\s+(?:on|in)\s+Node\.js\s+v?(\d+)\.(\d+)\.(\d+)\b/gi;
+// "affects TLS servers ... across Node.js versions where ...": the lines of the
+// post's "Updates are now available for the 25.x, 24.x ... release lines".
+const ALL_VERSIONS = /\bNode\.js versions\b/i;
+const RELEASES_AVAILABLE = /security releases available/i;
+const UPDATES_FOR = /Updates are now available for (?:the )?(.*?)\s*Node\.js release lines/i;
+
+const sortedLines = (xs: Iterable<number>) => [...new Set(xs)].sort((a, b) => a - b);
+
+function affectClauses(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(AFFECT_WORD)) {
+    const rest = text.slice(m.index + m[0].length);
+    const end = CLAUSE_END.exec(rest);
+    out.push(m[0] + (end ? rest.slice(0, end.index) : rest));
+  }
+  return out;
+}
+
+function clauseLines(clause: string): number[] {
+  const lines = [...clause.matchAll(LINE_X)].map((x) => Number(x[1]));
+  for (const n of clause.matchAll(NODE_LINES)) lines.push(...[...n[1].matchAll(/\d+/g)].map((x) => Number(x[0])));
+  return sortedLines(lines);
+}
+
+function putFixed(fixed: Map<number, string>, major: number, version: string): void {
+  const prev = fixed.get(major);
+  if (prev === undefined || compareVersions(version, prev) > 0) fixed.set(major, version);
+}
+
+// The lines of a CVE section the AFFECTS wordings do not read (TCS-76), in
+// order: an "affect(s)" clause that names lines; the lines of the versions the
+// section says are fixed; for "Node.js versions", the lines the post's
+// "Updates are now available" sentence names. Otherwise no line.
+function fallbackLines(text: string, fixed: Map<number, string>, updateLines: number[]): number[] {
+  const clauses = affectClauses(text).filter((c) => !EOL_CLAUSE.test(c));
+  for (const c of clauses) {
+    const lines = clauseLines(c);
+    if (lines.length > 0) return lines;
+  }
+  if (fixed.size > 0) return sortedLines(fixed.keys());
+  if (clauses.some((c) => ALL_VERSIONS.test(c))) return updateLines;
+  return [];
+}
 
 export function parseNodeFeed(xml: string): FeedItem[] {
   const items: FeedItem[] = [];
@@ -97,21 +170,28 @@ export function parseNodeSecurityPost(html: string): ParsedPost {
   const cves: PostCve[] = [];
   const unparsed: string[] = [];
   const fixed = new Map<number, string>();
-  for (const s of htmlSections(html)) {
+  const sections = htmlSections(html);
+  const available = sections.find((s) => RELEASES_AVAILABLE.test(s.heading));
+  const updates = available ? UPDATES_FOR.exec(htmlText(available.body)) : null;
+  const updateLines = updates ? sortedLines([...updates[1].matchAll(/(\d+)\.x/g)].map((x) => Number(x[1]))) : [];
+  for (const s of sections) {
     const m = CVE_HEADING.exec(s.heading);
     if (m) {
-      const affects = AFFECTS.exec(htmlText(s.body));
-      const lines = affects ? [...new Set([...affects[1].matchAll(/(\d+)\.x/g)].map((x) => Number(x[1])))].sort((a, b) => a - b) : [];
-      cves.push({ cve: m[2].toUpperCase(), title: m[1], rating: m[3].toLowerCase() as SeverityLabel, lines });
+      const text = htmlText(s.body);
+      const affects = AFFECTS.exec(text);
+      const cve: PostCve = { cve: m[2].toUpperCase(), title: m[1], rating: m[3].toLowerCase() as SeverityLabel, lines: [] };
+      if (affects) cve.lines = sortedLines([...affects[1].matchAll(/(\d+)\.x/g)].map((x) => Number(x[1])));
+      else {
+        const own = new Map<number, string>();
+        for (const v of text.matchAll(FIXED_ON)) putFixed(own, Number(v[1]), `${v[1]}.${v[2]}.${v[3]}`);
+        cve.lines = fallbackLines(text, own, updateLines);
+        if (own.size > 0) cve.fixed = own;
+      }
+      cves.push(cve);
     } else if (HAS_CVE.test(s.heading)) {
       unparsed.push(s.heading);
     } else if (DOWNLOADS.test(s.heading)) {
-      for (const v of htmlText(s.body).matchAll(/Node\.js v(\d+)\.(\d+)\.(\d+)\b/g)) {
-        const major = Number(v[1]);
-        const version = `${v[1]}.${v[2]}.${v[3]}`;
-        const prev = fixed.get(major);
-        if (prev === undefined || compareVersions(version, prev) > 0) fixed.set(major, version);
-      }
+      for (const v of htmlText(s.body).matchAll(/Node\.js v?(\d+)\.(\d+)\.(\d+)\b/g)) putFixed(fixed, Number(v[1]), `${v[1]}.${v[2]}.${v[3]}`);
     }
   }
   return { cves, unparsed, fixed };
@@ -125,18 +205,18 @@ function actionFor(perLine: { line: number; fixed: string }[]): string {
   return text.length <= 200 ? text : `Upgrade node to ${perLine[0].fixed} or later.`;
 }
 
-function isPreAnnouncement(parsed: ParsedPost, html: string): boolean {
+function isNodePreAnnouncementParsed(parsed: ParsedPost, html: string): boolean {
   return parsed.cves.length === 0 && parsed.unparsed.length === 0 && PRE_ANNOUNCE.test(htmlText(html));
 }
 
 // A post with no CVE heading (rated or not) whose text announces a coming release.
 export function isNodePreAnnouncement(html: string): boolean {
-  return isPreAnnouncement(parseNodeSecurityPost(html), html);
+  return isNodePreAnnouncementParsed(parseNodeSecurityPost(html), html);
 }
 
 export function normalizeNodePost(post: { link: string; published: string }, html: string, dist: Set<string>): NormalizedPost {
   const parsed = parseNodeSecurityPost(html);
-  if (isPreAnnouncement(parsed, html)) return { docs: [], errors: [], incomplete: false, preAnnouncement: true, needsDist: false, notEmitted: 0 };
+  if (isNodePreAnnouncementParsed(parsed, html)) return { docs: [], errors: [], incomplete: false, preAnnouncement: true, needsDist: false, notEmitted: 0 };
   const errors: string[] = parsed.unparsed.map((h) => `${post.link}: CVE heading without a rating, not emitted: ${oneLine(h)}`);
   if (parsed.cves.length === 0 && parsed.unparsed.length === 0) errors.push(`${post.link}: no CVE headings`);
   let notEmitted = parsed.unparsed.length;
@@ -152,7 +232,7 @@ export function normalizeNodePost(post: { link: string; published: string }, htm
     }
     const perLine: { line: number; fixed: string }[] = [];
     for (const line of c.lines) {
-      const fixed = parsed.fixed.get(line);
+      const fixed = c.fixed?.get(line) ?? parsed.fixed.get(line);
       if (fixed === undefined) missing.add(`no fixed version for ${line}.x`);
       else if (!dist.has(`v${fixed}`)) {
         missing.add(`${fixed} is not in the dist index`);
@@ -193,113 +273,237 @@ function postLabel(link: string): string {
   }
 }
 
-async function run(ctx: IngestContext): Promise<RunResult> {
-  const cfg = readRuntimeConfig(SOURCE, ctx.source.config, NODE_DEFAULTS);
-  const kv = ctx.env.CURSORS;
-  const now = ctx.now();
-  let { sinceMs } = await readSince(kv, NODE_CURSOR_KEY, now, cfg.backfill_days);
-  if ((await kv.get(NODE_PARSER_KEY)) !== NODE_PARSER_REV) {
-    // A new parser revision: move the cursor back to the backfill window once.
-    // The cursor then advances post by post as usual, so an incomplete or
-    // failed post in the window is read again on the next run.
-    sinceMs = Math.min(sinceMs, now.getTime() - cfg.backfill_days * 86_400_000);
-    await kv.put(NODE_CURSOR_KEY, new Date(sinceMs).toISOString());
-    await kv.put(NODE_PARSER_KEY, NODE_PARSER_REV);
+function byPublished(a: FeedItem, b: FeedItem): number {
+  return a.published < b.published ? -1 : a.published > b.published ? 1 : a.link < b.link ? -1 : a.link > b.link ? 1 : 0;
+}
+
+
+type NodeConfig = typeof NODE_DEFAULTS;
+
+// One run's state. `errors` is only for a failure of the run itself (the feed,
+// the dist index or D1 thrown out of the run): every outcome of one post is a
+// ledger row plus a summary line, and a note an operator must see is a warning.
+interface Walk {
+  ctx: IngestContext;
+  cfg: NodeConfig;
+  now: Date;
+  result: RunResult;
+  summary: string[];
+  warnings: string[];
+  written: Set<string>;
+  allowedOrigin: string;
+  dist?: DistIndex;
+  forced: boolean;
+}
+
+interface DuePost {
+  post: FeedItem;
+  prev?: PostRow;
+}
+
+function readNodeConfig(raw: Record<string, unknown>): NodeConfig {
+  const cfg = readRuntimeConfig(SOURCE, raw, NODE_DEFAULTS);
+  if (!RETRY_SCHEDULE.test(cfg.retry_schedule_minutes)) throw new Error(`${SOURCE} config: retry_schedule_minutes must be a comma list of positive integers`);
+  return cfg;
+}
+
+const isOld = (w: Walk, post: FeedItem) => w.now.getTime() - new Date(post.published).getTime() > w.cfg.retry_incomplete_days * 86_400_000;
+const after = (w: Walk, minutes: number) => new Date(w.now.getTime() + minutes * 60_000).toISOString();
+
+// The row is written after the post's advisories are stored, in the same step as its note.
+async function write(w: Walk, post: FeedItem, row: Omit<PostWrite, "url" | "published" | "parser_rev" | "title">): Promise<void> {
+  await writePost(w.ctx.env.DB, { url: post.link, published: post.published, title: post.title, parser_rev: NODE_PARSER_REV, ...row }, w.now);
+  w.written.add(post.link);
+}
+
+// The posts this run reads: a feed post with no row, a re-published post or
+// one read by another parser revision; a pending or failed row whose
+// next_check_at has come (by its stored URL, date and title, even if the post
+// left the feed); and the newest feed post when its row is ok or empty,
+// because Node edits a post in place (a pre-announcement becomes the release).
+function selectDue(feed: FeedItem[], ledger: Ledger, inWindow: (published: string) => boolean): DuePost[] {
+  const due = new Map<string, DuePost>();
+  for (const p of feed) {
+    const row = ledger.known.get(p.link);
+    if (!row || row.published !== p.published || row.parser_rev !== NODE_PARSER_REV) due.set(p.link, { post: p, prev: row });
   }
+  for (const row of ledger.due) {
+    if (due.has(row.url) || !inWindow(row.published)) continue;
+    const post = feed.find((p) => p.link === row.url) ?? { title: row.title ?? postLabel(row.url), link: row.url, published: row.published };
+    due.set(row.url, { post, prev: row });
+  }
+  const newest = [...feed].sort(byPublished).pop()!;
+  const newestRow = ledger.known.get(newest.link);
+  if ((newestRow?.state === "ok" || newestRow?.state === "empty") && !due.has(newest.link)) due.set(newest.link, { post: newest, prev: newestRow });
+  return [...due.values()].sort((a, b) => byPublished(a.post, b.post));
+}
+
+// A read that can still clear (a recent post that is incomplete or has no CVE
+// heading): failed with the retry schedule, then terminal empty at max_attempts.
+// One warning per read; none when the row was already terminal (the newest post).
+async function retryLater(w: Walk, d: DuePost, why: string): Promise<void> {
+  const label = postLabel(d.post.link);
+  const n = (d.prev?.state === "failed" ? d.prev.attempts : 0) + 1;
+  const lastError = `${d.post.link}: ${why}`;
+  if (d.prev?.state === "empty" || n >= w.cfg.max_attempts) {
+    if (d.prev?.state !== "empty") w.warnings.push(`${label}: ${why}, after ${n} reads, not read again`);
+    w.summary.push(`${label}: ${why}, not read again`);
+    return write(w, d.post, { state: "empty", attempts: n, last_error: lastError });
+  }
+  const next = after(w, retryWaitMinutes(w.cfg.retry_schedule_minutes, n));
+  w.warnings.push(`${label}: ${why}, read ${n} of ${w.cfg.max_attempts}, read again after ${next}`);
+  w.summary.push(`${label}: ${why}, read again after ${next}`);
+  await write(w, d.post, { state: "failed", attempts: n, last_error: lastError, next_check_at: next });
+}
+
+// A pre-announcement waits for its CVE headings: pending, read again after
+// pending_recheck_minutes (old posts: pending_old_recheck_minutes), terminal
+// empty with one warning after max_attempts reads.
+async function waitPending(w: Walk, d: DuePost): Promise<void> {
+  const label = postLabel(d.post.link);
+  const n = (d.prev?.state === "pending" ? d.prev.attempts : 0) + 1;
+  if (d.prev?.state === "empty" || n >= w.cfg.max_attempts) {
+    if (d.prev?.state !== "empty") w.warnings.push(`${label}: pre-announcement with no release after ${n} reads, not read again`);
+    w.summary.push(`${label}: pre-announcement, not read again`);
+    return write(w, d.post, { state: "empty", attempts: n, last_error: `${d.post.link}: pre-announcement with no release after ${n} reads` });
+  }
+  const next = after(w, isOld(w, d.post) ? w.cfg.pending_old_recheck_minutes : w.cfg.pending_recheck_minutes);
+  w.summary.push(`${label}: pre-announcement, read again after ${next}`);
+  await write(w, d.post, { state: "pending", attempts: n, next_check_at: next });
+}
+
+// A permanent data problem of one post (an old post that is gone or that the
+// parser cannot complete): one warning, a terminal failed row.
+async function failTerminal(w: Walk, d: DuePost, note: string, line: string): Promise<void> {
+  w.warnings.push(note);
+  w.summary.push(`${postLabel(d.post.link)}: ${line}`);
+  await write(w, d.post, { state: "failed", attempts: (d.prev?.attempts ?? 0) + 1, last_error: note });
+}
+
+// The post page, or undefined when the read failed for a reason of this post
+// (its row is then written). Other HTTP and D1 errors throw out of the run.
+async function fetchHtml(w: Walk, d: DuePost): Promise<string | undefined> {
+  try {
+    return await fetchPost(w.ctx.fetch, d.post.link, w.allowedOrigin);
+  } catch (err) {
+    const gone = err instanceof NodeHttpError && (err.status === 404 || err.status === 410) && isOld(w, d.post);
+    if (!(err instanceof NodeLinkError) && !gone) throw err;
+    await failTerminal(w, d, err.message, "not read");
+    return undefined;
+  }
+}
+
+// Normalizes against the dist index, read on the first post that needs it
+// (KV cache when fresh; origin once per run when the cache is older than the post).
+async function normalize(w: Walk, post: FeedItem, html: string): Promise<NormalizedPost> {
+  const load = (force: boolean) => loadNodeDistIndex(w.ctx.fetch, w.ctx.env.CURSORS, w.cfg.dist_index_url, w.cfg.dist_cache_seconds, w.now, force);
+  w.dist ??= await load(false);
+  let norm = normalizeNodePost(post, html, w.dist.versions);
+  if (norm.needsDist && w.dist.fromCache && !w.forced) {
+    w.forced = true;
+    w.dist = await load(true);
+    norm = normalizeNodePost(post, html, w.dist.versions);
+  }
+  return norm;
+}
+
+// True when a newer post already created the advisory of this CVE (TCS-76:
+// the March 2026 "incomplete fix" post names CVE-2026-21637 again with later
+// fixed versions). An older post then never overwrites it.
+async function ownedByNewerPost(db: D1Database, doc: AdvisoryInput): Promise<boolean> {
+  const key = doc.sources[0];
+  const stored = await db.prepare(UPSERT_SQL.findByPair).bind(SOURCE, key.source_id).first<{ doc_json: string }>();
+  if (!stored) return false;
+  const prev = JSON.parse(stored.doc_json) as Advisory;
+  const creator = prev.sources[0];
+  return creator?.source === SOURCE && creator.source_id === key.source_id && Date.parse(prev.published_at) > Date.parse(doc.published_at);
+}
+
+// Stores the post's advisories; an advisory that fails validation is a warning.
+async function storeDocs(w: Walk, d: DuePost, norm: NormalizedPost): Promise<void> {
+  const { result } = w;
+  let ok = 0;
+  let notEmitted = norm.notEmitted;
+  w.warnings.push(...norm.errors);
+  for (const doc of norm.docs) {
+    result.fetched += 1;
+    try {
+      if (await ownedByNewerPost(w.ctx.env.DB, doc)) {
+        result.unchanged += 1;
+        ok += 1;
+        continue;
+      }
+      const outcome = await upsertAdvisory(w.ctx.env.DB, doc, { source: SOURCE, source_id: doc.sources[0].source_id });
+      if (outcome === "unchanged") result.unchanged += 1;
+      else result.upserted += 1;
+      ok += 1;
+    } catch (err) {
+      if (!(err instanceof InvalidAdvisoryError)) throw err;
+      w.warnings.push(`${doc.sources[0].source_id}: ${err.message}`);
+      notEmitted += 1;
+    }
+  }
+  const label = postLabel(d.post.link);
+  w.summary.push(notEmitted > 0 ? `${label}: ${ok} ok, ${notEmitted} not emitted` : `${label}: ${ok} ok`);
+  await write(w, d.post, { state: "ok", attempts: 0, unemitted: notEmitted });
+}
+
+// One post: always records an outcome, never stops the walk.
+async function readOne(w: Walk, d: DuePost): Promise<void> {
+  const html = await fetchHtml(w, d);
+  if (html === undefined) return;
+  const parsed = parseNodeSecurityPost(html);
+  if (parsed.cves.length === 0 && parsed.unparsed.length === 0) {
+    if (isNodePreAnnouncementParsed(parsed, html)) return waitPending(w, d);
+    if (!isOld(w, d.post)) return retryLater(w, d, "no CVE headings");
+    // A historical post with nothing to emit (the 2019 "no updates" post): one warning.
+    if (d.prev?.state !== "empty") w.warnings.push(`${postLabel(d.post.link)}: no CVE headings, older than ${w.cfg.retry_incomplete_days} days, not read again`);
+    w.summary.push(`${postLabel(d.post.link)}: no CVE headings, not read again`);
+    return write(w, d.post, { state: "empty", attempts: d.prev?.attempts ?? 0 });
+  }
+  const norm = await normalize(w, d.post, html);
+  if (!norm.incomplete) return storeDocs(w, d, norm);
+  const detail = norm.errors.map((e) => e.replace(`${d.post.link}: `, "")).join("; ");
+  if (!isOld(w, d.post)) return retryLater(w, d, detail.replace("post incomplete, read again next run", "post incomplete"));
+  const note = `post incomplete, older than ${w.cfg.retry_incomplete_days} days, not read again`;
+  await failTerminal(w, d, norm.errors.map((e) => e.replace("post incomplete, read again next run", note)).join("; "), "incomplete, not read again");
+}
+
+async function run(ctx: IngestContext): Promise<RunResult> {
+  const cfg = readNodeConfig(ctx.source.config);
+  const now = ctx.now();
   const match = cfg.title_match.toLowerCase();
   const result: RunResult = { fetched: 0, upserted: 0, unchanged: 0, errors: [] };
-  const summary: string[] = [];
-
-  // A post dated exactly at the cursor is read again: Node edits a release post in place.
-  const releases = parseNodeFeed(await fetchFeed(ctx.fetch, cfg.feed_url)).filter((p) => p.title.toLowerCase().includes(match));
-  const due = releases
-    .filter((p) => new Date(p.published).getTime() >= sinceMs)
-    .sort((a, b) => (a.published < b.published ? -1 : a.published > b.published ? 1 : a.link < b.link ? -1 : a.link > b.link ? 1 : 0));
-  const posts = due.slice(0, cfg.max_posts);
-  if (posts.length === 0) return result;
-  // The history is read in full when this run reads every due post to the
-  // newest one, and the backfill window reaches the oldest release post of
-  // the feed (the parser revision moved the cursor to the window start once).
-  const oldest = releases.reduce<string | null>((m, p) => (m === null || p.published < m ? p.published : m), null);
   const windowStart = now.getTime() - cfg.backfill_days * 86_400_000;
-  let reachedNewest = due.length <= cfg.max_posts;
+  const inWindow = (published: string) => new Date(published).getTime() >= windowStart;
 
-  // The dist index is read on the first post that needs it, from the KV cache when fresh.
-  let dist: DistIndex | undefined;
-  let forced = false;
-  const loadDist = (force: boolean) => loadNodeDistIndex(ctx.fetch, kv, cfg.dist_index_url, cfg.dist_cache_seconds, now, force);
+  const releases = parseNodeFeed(await fetchFeed(ctx.fetch, cfg.feed_url)).filter((p) => p.title.toLowerCase().includes(match));
+  const feed = releases.filter((p) => inWindow(p.published));
+  if (feed.length === 0) return result;
+  const ledger = await readLedger(ctx.env.DB, feed.map((p) => p.link), now, cfg.max_posts);
+  const ordered = selectDue(feed, ledger, inWindow);
+  const posts = ordered.slice(0, cfg.max_posts);
+  if (ordered.length > posts.length) {
+    // The rest stay due in the ledger: the next run reads them.
+    result.deferred = ordered.length - posts.length;
+    result.incomplete = true;
+  }
+
   // Post links are read only on the origin of the configured feed.
-  const allowedOrigin = new URL(cfg.feed_url).origin;
-  const isOld = (post: FeedItem) => now.getTime() - new Date(post.published).getTime() > cfg.retry_incomplete_days * 86_400_000;
-  for (const post of posts) {
-    const label = postLabel(post.link);
-    // HTTP and D1 errors throw out of the run: this post's cursor is not written.
-    let html: string;
-    try {
-      html = await fetchPost(ctx.fetch, post.link, allowedOrigin);
-    } catch (err) {
-      // A post older than retry_incomplete_days that is gone (404, 410) is a
-      // permanent data problem too: it must not stop the history read.
-      const gone = err instanceof NodeHttpError && (err.status === 404 || err.status === 410) && isOld(post);
-      if (!(err instanceof NodeLinkError) && !gone) throw err;
-      // A permanent data problem in the feed: report it and move the cursor past the post.
-      result.errors.push(err.message);
-      summary.push(`${label}: not read`);
-      await kv.put(NODE_CURSOR_KEY, post.published);
-      continue;
-    }
-    // A pre-announcement is not a failure. It writes no cursor and stops the
-    // run, so the post is read again until it carries its CVE headings.
-    if (isNodePreAnnouncement(html)) {
-      summary.push(`${label}: pre-announcement, read again next run`);
-      reachedNewest = false;
-      break;
-    }
-    dist ??= await loadDist(false);
-    let norm = normalizeNodePost(post, html, dist.versions);
-    if (norm.needsDist && dist.fromCache && !forced) {
-      // The cached set is older than this post: read origin once in this run.
-      forced = true;
-      dist = await loadDist(true);
-      norm = normalizeNodePost(post, html, dist.versions);
-    }
-    // An incomplete post stops the run; the cursor stays at the last complete
-    // post. One older than retry_incomplete_days is reported and passed.
-    if (norm.incomplete && isOld(post)) {
-      const note = `post incomplete, older than ${cfg.retry_incomplete_days} days, not read again`;
-      result.errors.push(...norm.errors.map((e) => e.replace("post incomplete, read again next run", note)));
-      summary.push(`${label}: incomplete, not read again`);
-      await kv.put(NODE_CURSOR_KEY, post.published);
-      continue;
-    }
-    result.errors.push(...norm.errors);
-    if (norm.incomplete) {
-      summary.push(`${label}: incomplete, read again next run`);
-      reachedNewest = false;
-      break;
-    }
-    let ok = 0;
-    let notEmitted = norm.notEmitted;
-    for (const doc of norm.docs) {
-      result.fetched += 1;
-      try {
-        const outcome = await upsertAdvisory(ctx.env.DB, doc, { source: SOURCE, source_id: doc.sources[0].source_id });
-        if (outcome === "unchanged") result.unchanged += 1;
-        else result.upserted += 1;
-        ok += 1;
-      } catch (err) {
-        if (!(err instanceof InvalidAdvisoryError)) throw err;
-        result.errors.push(`${doc.sources[0].source_id}: ${err.message}`);
-        notEmitted += 1;
-      }
-    }
-    summary.push(notEmitted > 0 ? `${label}: ${ok} ok, ${notEmitted} not emitted` : `${label}: ${ok} ok`);
-    await kv.put(NODE_CURSOR_KEY, post.published);
-  }
-  if (summary.length > 0) result.summary = summary.join("; ");
-  if (!ctx.source.coverage_since && reachedNewest && oldest !== null && new Date(oldest).getTime() >= windowStart) {
-    await markCoverage(ctx.env.DB, SOURCE, oldest);
-  }
+  const w: Walk = { ctx, cfg, now, result, summary: [], warnings: [], written: new Set(), allowedOrigin: new URL(cfg.feed_url).origin, forced: false };
+  for (const d of posts) await readOne(w, d);
+  if (w.summary.length > 0) result.summary = w.summary.join("; ");
+  if (w.warnings.length > 0) result.warnings = w.warnings;
+  // The history is read in full when every feed post of the window has a row,
+  // the window reaches the oldest release post of the feed, and no post
+  // younger than retry_incomplete_days is unread (failed, empty at an attempt
+  // cap, or ok with CVE headings not emitted): a CVE the parser could not read
+  // is never "complete". A parser revision bump re-reads those rows.
+  const oldest = releases.reduce<string | null>((m, p) => (m === null || p.published < m ? p.published : m), null);
+  const allRead = feed.every((p) => ledger.known.has(p.link) || w.written.has(p.link));
+  if (ctx.source.coverage_since || !allRead || oldest === null || !inWindow(oldest)) return result;
+  const recentSince = new Date(now.getTime() - cfg.retry_incomplete_days * 86_400_000).toISOString();
+  if (!(await hasUnreadRecent(ctx.env.DB, recentSince))) await markCoverage(ctx.env.DB, SOURCE, oldest);
   return result;
 }
 

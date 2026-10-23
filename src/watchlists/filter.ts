@@ -1,4 +1,15 @@
 import { isMinSeverity, type MinSeverity } from "../feed/query";
+import { DEFAULT_ECOSYSTEMS } from "../ingest/osv";
+
+// Input caps. They bound one stored row and, with plans.max_watchlists, the
+// GET /v1/watchlists answer. The component count cap is plans.max_components.
+export const MAX_NAME_CHARS = 100;
+export const MAX_STRING_CHARS = 200;
+export const MAX_ECOSYSTEMS = 20;
+export const MAX_RUNTIMES = 10;
+export const MAX_FILTER_BYTES = 65_536;
+// The OSV ecosystems we ingest plus the runtime names (CLAUDE.md, Naming).
+export const KNOWN_ECOSYSTEMS: ReadonlySet<string> = new Set([...DEFAULT_ECOSYSTEMS, "node", "php", "python", "go", "deno", "bun"]);
 
 // The stored filter of one watch list (watchlists.filter_json).
 export interface WatchlistFilter {
@@ -47,7 +58,32 @@ export function parseDelivery(b: Record<string, unknown>, maxUrlLength: number):
 function stringList(v: unknown, field: string): string[] | string {
   if (v === undefined) return [];
   if (!Array.isArray(v) || v.some((s) => typeof s !== "string")) return `${field} must be an array of strings`;
-  return [...new Set((v as string[]).map((s) => s.trim()).filter((s) => s !== ""))];
+  const list = [...new Set((v as string[]).map((s) => s.trim()).filter((s) => s !== ""))];
+  if (list.some((s) => s.length > MAX_STRING_CHARS)) return `${field}: each value must be at most ${MAX_STRING_CHARS} characters`;
+  return list;
+}
+
+function checkEcosystems(list: string[]): string | null {
+  if (list.length > MAX_ECOSYSTEMS) return `ecosystems: at most ${MAX_ECOSYSTEMS} values`;
+  const unknown = list.find((e) => !KNOWN_ECOSYSTEMS.has(e));
+  if (unknown !== undefined) return `ecosystems: unknown value ${JSON.stringify(unknown)}; known: ${[...KNOWN_ECOSYSTEMS].join(", ")}`;
+  return null;
+}
+
+function parseRuntimes(v: unknown): Record<string, string> | string {
+  const runtimes: Record<string, string> = {};
+  if (v === undefined) return runtimes;
+  const shape = "runtimes must be an object of runtime name to version";
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return shape;
+  for (const [k, ver] of Object.entries(v)) {
+    if (typeof ver !== "string") return shape;
+    if (k.trim().length > MAX_STRING_CHARS || ver.trim().length > MAX_STRING_CHARS) {
+      return `runtimes: each name and version must be at most ${MAX_STRING_CHARS} characters`;
+    }
+    if (k.trim() !== "") runtimes[k.trim()] = ver.trim();
+  }
+  if (Object.keys(runtimes).length > MAX_RUNTIMES) return `runtimes: at most ${MAX_RUNTIMES} entries`;
+  return runtimes;
 }
 
 // Validates a POST /v1/watchlists body. Wrong types are an error, never
@@ -58,22 +94,17 @@ export function parseWatchlistBody(body: unknown, maxUrlLength: number = FALLBAC
 
   const name = typeof b.name === "string" ? b.name.trim() : "";
   if (name === "") return { ok: false, error: "name must be a non-empty string" };
+  if (name.length > MAX_NAME_CHARS) return { ok: false, error: `name must be at most ${MAX_NAME_CHARS} characters` };
 
   const ecosystems = stringList(b.ecosystems, "ecosystems");
   if (typeof ecosystems === "string") return { ok: false, error: ecosystems };
+  const ecoError = checkEcosystems(ecosystems);
+  if (ecoError) return { ok: false, error: ecoError };
   const components = stringList(b.components, "components");
   if (typeof components === "string") return { ok: false, error: components };
 
-  const runtimes: Record<string, string> = {};
-  if (b.runtimes !== undefined) {
-    if (b.runtimes === null || typeof b.runtimes !== "object" || Array.isArray(b.runtimes)) {
-      return { ok: false, error: "runtimes must be an object of runtime name to version" };
-    }
-    for (const [k, v] of Object.entries(b.runtimes)) {
-      if (typeof v !== "string") return { ok: false, error: "runtimes must be an object of runtime name to version" };
-      if (k.trim() !== "") runtimes[k.trim()] = v.trim();
-    }
-  }
+  const runtimes = parseRuntimes(b.runtimes);
+  if (typeof runtimes === "string") return { ok: false, error: runtimes };
 
   let min_severity: MinSeverity | null = null;
   if (b.min_severity !== undefined && b.min_severity !== null) {
@@ -85,13 +116,10 @@ export function parseWatchlistBody(body: unknown, maxUrlLength: number = FALLBAC
     return { ok: false, error: "exploited_only must be a boolean" };
   }
 
+  const filter = { ecosystems, components, runtimes, min_severity, exploited_only: b.exploited_only === true };
+  const bytes = new TextEncoder().encode(JSON.stringify(filter)).length;
+  if (bytes > MAX_FILTER_BYTES) return { ok: false, error: `filter: at most ${MAX_FILTER_BYTES} bytes as JSON, got ${bytes}` };
   const delivery = parseDelivery(b, maxUrlLength);
   if (!delivery.ok) return delivery;
-
-  return {
-    ok: true,
-    name,
-    filter: { ecosystems, components, runtimes, min_severity, exploited_only: b.exploited_only === true },
-    delivery: delivery.value,
-  };
+  return { ok: true, name, filter, delivery: delivery.value };
 }
