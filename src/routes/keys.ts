@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { jsonUtf8 } from "../lib/http";
 import { getSettingInt } from "../lib/settings";
 import { getSettingText } from "../lib/settings-text";
+import { noteDkimUnsigned, resolveDkim } from "../mail/dkim";
 import { getMailer } from "../mail/send";
 import { refundSend, reserveSend } from "../mail/send-caps";
 import { sha256Hex, toHex } from "../middleware/auth";
@@ -34,6 +35,9 @@ export const FALLBACK_DAILY_SEND_CAP = 500; // mail.daily_send_cap
 export const FALLBACK_MAIL_PROVIDER = "mailchannels"; // mail.provider
 export const FALLBACK_FROM_ADDRESS = "keys@tocsin.sh"; // mail.from_address
 export const FALLBACK_CONFIRM_BASE_URL = "https://tocsin.sh"; // keys.confirm_base_url
+// "" = not set: the mail goes out unsigned (src/mail/dkim.ts). The rows are seeded by migration 0030.
+export const FALLBACK_DKIM_DOMAIN = ""; // mail.dkim_domain
+export const FALLBACK_DKIM_SELECTOR = ""; // mail.dkim_selector
 // KV refuses a TTL under 60 seconds: a platform fact, not a knob.
 const KV_MIN_TTL_SECONDS = 60;
 const HOUR_MS = 3_600_000;
@@ -98,7 +102,7 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
   const db = c.env.DB;
   const kv = c.env.CURSORS;
 
-  const [ttlRaw, ipCap, emailCap, dayCap, provider, from, baseUrl] = await Promise.all([
+  const [ttlRaw, ipCap, emailCap, dayCap, provider, from, baseUrl, dkimDomain, dkimSelector] = await Promise.all([
     getSettingInt(db, "keys.confirm_ttl_seconds", FALLBACK_CONFIRM_TTL_SECONDS),
     getSettingInt(db, "keys.ip_sends_per_hour", FALLBACK_IP_SENDS_PER_HOUR),
     getSettingInt(db, "keys.email_sends_per_hour", FALLBACK_EMAIL_SENDS_PER_HOUR),
@@ -106,10 +110,14 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
     getSettingText(db, "mail.provider", FALLBACK_MAIL_PROVIDER),
     getSettingText(db, "mail.from_address", FALLBACK_FROM_ADDRESS),
     getSettingText(db, "keys.confirm_base_url", FALLBACK_CONFIRM_BASE_URL),
+    getSettingText(db, "mail.dkim_domain", FALLBACK_DKIM_DOMAIN),
+    getSettingText(db, "mail.dkim_selector", FALLBACK_DKIM_SELECTOR),
   ]);
   const ttl = Math.max(KV_MIN_TTL_SECONDS, ttlRaw);
 
-  const mailer = getMailer(c.env, provider);
+  // The same value builds the mailer and the Tocsin-Mail-Dkim header, so the header is what was sent.
+  const dkim = resolveDkim(c.env.DKIM_PRIVATE_KEY, dkimDomain, dkimSelector);
+  const mailer = getMailer(c.env, provider, dkim.state === "signed" ? dkim.config : null);
   if (!mailer) {
     logError({ alert: "mail_not_configured", provider });
     return jsonUtf8(c, { error: "key sign-up is not available right now" }, 503, NO_STORE);
@@ -149,7 +157,9 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
     return jsonUtf8(c, { error: "could not send the email, try again" }, 502, NO_STORE);
   }
 
-  return jsonUtf8(c, { status: "sent", expires_in_seconds: ttl }, 202, NO_STORE);
+  // Only a mail that went out writes the unsigned warning (a 502 above writes none).
+  if (dkim.state !== "signed") await noteDkimUnsigned(db, dkim.missing, new Date().toISOString());
+  return jsonUtf8(c, { status: "sent", expires_in_seconds: ttl }, 202, { ...NO_STORE, "Tocsin-Mail-Dkim": dkim.state });
 }
 
 const keys = new Hono<{ Bindings: Env }>();

@@ -11,6 +11,10 @@ export interface Env {
   IMPORT_TOKEN?: string;
   // MailChannels Email API key (wrangler secret). Unset: POST /v1/keys answers 503.
   MAILCHANNELS_API_KEY?: string;
+  // DKIM private key of the sending domain (wrangler secret, TCS-94): base64 DER
+  // or PEM of an RSA key. Unset: mail goes out unsigned and src/mail/dkim.ts
+  // writes a warning on the sources row 'mail'.
+  DKIM_PRIVATE_KEY?: string;
   // AES-256 key for webhook secrets at rest, 32 bytes as base64 (wrangler
   // secret, src/lib/secret-box.ts). Unset: new webhook secrets are stored as
   // plaintext and each use logs kek_missing.

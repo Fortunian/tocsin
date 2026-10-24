@@ -16,7 +16,7 @@ Kept forever. One row per `(cve, advisory_id)`: every CVE id of an advisory, wri
 
 ## sources
 
-A fixed set of rows (10 today: `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `node-eol`, `php-runtime`, `python-runtime`, `deno-runtime`, `bun-runtime`). It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. `last_warning` (TCS-50) is one value, overwritten by the next run that has a warning and kept by a run with none, cut to 1,000 chars. `coverage_since` (TCS-32) is one value per row, written once when the source has read its whole history (for `osv`: when every enabled ecosystem has a done `backfill` row) and never moved after that. No delete job.
+A fixed set of rows (11 today: the 10 ingesters `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `node-eol`, `php-runtime`, `python-runtime`, `deno-runtime`, `bun-runtime`, plus `mail`). `mail` (TCS-94, enabled 0) is the warning channel of the mail seam, not an ingester: an unsigned send overwrites its `last_warning` and `last_run_at` in place. It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. `last_warning` (TCS-50) is one value, overwritten by the next run that has a warning and kept by a run with none, cut to 1,000 chars. `coverage_since` (TCS-32) is one value per row, written once when the source has read its whole history (for `osv`: when every enabled ecosystem has a done `backfill` row) and never moved after that. No delete job.
 
 ## backfill
 
