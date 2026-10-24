@@ -25,7 +25,7 @@ export const STATUS_SOURCES_SQL =
   "SELECT id, kind, last_run_at, last_ok_at, last_error, last_warning, coverage_since FROM sources WHERE enabled = 1 ORDER BY id";
 // Coverage (TCS-32): backfill has one row per OSV ecosystem and sources one row
 // per source, so both are small bounded reads.
-export const STATUS_BACKFILL_SQL = "SELECT ecosystem, coverage_since, done_at, imported, unchanged FROM backfill";
+export const STATUS_BACKFILL_SQL = "SELECT ecosystem, coverage_since, done_at, imported, unchanged, skipped FROM backfill";
 export const STATUS_CURSOR_SQL = "SELECT MAX(cursor) AS cursor FROM advisories";
 
 // The landing page data, cached as one KV value under LATEST_KEY (TCS-35).
@@ -156,7 +156,7 @@ export async function loadStatus(db: D1Database, opts: { ledger?: boolean; cover
   const data: StatusData = { sources: list, cursor: max === null ? 0 : max };
   if (opts.coverage) {
     const [backfillRes, cfgRes] = rest.slice(ledgers.length);
-    const backfill = backfillRes.results as unknown as { ecosystem: string; coverage_since: string | null; done_at: string | null; imported: number; unchanged: number }[];
+    const backfill = backfillRes.results as unknown as { ecosystem: string; coverage_since: string | null; done_at: string | null; imported: number; unchanged: number; skipped: number }[];
     const cfgRow = cfgRes.results[0] as { config_json: string } | undefined;
     let osvEcosystems: string[];
     try {
@@ -168,10 +168,12 @@ export async function loadStatus(db: D1Database, opts: { ledger?: boolean; cover
     }
     const rows = { backfill, sources: list.map((s) => ({ id: s.id, coverage_since: s.coverage_since })) };
     const seen = new Map(backfill.map((b) => [b.ecosystem, b.imported + b.unchanged]));
+    const skippedBy = new Map(backfill.map((b) => [b.ecosystem, b.skipped]));
     data.coverage = [
       // `imported`: the records the latest backfill run of the ecosystem has written or found unchanged.
-      ...coverageFor([...osvEcosystems].sort(byEcosystem), rows).map((c) => ({ ...c, imported: seen.get(c.ecosystem) ?? 0 })),
-      ...coverageFor([...RUNTIMES], rows).map((c) => ({ ...c, imported: null })),
+      // `skipped`: the withdrawn and MAL- ids that run left out on purpose (scripts/launch-check.sh cov-count).
+      ...coverageFor([...osvEcosystems].sort(byEcosystem), rows).map((c) => ({ ...c, imported: seen.get(c.ecosystem) ?? 0, skipped: skippedBy.get(c.ecosystem) ?? 0 })),
+      ...coverageFor([...RUNTIMES], rows).map((c) => ({ ...c, imported: null, skipped: null })),
     ];
   }
   return data;

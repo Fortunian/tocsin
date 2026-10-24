@@ -26,7 +26,7 @@ Out of scope: the mail seam (`src/mail/send.ts`, `src/mail/fake.ts`), the confir
 
 ## Design (decided here)
 
-### Table `send_counters` (migration `migrations/0024_send_counters.sql`)
+### Table `send_counters` (migration `migrations/0029_send_counters.sql`)
 
 ```sql
 CREATE TABLE IF NOT EXISTS send_counters (
@@ -119,7 +119,7 @@ README "Self-host": one line that points to docs/OPERATING.md for mail.
 
 ## Files to touch
 
-- `migrations/0024_send_counters.sql` (new)
+- `migrations/0029_send_counters.sql` (new)
 - `src/mail/send-caps.ts` (new)
 - `src/routes/keys.ts`
 - `src/cron/send-counters-retention.ts` (new)
@@ -136,7 +136,7 @@ README "Self-host": one line that points to docs/OPERATING.md for mail.
 
 ## Tests that must change
 
-- `tests/worker/migrations.tcs-1.test.ts`: it pins the applied migration list as exactly 0001..0023; this ticket adds `0024_send_counters.sql`.
+- `tests/worker/migrations.tcs-1.test.ts`: it pins the applied migration list as exactly 0001..0023; this ticket adds `0029_send_counters.sql`.
 
 ## Changed symbols
 
@@ -160,7 +160,7 @@ README "Self-host": one line that points to docs/OPERATING.md for mail.
 ## Tasks
 
 ### T1. Migration 0024 and the reserve/refund module
-Create `migrations/0024_send_counters.sql` and `src/mail/send-caps.ts` as designed above.
+Create `migrations/0029_send_counters.sql` and `src/mail/send-caps.ts` as designed above.
 VALIDATE: npm test -- tests/routes/keys-caps-plan.tcs-83.test.ts
 SATISFIES: "Move the counters to D1 (`UPDATE ... SET n = n + 1 WHERE n < cap RETURNING n`, one row per window key ...)"
 
@@ -185,7 +185,7 @@ VALIDATE: grep -c "wrangler secret put MAILCHANNELS_API_KEY\|_mailchannels\|incl
 SATISFIES: "Deploy prerequisites, as a documented one-time operator step in docs/OPERATING.md ... plus a launch-check line that `POST /v1/keys` answers 202 (not 503) in production once set."
 
 ### T6. Migration list test
-Add `"0024_send_counters.sql"` to the list in `tests/worker/migrations.tcs-1.test.ts` and rename the case to "applies 0001..0024". Nothing else in that file changes.
+Add `"0029_send_counters.sql"` to the list in `tests/worker/migrations.tcs-1.test.ts` and rename the case to "applies 0001..0029". Nothing else in that file changes.
 VALIDATE: npm test -- tests/worker/migrations.tcs-1.test.ts
 SATISFIES: "Move the counters to D1" (the new migration must apply on a fresh D1).
 

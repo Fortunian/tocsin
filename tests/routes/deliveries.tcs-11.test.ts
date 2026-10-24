@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { FAILED_RETENTION_SQL, SKIPPED_RETENTION_SQL } from "../../src/cron/deliveries-retention";
+import { SKIPPED_RETENTION_SQL } from "../../src/cron/deliveries-retention";
 import { KEY_RETENTION_DELIVERIES_SQL } from "../../src/cron/retention";
 import { SWEEP_SQL, WEBHOOK_LISTS_SQL, buildEnqueueStatements } from "../../src/queue/enqueue";
 import { CLAIM_SQL, HEALTH_FAIL_SQL, HEALTH_OK_SQL } from "../../src/queue/run";
@@ -40,7 +40,8 @@ describe("deliveries table", () => {
   it("has the named columns and the (watchlist_id, advisory_id) primary key", async () => {
     const { results } = await env.DB.prepare("PRAGMA table_info(deliveries)").all<{ name: string; pk: number }>();
     // last_error: migrations/0023_watchlist_delivery_health.sql (round 2).
-    expect(results.map((r) => r.name)).toEqual(["watchlist_id", "advisory_id", "cursor", "attempt", "status", "last_code", "next_at", "delivered_at", "last_error"]);
+    // affected_json: migrations/0028_watchlist_dependencies.sql (TCS-37).
+    expect(results.map((r) => r.name)).toEqual(["watchlist_id", "advisory_id", "cursor", "attempt", "status", "last_code", "next_at", "delivered_at", "last_error", "affected_json"]);
     expect(results.filter((r) => r.pk > 0).map((r) => r.name)).toEqual(["watchlist_id", "advisory_id"]);
     await env.DB.prepare("INSERT INTO deliveries (watchlist_id, advisory_id, cursor, next_at) VALUES ('wl_pk', 'adv_pk', 1, 'x')").run();
     const dup = await env.DB.prepare("INSERT OR IGNORE INTO deliveries (watchlist_id, advisory_id, cursor, next_at) VALUES ('wl_pk', 'adv_pk', 2, 'y')").run();
@@ -181,12 +182,13 @@ describe("query plans on 5,000 deliveries and 1,000 watch lists", () => {
 
   // Round 2: delivered rows are no longer deleted by age; the key retention
   // deletes the rows of the lists it deletes, by a watchlist_id index.
-  it("the two retention deletes use their status index; the key retention delete searches deliveries by watchlist_id", async () => {
+  // TCS-82 item 6: failed rows are kept, so the skipped delete is the only age delete.
+  it("the skipped retention delete uses its status index; the key retention delete searches deliveries by watchlist_id", async () => {
     const k = await plan(KEY_RETENTION_DELIVERIES_SQL, "2026-03-01T00:00:00.000Z", 5000);
     expect(k).toMatch(/SEARCH deliveries USING (COVERING )?INDEX \S+ \(watchlist_id=\?\)/);
     expect(k).not.toMatch(BARE_SCAN("deliveries"));
     expect(k).not.toMatch(BARE_SCAN("watchlists"));
-    for (const sql of [FAILED_RETENTION_SQL, SKIPPED_RETENTION_SQL]) {
+    for (const sql of [SKIPPED_RETENTION_SQL]) {
       const p = await plan(sql, "2026-03-01T00:00:00.000Z", 5000);
       expect(p).toContain("idx_deliveries_status_next_at");
       expect(p).not.toMatch(BARE_SCAN("deliveries"));

@@ -19,6 +19,12 @@ on:
           - Packagist
           - crates.io
           - RubyGems
+          - Maven
+          - NuGet
+          - Hex
+          - Pub
+          - Alpine
+          - Debian
       batch:
         description: Records per request (the server's settings row import.max_batch caps it)
         required: false

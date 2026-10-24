@@ -57,7 +57,8 @@ describe("query plans on 2,000 keys, 2,000 watch lists and 2,000 advisories", ()
     expect(list).toMatch(/USING (COVERING )?INDEX idx_watchlists_key_id/);
     expect(list).not.toMatch(BARE_SCAN("watchlists"));
 
-    const create = await plan(CREATE_WATCHLIST_SQL, "wl_x", "key_plan_5", "n", "{}", "2026-10-23T00:00:00.000Z", "key_plan_5", 25, "poll", null, null);
+    // TCS-82: ?11 is webhook_secret_enc.
+    const create = await plan(CREATE_WATCHLIST_SQL, "wl_x", "key_plan_5", "n", "{}", "2026-10-23T00:00:00.000Z", "key_plan_5", 25, "poll", null, null, null);
     expect(create).toMatch(/USING (COVERING )?INDEX idx_watchlists_key_id/);
     expect(create).not.toMatch(BARE_SCAN("watchlists"));
     expect(create).not.toMatch(BARE_SCAN("advisories"));

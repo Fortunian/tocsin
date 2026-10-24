@@ -99,14 +99,16 @@ describe("runSendCounterRetention", () => {
   });
 });
 
+// TCS-82 narrowed the deliveries job to skipped rows: delivered and failed rows
+// are each pair's record and are kept. So these fixtures use skipped rows.
 describe("R6: the daily cron runs both retention jobs", () => {
   const ctl = () => createScheduledController({ cron: DELIVERY_RETENTION_CRON, scheduledTime: Date.now() });
 
-  it("runCron with 41 4 * * * deletes an old send_counters row and an old failed delivery", async () => {
+  it("runCron with 41 4 * * * deletes an old send_counters row and an old skipped delivery", async () => {
     const old = await row(new Date(Date.now() - 3 * DAY));
     const w = uid("wl83");
     const a = uid("adv83");
-    await insertDelivery({ watchlist_id: w, advisory_id: a, cursor: 1, status: "failed", next_at: new Date(Date.now() - 91 * DAY).toISOString(), delivered_at: null });
+    await insertDelivery({ watchlist_id: w, advisory_id: a, cursor: 1, status: "skipped", next_at: new Date(Date.now() - 91 * DAY).toISOString(), delivered_at: null });
     const ctx = createExecutionContext();
     await runCron(ctl(), env, ctx, {});
     await waitOnExecutionContext(ctx);
@@ -124,7 +126,7 @@ describe("R6: the daily cron runs both retention jobs", () => {
   it("a throw in the send-counter job still runs the deliveries job, and runCron rejects", async () => {
     const w = uid("wl83b");
     const a = uid("adv83b");
-    await insertDelivery({ watchlist_id: w, advisory_id: a, cursor: 1, status: "failed", next_at: new Date(Date.now() - 91 * DAY).toISOString(), delivered_at: null });
+    await insertDelivery({ watchlist_id: w, advisory_id: a, cursor: 1, status: "skipped", next_at: new Date(Date.now() - 91 * DAY).toISOString(), delivered_at: null });
     await setKnob("retention.send_counters_days", "0");
     await expect(runCron(ctl(), env, createExecutionContext(), {})).rejects.toThrow(/send_counters_days=0/);
     expect(await deliveryRow(w, a)).toBeNull();

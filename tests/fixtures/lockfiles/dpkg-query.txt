@@ -1,0 +1,6 @@
+ncurses 6.1-1ubuntu1.18.04
+e2fsprogs 1.44.1-1ubuntu1.1
+apt 1.6.11
+audit 1:2.8.2-1ubuntu1
+perl 5.22.1-9ubuntu0.9
+systemd 237-3ubuntu10.22

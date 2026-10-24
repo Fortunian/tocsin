@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { decryptSecret, importKek } from "../../src/lib/secret-box";
 import { call, newKey } from "./keys-helpers.tcs-8";
 
 const URL_OK = "https://hooks.example.test/x";
@@ -8,6 +9,15 @@ async function row(id: string) {
   return env.DB.prepare("SELECT delivery, webhook_url, webhook_secret FROM watchlists WHERE id = ?")
     .bind(id)
     .first<{ delivery: string; webhook_url: string | null; webhook_secret: string | null }>();
+}
+
+// TCS-82: with WEBHOOK_KEK set (vitest.config.ts) the secret is stored only
+// encrypted: webhook_secret is NULL and webhook_secret_enc decrypts to it.
+async function storedSecret(id: string): Promise<{ plain: string | null; decrypted: string }> {
+  const r = await env.DB.prepare("SELECT webhook_secret, webhook_secret_enc FROM watchlists WHERE id = ?")
+    .bind(id)
+    .first<{ webhook_secret: string | null; webhook_secret_enc: string }>();
+  return { plain: r!.webhook_secret, decrypted: await decryptSecret(await importKek(env.WEBHOOK_KEK!), id, r!.webhook_secret_enc) };
 }
 
 async function createPoll(key: string): Promise<string> {
@@ -25,7 +35,8 @@ describe("webhook delivery and the plans.webhooks gate", () => {
     expect(body.delivery).toBe("webhook");
     expect(body.webhook_url).toBe(URL_OK);
     expect(body.webhook_secret).toMatch(/^whsec_[0-9a-f]{64}$/);
-    expect(await row(body.id)).toEqual({ delivery: "webhook", webhook_url: URL_OK, webhook_secret: body.webhook_secret });
+    expect(await row(body.id)).toEqual({ delivery: "webhook", webhook_url: URL_OK, webhook_secret: null });
+    expect(await storedSecret(body.id)).toEqual({ plain: null, decrypted: body.webhook_secret });
 
     const list = await call("GET", "/v1/watchlists", { key });
     const text = await list.text();
@@ -44,7 +55,8 @@ describe("webhook delivery and the plans.webhooks gate", () => {
     const onBody = (await on.json()) as { id: string; delivery: string; webhook_secret: string };
     expect(onBody).toMatchObject({ id, delivery: "webhook" });
     expect(onBody.webhook_secret).toMatch(/^whsec_[0-9a-f]{64}$/);
-    expect(await row(id)).toEqual({ delivery: "webhook", webhook_url: URL_OK, webhook_secret: onBody.webhook_secret });
+    expect(await row(id)).toEqual({ delivery: "webhook", webhook_url: URL_OK, webhook_secret: null });
+    expect(await storedSecret(id)).toEqual({ plain: null, decrypted: onBody.webhook_secret });
 
     const off = await call("PATCH", `/v1/watchlists/${id}`, { key, body: { delivery: "poll" } });
     expect(off.status).toBe(200);

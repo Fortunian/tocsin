@@ -18,7 +18,8 @@ export default defineConfig(async () => {
             cloudflareTest({
               wrangler: { configPath: "./wrangler.toml" },
               // MAIL_TRANSPORT=fake: the mail seam answers the KV fake, 0 network calls.
-              miniflare: { bindings: { TEST_MIGRATIONS: migrations, MAIL_TRANSPORT: "fake" } },
+              // WEBHOOK_KEK: a test-only fixture key (32 bytes as base64), never a production key.
+              miniflare: { bindings: { TEST_MIGRATIONS: migrations, MAIL_TRANSPORT: "fake", WEBHOOK_KEK: "fixturefixturefixturefixturefixturefixture0=" } },
             }),
           ],
           test: {

@@ -20,7 +20,8 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `POST /v1/keys/confirm` | Spends the token once and answers the API key. Form body `token=tct_...` (the button) or JSON `{"token": "tct_..."}`. |
 | `POST /v1/keys/rotate` | Mails a link that replaces the API key of the email. |
 | `POST /v1/watchlists`, `GET /v1/watchlists`, `DELETE /v1/watchlists/{id}` | Create, list and delete your watch lists. Needs an API key. |
-| `GET /v1/watchlists/{id}` | One watch list with its filter and its webhook delivery health. Needs an API key. |
+| `GET /v1/watchlists/{id}` | One watch list with its filter, its webhook delivery health and its stored dependency count. Needs an API key. |
+| `POST /v1/watchlists/{id}/lockfile` | Stores the dependency set of a watch list from lockfiles (the same bodies as `POST /v1/check`) and answers the check result. Needs an API key. See [Watch a lockfile](#watch-a-lockfile). |
 | `PATCH /v1/watchlists/{id}` | Sets how a watch list is delivered: `poll` or `webhook`. Needs an API key. |
 | `POST /v1/watchlists/{id}/resume` | Starts webhook delivery again on a paused watch list. Needs an API key. |
 | `GET /v1/watchlists/{id}/events` | New events on one watch list, from its stored cursor. Needs an API key. |
@@ -47,12 +48,24 @@ An invalid filter answers 400 with `{ "error": "<reason>" }`.
 
 ### Check
 
-`GET /v1/check?node=24.22.0&php=8.4.26` checks runtimes only. `POST /v1/check` takes one or more lockfiles as multipart fields, where the field name is the file name (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `requirements.txt`, `go.sum`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`), or a JSON body:
+`GET /v1/check?node=24.22.0&php=8.4.26` checks runtimes only. `POST /v1/check` takes one or more lockfiles as multipart fields, where the field name is the file name (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `requirements.txt`, `go.sum`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `pom.xml`, `gradle.lockfile`, `packages.lock.json`, `mix.lock`, `pubspec.lock`), or a JSON body:
 
 ```
 curl -F "package-lock.json=@package-lock.json" https://tocsin.sh/v1/check
 curl -H "Content-Type: application/json" -d '{"dependencies":[{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}],"runtimes":{"node":"24.22.0"}}' https://tocsin.sh/v1/check
 ```
+
+`pom.xml` lists direct dependencies only. A version from a parent POM, an unknown property or a version range is in `skipped` with its reason; Tocsin never guesses it. A `${property}` value that resolves to more than 256 characters, or a file that needs more than 200 property expansions, is in `skipped` with the reason `unresolved_property`. `gradle.lockfile` is the complete, resolved list.
+
+An OS package list is checked like a runtime: send the release as `alpine` (`3.18`, `v3.18` or `3.18.4`) or `debian` (`12` or `12.5`), and the list text as `os_packages`. The list is the output of `apk list --installed` (Alpine) or `dpkg-query -W -f='${source:Package} ${Version}\n'` (Debian). In JSON, the release goes in `runtimes` and the list at the top level; in multipart, both are form fields. A dependency of an OS list has the ecosystem `Alpine:v3.18` or `Debian:12` and is matched only against advisories of that release. OSV names Alpine and Debian packages by their source package. The Alpine name is the origin from `apk list`. The `dpkg-query` form above gives the source package. `dpkg -l` gives binary names (`libssl3` from `openssl`), and Tocsin has no map from a binary name to its source package. Each `dpkg -l` row is therefore in `skipped` with the reason `binary_package_name` and is never counted as clean. Send the `dpkg-query` form to check a Debian system.
+
+```
+curl -F alpine=3.18 --form-string "os_packages=$(apk list --installed)" https://tocsin.sh/v1/check
+curl -F debian=12 --form-string "os_packages=$(dpkg-query -W -f='${source:Package} ${Version}\n')" https://tocsin.sh/v1/check
+curl -H "Content-Type: application/json" -d '{"runtimes":{"debian":"12"},"os_packages":"openssl 3.0.11-1~deb12u2\n"}' https://tocsin.sh/v1/check
+```
+
+A release without `os_packages`, `os_packages` without a release, both `alpine` and `debian`, or an unknown release answers 400 with `{ "error", "field" }`. `GET /v1/check?debian=12` answers 400: a query string has no package list.
 
 Runtime parameters are `node=`, `php=`, `python=`, `go=`, `deno=` and `bun=`. `go=` takes the Go toolchain version as `go version` prints it (`go=1.22.3` or `go=go1.22.3`). It matches the OSV `Go` advisories on the toolchain itself (package `stdlib`, `toolchain` or `cmd/<tool>`) by their OSV range events, and `fixed_in` is the lowest OSV `fixed` version above yours. Those advisories stay `Go` advisories for module matching; the runtime match does not add a second advisory. An affected item for `go=1.22.3` has `dependency` `{ "ecosystem": "go", "name": "go", "version": "1.22.3" }`. The version is echoed as given: `go=go1.22.3` answers `"version": "go1.22.3"`.
 
@@ -82,7 +95,7 @@ Each event is one advisory. The schema is at [/schema/advisory.v1.json](/schema/
 | `id` | string | The Tocsin id. |
 | `cve_ids` | string[] | CVE ids. Can be empty. |
 | `ghsa_id` | string | GitHub advisory id, when there is one. |
-| `ecosystem` | string | OSV ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`) or runtime (`node`, `php`, `python`, `go`, `deno`, `bun`). |
+| `ecosystem` | string | OSV ecosystem (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `Maven`, `NuGet`, `Hex`, `Pub`, `Alpine`, `Debian`) or runtime (`node`, `php`, `python`, `go`, `deno`, `bun`). For `Alpine` and `Debian`, `ecosystem_qualifier` holds the release (`Alpine:v3.18`, `Debian:12`); there is one advisory per release. |
 | `component` | string | Package or runtime name. |
 | `affected` | object[] | Version ranges: `introduced`, `fixed`, `last_affected`. |
 | `fixed_versions` | string[] | Versions that fix it. |
@@ -137,6 +150,20 @@ Input caps on `POST /v1/watchlists`: `name` is at most 100 characters; every oth
 
 A key that is not used for 365 days is deleted with its watch lists.
 
+### Watch a lockfile
+
+Upload your lockfiles once and get a webhook when a new advisory affects one of your dependencies.
+
+1. Send `POST /v1/watchlists/{id}/lockfile` with the same body as `POST /v1/check`: the lockfiles as multipart (the field name is the file name), or JSON `{"dependencies": [{"ecosystem", "name", "version"}], "runtimes": {...}, "os_packages": "..."}`.
+2. The answer is the `/v1/check` result for those dependencies (`checked`, `affected`, `skipped`, `feed_cursor`, `coverage`) plus `watchlist_id` and `dependencies`, the stored count. It is one check: what is affected now is in this answer, and it is not sent again as a webhook.
+3. Each upload replaces the stored set of the list. A dependency in an ecosystem the matcher does not support is not stored and comes back in `skipped`. An upload with no supported dependency answers 400 `{"error": "no dependencies to watch"}` and keeps the stored set.
+4. After each ingest run (every 10 minutes), Tocsin matches the new and changed advisories against the stored set with the `/v1/check` matcher. On a webhook list, each match is sent once per (list, advisory). The body is the advisory with an `affected` array: the `/v1/check` affected items of your stored dependencies (`dependency`, `advisory_id`, `cve_ids`, `severity`, `exploited`, `fixed_in`, `action`, `url`). The list's filter still applies with AND (`min_severity`, `exploited_only`, `ecosystems`, `components`). A list with a stored set gets matched advisories only, so an empty filter does not send every advisory. A re-upload never sends an advisory again that was already sent. An advisory published more than 30 days before the upload is recorded as `skipped` and not sent, as for filter lists.
+5. `GET /v1/watchlists/{id}` answers `dependencies` (the stored count) and `dependencies_uploaded_at`.
+
+The stored set does not change `GET /v1/watchlists/{id}/events`: a polled list still reads its filter. The free plan stores up to 2,000 dependencies per list (the plan row's `max_watch_dependencies`). Over it, the answer is 413 `{"error": "dependency limit reached", "max_watch_dependencies": 2000, "dependencies": <count>}` and nothing is stored. The body cap is the `/v1/check` cap (2 MB, `check.max_body_bytes`). A list that is not yours answers 404. `DELETE /v1/watchlists/{id}` deletes the stored set with the list.
+
+From a project directory, `npx tocsin watch --upload` uploads the lockfiles there to your key's watch list named `default` and makes that list (polled) when it does not exist. Set it to webhook delivery with `PATCH /v1/watchlists/{id}`. `npx tocsin watch` then prints `watching N dependencies, last delivery at ...` before it polls.
+
 ## Webhook delivery
 
 A watch list is polled by default. Set it to webhook delivery and Tocsin POSTs each new matching advisory to your URL instead. Webhooks are free.
@@ -144,12 +171,12 @@ A watch list is polled by default. Set it to webhook delivery and Tocsin POSTs e
 - On create: `POST /v1/watchlists` with `"delivery": "webhook", "webhook_url": "https://..."` added to the body.
 - On an existing list: `PATCH /v1/watchlists/{id}` with `{"delivery": "webhook", "webhook_url": "https://..."}`. `{"delivery": "poll"}` switches back and clears the URL and the secret.
 - `webhook_url` must be an `https` URL with no user name or password, at most 2,048 characters. The host must be a name, not an IP address. These hosts are refused: `localhost` and `*.localhost`, `tocsin.sh`, `*.tocsin.sh`, `tocsin.so`, `*.tocsin.so`, `*.workers.dev` and `*.internal`. Bad input answers 400 and the error names the rule.
-- The answer that sets `webhook` carries `webhook_secret` (`whsec_` and 64 hex characters). It is in this answer only; no other route returns it. Each `PATCH` to `webhook` makes a new secret.
+- The answer that sets `webhook` carries `webhook_secret` (`whsec_` and 64 hex characters). It is in this answer only; no other route returns it. Tocsin stores it encrypted (AES-256-GCM) and decrypts it only to sign a delivery. Each `PATCH` to `webhook` makes a new secret.
 - When your plan row has `webhooks` off, setting `webhook` answers 403 `{"error": "webhooks not enabled for this plan"}`. The free plan has it on.
 
-After each ingest run (every 10 minutes), Tocsin finds the advisories above the list's stored cursor that match its filter and sends each one once. Webhook delivery and `GET /v1/watchlists/{id}/events` move the same stored cursor, so an event read by one is not sent by the other. An advisory published more than 30 days before the list was made (backfilled history) is recorded as `skipped` and not sent. The exception is a CISA KEV flag: when KEV marks an old CVE as exploited, the event is sent, so an `exploited_only` list hears about it. Each (list, advisory) pair is sent at most once, so a pair already recorded is not sent again on a later flag.
+After each ingest run (every 10 minutes), Tocsin finds the advisories above the list's stored cursor that match its filter and sends each one once. Webhook delivery and `GET /v1/watchlists/{id}/events` move the same stored cursor, so an event read by one is not sent by the other. An advisory published more than 30 days before the list was made (backfilled history) is recorded as `skipped` and not sent. The exception is a CISA KEV flag: when KEV marks an old CVE as exploited, the event is sent, so an `exploited_only` list hears about it. Each (list, advisory) pair is sent at most once, so a pair already recorded is not sent again on a later flag. One run queues at most 1,000 new events per list (the settings row `webhooks.enqueue_per_list`); the rest follow in the next run. Only events that are sent count against that cap. A list passes, without a send and in the same run, the advisories it already has a record for (a backfill that gives them new cursors) and backfilled history (recorded as `skipped`). One run reads up to 100,000 matching advisories per list (`webhooks.enqueue_scan_rows`), so a new event behind up to that many such rows still goes out in the same run.
 
-Before each POST, Tocsin checks the URL against the same rules again and resolves the host with DNS over HTTPS. If any A or AAAA answer is a private, loopback, link-local (`169.254.0.0/16`, `fe80::/10`, which holds the cloud metadata address), CGNAT (`100.64.0.0/10`), unique local, multicast or reserved address, the delivery is marked `failed` with `last_error` `blocked_host` and nothing is sent. A DNS failure is a failed attempt with `last_error` `dns_failed`, and it is retried.
+Before each POST, Tocsin checks the URL against the same rules again and resolves the host with DNS over HTTPS. If any A or AAAA answer is a private, loopback, link-local (`169.254.0.0/16`, `fe80::/10`, which holds the cloud metadata address), CGNAT (`100.64.0.0/10`), unique local, multicast or reserved address, the delivery is marked `failed` with `last_error` `blocked_host` and nothing is sent. The IPv6 forms that carry an IPv4 address are blocked too: IPv4-compatible (`::/96`, for example `::127.0.0.1`), 6to4 (`2002::/16`) and IPv4-translated (`::ffff:0:0:0/96`); an IPv4-mapped address (`::ffff:a.b.c.d`) is checked as its IPv4 address. A DNS failure is a failed attempt with `last_error` `dns_failed`, and it is retried. The DNS answers are cached for 60 seconds (the settings row `webhooks.dns_cache_seconds`; `0` resolves at every send). The POST itself resolves the host again, so a DNS answer that changes inside that window is not checked.
 
 ### Webhook signature
 
@@ -191,7 +218,7 @@ async function verifyTocsinWebhook(secret, headers, rawBody, nowSeconds = Math.f
 
 ### Retries
 
-Any 2xx answer is a delivery. Any other answer, a redirect (3xx is not followed), a network error or a 10-second timeout is a failed attempt. A failed attempt is retried after 1 minute, 5 minutes, 30 minutes, 2 hours and 12 hours. When the 6th attempt fails, the delivery is marked `failed` and is not sent again. A delivered event is never sent again by a retry, a later ingest run or a backfill that moves the advisory to a new cursor. If your 2xx answer is lost before Tocsin records it, the event can come again with the same `Tocsin-Event-Id`: drop a repeat by that id.
+Any 2xx answer is a delivery. Any other answer, a redirect (3xx is not followed), a network error or a 10-second timeout is a failed attempt. A failed attempt is retried after 1 minute, 5 minutes, 30 minutes, 2 hours and 12 hours. When the 6th attempt fails, the delivery is marked `failed` and is not sent again. A delivered event is never sent again by a retry, a later ingest run or a backfill that moves the advisory to a new cursor. Wire delivery is at-least-once. If your 2xx answer is lost, or Tocsin sends the POST and then fails to record `delivered`, the event can come again once with the same `Tocsin-Event-Id`: drop a repeat by that id. If the delivery worker itself fails on one event 4 times in a row (the first try and 3 queue retries), the delivery is marked `failed` with `last_error` `dead_letter` and is not sent again.
 
 ### Paused delivery
 
@@ -203,7 +230,7 @@ Fix your endpoint, then send `POST /v1/watchlists/{id}/resume`. It answers the h
 
 ### Delivery log
 
-`GET /v1/watchlists/{id}/deliveries` answers `{"deliveries": [...]}`, the 100 newest by feed cursor. Each item has `advisory_id`, `cursor`, `status` (`pending`, `sending`, `delivered`, `failed` or `skipped`), `attempt` (attempts made), `last_code` (the last HTTP status, `null` when there was no answer), `last_error` (`blocked_host`, `dns_failed` or `network` when there was no HTTP status), `next_at` (the next attempt time, only for `pending`) and `delivered_at`. `DELETE /v1/watchlists/{id}` also deletes its deliveries. Failed and skipped rows are deleted after 90 days. Delivered rows are kept while the watch list exists, because they are the record that stops a second send.
+`GET /v1/watchlists/{id}/deliveries` answers `{"deliveries": [...]}`, the 100 newest by feed cursor. Each item has `advisory_id`, `cursor`, `status` (`pending`, `sending`, `delivered`, `failed` or `skipped`), `attempt` (attempts made), `last_code` (the last HTTP status, `null` when there was no answer), `last_error` (`blocked_host`, `dns_failed`, `network`, `secret_unreadable` or `dead_letter` when there was no HTTP status), `next_at` (the next attempt time, only for `pending`) and `delivered_at`. `DELETE /v1/watchlists/{id}` also deletes its deliveries. Skipped rows are deleted after 90 days. Delivered and failed rows are kept while the watch list exists, because they are the record that stops a second send.
 
 ## Connect command
 

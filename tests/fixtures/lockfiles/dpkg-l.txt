@@ -1,0 +1,11 @@
+Desired=Unknown/Install/Remove/Purge/Hold
+| Status=Not/Inst/Conf-files/Unpacked/halF-conf/Half-inst/trig-aWait/Trig-pend
+|/ Err?=(none)/Reinst-required (Status,Err: uppercase=bad)
+||/ Name                Version                 Architecture Description
++++-===================-=======================-============-=================================
+ii  libapt-pkg5.0       1.6.11                  amd64        package management runtime library
+ii  libaudit1           1:2.8.2-1ubuntu1        amd64        Dynamic library for security auditing
+ii  libcom-err2         1.44.1-1ubuntu1.1       amd64        common error description library
+ii  libncurses5         6.1-1ubuntu1.18.04      amd64        shared libraries for terminal handling
+ii  libudev1            237-3ubuntu10.22        amd64        libudev shared library
+ii  perl-base           5.22.1-9ubuntu0.9       amd64        minimal Perl system

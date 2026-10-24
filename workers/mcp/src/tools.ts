@@ -22,7 +22,7 @@ export const latestInput = {
   limit: z.number().int().min(1).max(100).optional().describe("1..100, default 10"),
 };
 export const checkInput = {
-  lockfile_name: z.string().min(1).optional().describe("package-lock.json, pnpm-lock.yaml, yarn.lock, requirements.txt, go.sum, composer.lock, Cargo.lock, Gemfile.lock"),
+  lockfile_name: z.string().min(1).optional().describe("package-lock.json, pnpm-lock.yaml, yarn.lock, requirements.txt, go.sum, composer.lock, Cargo.lock, Gemfile.lock, pom.xml, gradle.lockfile, packages.lock.json, mix.lock, pubspec.lock"),
   lockfile_text: z.string().min(1).optional().describe("The full lockfile text"),
   runtimes: z.record(z.string(), z.string()).optional().describe('Runtime versions, for example {"node":"24.22.0"}'),
 };

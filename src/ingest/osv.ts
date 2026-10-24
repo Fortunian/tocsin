@@ -207,6 +207,14 @@ export function osvSourceId(id: string, index: number, ecosystem: string, name: 
 // The reason normalizeOsv gives when no affected package is in an enabled
 // ecosystem. The import route counts such a record as skipped.
 export const NOT_ENABLED_REASON = "no affected package in a listed ecosystem";
+// The reason when every enabled package is a release-scoped ecosystem with no
+// release (a bare "Debian"): its range cannot be matched to a release.
+export const NO_RELEASE_REASON = "no release on an OS package";
+
+// OSV ecosystems whose suffix is a release (Alpine:v3.18, Debian:12). One
+// package has a different fix per release, so each release is its own doc.
+// This maps a name to code, not to a business value.
+export const RELEASE_SCOPED: ReadonlySet<string> = new Set(["Alpine", "Debian"]);
 
 // The base name of an OSV ecosystem string: the part before the first ":"
 // ("Packagist:https://packages.drupal.org/8" -> "Packagist", "Debian:12" -> "Debian").
@@ -215,25 +223,42 @@ export function baseEcosystem(e: string): string {
   return i === -1 ? e : e.slice(0, i);
 }
 
+// The key packages are grouped by: the full OSV string for a release-scoped
+// ecosystem (Debian:12), the base name for every other one. A release-scoped
+// string with no release has no key.
+function scopeKey(raw: string): string | undefined {
+  const base = baseEcosystem(raw);
+  if (!RELEASE_SCOPED.has(base)) return base;
+  return raw.length > base.length + 1 ? raw : undefined;
+}
+
 export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult {
   if (typeof v?.id !== "string" || v.id === "") return { ok: false, reason: "record has no id" };
   if (typeof v.modified !== "string") return { ok: false, reason: "record has no modified" };
   const affectedList = Array.isArray(v.affected) ? v.affected : [];
-  // Distinct enabled (base ecosystem, name) pairs, in first-appearance order.
-  // OSV writes some ecosystems with a suffix (Packagist:https://packages.drupal.org/8):
-  // the match is on the base name; the first suffixed string is kept as the qualifier.
-  const packages: { ecosystem: string; component: string; qualifier?: string }[] = [];
+  // Distinct enabled (scope, name) pairs, in first-appearance order. The scope
+  // is the base name (TCS-71), or for Alpine and Debian the full string with
+  // the release (TCS-38). OSV writes some ecosystems with a suffix
+  // (Packagist:https://packages.drupal.org/8): the match is on the base name;
+  // the first suffixed string is kept as the qualifier.
+  const packages: { scope: string; ecosystem: string; component: string; qualifier?: string }[] = [];
+  let noRelease = false;
   for (const a of affectedList) {
     const raw = a.package?.ecosystem;
     const component = a.package?.name;
     if (typeof raw !== "string" || typeof component !== "string" || component === "") continue;
     const ecosystem = baseEcosystem(raw);
     if (!ecosystems.includes(ecosystem)) continue;
-    let p = packages.find((x) => x.ecosystem === ecosystem && x.component === component);
-    if (!p) packages.push((p = { ecosystem, component }));
+    const scope = scopeKey(raw);
+    if (scope === undefined) {
+      noRelease = true;
+      continue;
+    }
+    let p = packages.find((x) => x.scope === scope && x.component === component);
+    if (!p) packages.push((p = { scope, ecosystem, component }));
     if (p.qualifier === undefined && raw !== ecosystem) p.qualifier = raw;
   }
-  if (packages.length === 0) return { ok: false, reason: NOT_ENABLED_REASON };
+  if (packages.length === 0) return { ok: false, reason: noRelease ? NO_RELEASE_REASON : NOT_ENABLED_REASON };
 
   const modified_at = schemaTimestamp(v.modified);
   const published_at = schemaTimestamp(typeof v.published === "string" ? v.published : v.modified);
@@ -248,12 +273,14 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
     .filter((u): u is string => typeof u === "string" && /^https?:\/\//.test(u));
   const severity = severityOf(v);
 
-  const docs = packages.map(({ ecosystem, component, qualifier }, i) => {
+  const docs = packages.map(({ scope, ecosystem, component, qualifier }, i) => {
     const same = affectedList.filter(
-      (a) => typeof a.package?.ecosystem === "string" && baseEcosystem(a.package.ecosystem) === ecosystem && a.package?.name === component,
+      (a) => typeof a.package?.ecosystem === "string" && scopeKey(a.package.ecosystem) === scope && a.package?.name === component,
     );
     const { affected, fixed } = rangesOf(same);
-    const source_id = osvSourceId(v.id, i, ecosystem, component);
+    // The source key of a release doc names its release (DSA-1#Debian:12/openssl),
+    // so two releases of one record never share (source, source_id).
+    const source_id = osvSourceId(v.id, i, scope, component);
     const doc: AdvisoryInput = {
       cve_ids,
       ...(ghsa_id ? { ghsa_id } : {}),
@@ -274,6 +301,50 @@ export function normalizeOsv(v: OsvVuln, ecosystems: string[]): NormalizeResult 
     return { source_id, doc };
   });
   return { ok: true, doc: docs[0].doc, docs };
+}
+
+// The (ecosystem, component, qualifier) stored under each bare OSV id of a list.
+// ?1 a JSON array of OSV ids. Drives from json_each and seeks advisory_sources by
+// its primary key (source, source_id), then advisories by its primary key.
+export const BARE_KEY_SQL = `SELECT s.source_id, a.ecosystem, a.component, json_extract(a.doc_json, '$.ecosystem_qualifier') AS qualifier
+FROM json_each(?1) j CROSS JOIN advisory_sources s ON s.source = 'osv' AND s.source_id = j.value JOIN advisories a ON a.id = s.advisory_id`;
+
+function suffixKey(id: string, doc: AdvisoryInput): string {
+  const scope = RELEASE_SCOPED.has(doc.ecosystem) && doc.ecosystem_qualifier !== undefined ? doc.ecosystem_qualifier : doc.ecosystem;
+  return `${id}#${scope}/${doc.component}`;
+}
+
+// normalizeOsv gives the bare OSV id to the first enabled package. When the
+// list of enabled ecosystems grows (TCS-38), a newly enabled package can come
+// first in a record, and the bare id would move to it: the stored advisory
+// would be rewritten as a different package, and its own package would be
+// stored again under a new advisory id. This keeps the bare id on the package
+// that holds it: that doc takes the bare id and every other doc takes its
+// suffixed key. If no doc is that package, no doc takes the bare id, so the
+// stored row is never rewritten as a different package. One read per call.
+export async function keepStoredKeys(
+  db: D1Database,
+  records: { id: string; docs: { source_id: string; doc: AdvisoryInput }[] }[],
+): Promise<void> {
+  if (records.length === 0) return;
+  const { results } = await db
+    .prepare(BARE_KEY_SQL)
+    .bind(JSON.stringify(records.map((r) => r.id)))
+    .all<{ source_id: string; ecosystem: string; component: string; qualifier: string | null }>();
+  const stored = new Map(results.map((r) => [r.source_id, r]));
+  for (const r of records) {
+    const row = stored.get(r.id);
+    if (!row) continue;
+    const same = (d: AdvisoryInput) => d.ecosystem === row.ecosystem && d.component === row.component;
+    const owner =
+      r.docs.find((d) => same(d.doc) && (d.doc.ecosystem_qualifier ?? null) === row.qualifier) ?? r.docs.find((d) => same(d.doc));
+    for (const d of r.docs) {
+      const key = d === owner ? r.id : suffixKey(r.id, d.doc);
+      if (key === d.source_id) continue;
+      d.source_id = key;
+      d.doc.sources = d.doc.sources.map((s, i) => (i === 0 ? { ...s, source_id: key } : s));
+    }
+  }
 }
 
 export function readConfig(raw: Record<string, unknown>): OsvConfig {
@@ -334,14 +405,22 @@ async function run(ctx: IngestContext): Promise<RunResult> {
 
   const result: RunResult = { fetched: 0, upserted: 0, unchanged: 0, errors: [] };
   for (const page of paginate(sorted, cfg.page_size).slice(0, cfg.max_pages)) {
+    const fetched: { rowId: string; vulnId: string; norm: ReturnType<typeof normalizeOsv> }[] = [];
     for (const row of page) {
       // HTTP and D1 errors throw out of the run: this page's cursor is not written.
       const vuln = (await getVuln(ctx.fetch, cfg.api_base, row.id)) as OsvVuln;
       result.fetched += 1;
-      const norm = normalizeOsv(vuln, cfg.ecosystems);
+      fetched.push({ rowId: row.id, vulnId: vuln.id, norm: normalizeOsv(vuln, cfg.ecosystems) });
+    }
+    // One BARE_KEY_SQL read per page (TCS-85).
+    await keepStoredKeys(
+      ctx.env.DB,
+      fetched.flatMap(({ vulnId, norm }) => (norm.ok ? [{ id: vulnId, docs: norm.docs }] : [])),
+    );
+    for (const { rowId, norm } of fetched) {
       if (!norm.ok) {
         // A permanent data problem: record it and let the page complete.
-        result.errors.push(`${row.id}: ${norm.reason}`);
+        result.errors.push(`${rowId}: ${norm.reason}`);
         continue;
       }
       // One advisory per package; an invalid doc does not stop the others.

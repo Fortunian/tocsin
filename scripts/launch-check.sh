@@ -13,7 +13,10 @@
 #   cov-lodash   POST /v1/check npm lodash 4.17.15 lists CVE-2020-8203 and CVE-2021-23337
 #   cov-django   POST /v1/check PyPI django 3.2.0 lists at least COV_DJANGO_MIN affected items
 #   cov-count    for each OSV ecosystem in /v1/status coverage, the backfill records are at
-#                least COV_MIN_PCT percent of the non-MAL- ids in OSV's <eco>/modified_id.csv
+#                least COV_MIN_PCT percent of the ids in OSV's <eco>/modified_id.csv less the
+#                ids the backfill skipped (withdrawn and MAL-, `skipped` in /v1/status). An
+#                ecosystem with fewer than COV_SMALL_IDS OSV ids needs every non-skipped id.
+#                It prints `cov-count: <eco> <have> of <want> (<n> OSV ids, <s> skipped, needs <all|N%>)`.
 #
 # With KEYS_CHECK=1 (a one-time operator run after the mail setup, docs/OPERATING.md) it runs one more:
 #   keys-signup  POST /v1/keys for KEYS_CHECK_EMAIL answers 202 with status "sent" (it sends one real mail)
@@ -31,6 +34,7 @@
 #   MAX_AGE_HOURS  max age of last_ok_at         default 24
 #   COVERAGE_CHECK 1 runs the cov- checks        default unset (off)
 #   COV_MIN_PCT    cov-count threshold, percent  default 90
+#   COV_SMALL_IDS  under this many OSV ids, cov-count needs all  default 50
 #   COV_DJANGO_MIN cov-django minimum count      default 10
 #   OSV_BASE       the OSV export bucket         default https://osv-vulnerabilities.storage.googleapis.com
 #   KEYS_CHECK     1 runs keys-signup            default unset (off)
@@ -48,6 +52,7 @@ MCP_URL="${MCP_URL:-https://mcp.tocsin.sh/mcp}"
 MAX_AGE_HOURS="${MAX_AGE_HOURS:-24}"
 COVERAGE_CHECK="${COVERAGE_CHECK:-}"
 COV_MIN_PCT="${COV_MIN_PCT:-90}"
+COV_SMALL_IDS="${COV_SMALL_IDS:-50}"
 COV_DJANGO_MIN="${COV_DJANGO_MIN:-10}"
 OSV_BASE="${OSV_BASE:-https://osv-vulnerabilities.storage.googleapis.com}"
 OSV_BASE="${OSV_BASE%/}"
@@ -63,7 +68,7 @@ for tool in curl jq; do
     exit 1
   fi
 done
-for knob in MAX_AGE_HOURS COV_MIN_PCT COV_DJANGO_MIN; do
+for knob in MAX_AGE_HOURS COV_MIN_PCT COV_SMALL_IDS COV_DJANGO_MIN; do
   if ! [[ "${!knob}" =~ ^[0-9]+$ ]]; then
     echo "FAIL preflight: $knob must be a whole number, got '${!knob}'"
     exit 1
@@ -216,27 +221,44 @@ if [[ "$COVERAGE_CHECK" == "1" ]]; then
     if [[ "$n" -ge "$COV_DJANGO_MIN" ]]; then ok cov-django; else fail cov-django "PyPI django 3.2.0: $n affected, want at least $COV_DJANGO_MIN"; fi
   fi
 
-  # cov-count: backfill records per OSV ecosystem against OSV's own id list.
+  # cov-count: backfill records per OSV ecosystem against OSV's own id list,
+  # less the ids the backfill skipped on purpose (withdrawn and MAL-). The
+  # MAL- ids are in the CSV and in `skipped`, so they are not filtered here.
+  # A missing `skipped` (an older worker) is not 0: the ecosystem FAILs.
   if ! get "/v1/status"; then
     fail cov-count "$REASON"
   else
-    jq -r '.coverage[]? | select(.imported != null) | "\(.ecosystem)\t\(.imported)"' "$BODY_FILE" >"$WORK/cov.tsv"
+    jq -r '.coverage[]? | select(.imported != null) | "\(.ecosystem)\t\(.imported)\t\(if (.skipped | type) == "number" then .skipped else "" end)"' "$BODY_FILE" >"$WORK/cov.tsv"
     short=()
     if [[ ! -s "$WORK/cov.tsv" ]]; then short+=("no OSV ecosystem in /v1/status coverage"); fi
-    while IFS=$'\t' read -r eco have; do
+    while IFS=$'\t' read -r eco have skipped; do
+      if [[ -z "$skipped" ]]; then
+        short+=("$eco (no skipped count in /v1/status)")
+        continue
+      fi
       csv_url="$OSV_BASE/$(jq -rn --arg e "$eco" '$e | @uri')/modified_id.csv"
       if ! curl -sS --max-time 120 -f -o "$WORK/ids.csv" "$csv_url" 2>"$WORK/curl.err"; then
         short+=("$eco (cannot read $csv_url: $(head -1 "$WORK/curl.err"))")
         continue
       fi
-      want="$(cut -d, -f2 "$WORK/ids.csv" | grep -v '^MAL-' | grep -c . || true)"
-      if (( have * 100 < want * COV_MIN_PCT )); then short+=("$eco $have of $want"); fi
+      osv="$(cut -d, -f2 "$WORK/ids.csv" | grep -c . || true)"
+      want=$((osv - skipped))
+      # A CSV older than the run can list fewer ids than the run skipped.
+      if (( want < 0 )); then want=0; fi
+      if (( osv < COV_SMALL_IDS )); then
+        needs="all"
+        (( have >= want )) || short+=("$eco $have of $want")
+      else
+        needs="${COV_MIN_PCT}%"
+        (( have * 100 >= want * COV_MIN_PCT )) || short+=("$eco $have of $want")
+      fi
+      echo "cov-count: $eco $have of $want ($osv OSV ids, $skipped skipped, needs $needs)"
     done <"$WORK/cov.tsv"
     if [[ ${#short[@]} -eq 0 ]]; then
       ok cov-count
     else
       joined="$(printf '%s; ' "${short[@]}")"
-      fail cov-count "under ${COV_MIN_PCT}% of the OSV ids: ${joined%; }"
+      fail cov-count "under the threshold (${COV_MIN_PCT}%, or all under ${COV_SMALL_IDS} OSV ids): ${joined%; }"
     fi
   fi
 fi

@@ -20,13 +20,27 @@ Without the worker secret, the route answers 403 to every request.
 ## Run
 
 1. Open Actions, workflow `backfill`, "Run workflow".
-2. Select one `ecosystem` (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io` or `RubyGems`). Keep `batch` at 100.
+2. Select one `ecosystem` (`npm`, `PyPI`, `Go`, `Packagist`, `crates.io`, `RubyGems`, `Maven`, `NuGet`, `Hex`, `Pub`,
+   `Alpine` or `Debian`). Keep `batch` at 100, except for `Alpine` and `Debian` (see below).
 3. Do this once per ecosystem. Two runs for one ecosystem never run at the same time.
 4. Read the progress line per batch in the run log. The last line is
    `backfill: <eco>: done at <time>: <n> imported, <n> unchanged, <n> skipped, <n> errors in <n> requests`.
 
 A record with no package in an enabled ecosystem (for example a `Debian:12` record while Debian is
-not enabled) counts as `skipped`, not as an error. The answer of the request names it in
+not enabled) counts as `skipped`, not as an error.
+
+`Alpine` and `Debian` records list one package per release (`Alpine:v3.18`, `Debian:12`), and each
+release has its own fix. The import stores one advisory per release and package, with the release in
+`ecosystem_qualifier` and in the source id of every doc after the first
+(`DEBIAN-CVE-2023-1234#Debian:12/openssl`). A Debian record holds up to 66 release docs (2.7 on
+average): 72,298 records make about 195,000 advisory rows, and each doc costs about 3 D1 queries. A
+batch of 100 Debian records comes near the limit of 1,000 D1 queries per request. Run Debian with
+`batch` 25, and Alpine with `batch` 25. The settings row `import.max_docs` (default 200) caps the
+release docs of one request. A request over the cap answers 413 with `max_docs` before it writes
+anything, and the script halves its batch size and sends the same records again. A single record
+with more docs than the cap stops the run; raise the row for that run. An entry with no release (`Debian` alone) cannot be
+matched and is not stored. If no entry of a record has a release, the import answer lists the record
+in `errors` with the reason `no release on an OS package`, and the run log counts it in `errors`. The answer of the request names it in
 `skipped_reasons.ecosystem_not_enabled`. OSV ecosystem strings with a suffix
 (`Packagist:https://packages.drupal.org/8`) match on the part before the first `:`; the advisory
 stores `ecosystem` as that base name and keeps the full string in `ecosystem_qualifier`.
@@ -55,14 +69,24 @@ Each record that the backfill inserts or updates gets a new feed cursor. A consu
 run. Use `published_at` to tell old advisories from new ones. A later delivery feature must not
 treat backfill events as new advisories.
 
+Webhook lists (TCS-82): enqueue passes in SQL every re-cursored advisory that a list already has a
+deliveries row for, and every backfilled advisory published more than
+`webhooks.max_event_age_days` before the list was made (it writes a `skipped` row for each). It
+reads up to `webhooks.enqueue_scan_rows` (default 100,000) matching rows per list per run, so a
+list reaches a new event behind a 48,000-row backfill or re-cursor in one run. A list still
+more than `webhooks.lag_alert_rows` (default 5,000) matching rows behind after a run logs
+`{"lane":"enqueue","alert":"lag",...}`.
+
 The batch size is capped by the settings row `import.max_batch` (default 100). One new record
 costs about 5 D1 queries, and a Worker invocation may run 1,000 D1 queries (paid plan). Do not
 set the row or the `batch` input above 150. If the worker answers 500 on a batch because of the
-D1 query limit, lower the row, for example to 50, and run again. `import.max_body_bytes` (default 8 MB) caps one request body.
+D1 query limit, lower the row, for example to 50, and run again. `import.max_body_bytes` (default 8 MB) caps one request body, and `import.max_docs` (default 200) caps
+the release docs of one request.
 
 ## Read the result
 
-- `GET /v1/status`: `coverage[]` has one item per OSV ecosystem with `complete` and `imported`.
+- `GET /v1/status`: `coverage[]` has one item per OSV ecosystem with `complete`, `imported` and
+  `skipped` (the withdrawn and MAL- ids the run left out; `null` on a runtime row).
 - `/status`: the Coverage table.
 - `GET /v1/internal/import/<eco>` with the bearer token: the raw `backfill` row.
 
@@ -74,6 +98,9 @@ Until an ecosystem is done, `/v1/check` reports its dependencies with no finding
 
 Set the repo variable `COVERAGE_CHECK_ENABLED=1`. The `launch-check` workflow then also runs
 `cov-lodash`, `cov-django` and `cov-count` (`scripts/launch-check.sh`).
+`cov-count` compares `imported` with the ids in OSV's `<eco>/modified_id.csv` less the ecosystem's
+`skipped` count (the cov-count line prints both numbers). It needs `COV_MIN_PCT` percent (default 90);
+an ecosystem with fewer than `COV_SMALL_IDS` OSV ids (default 50) needs every non-skipped id.
 
 ## Add an ecosystem
 

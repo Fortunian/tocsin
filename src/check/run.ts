@@ -10,11 +10,12 @@ import {
   GO_RUNTIME_CANDIDATE_SQL,
   PYPI_CANDIDATE_SQL,
   candidateKeys,
+  lookupEcosystem,
   lookupName,
 } from "./candidates";
 import { COVERAGE_SQL, SOURCE_COVERAGE_SQL, coverageFor, type Coverage, type CoverageRows } from "./coverage";
 import { goRuntimeView, isGoToolchainAdvisory, needsGoToolchainRows } from "./go-runtime";
-import { matchAdvisory, supportsEcosystem } from "./match";
+import { matchAdvisory, supportsEcosystem, type MatchResult } from "./match";
 import type { Dependency } from "./parsers";
 
 export interface AffectedItem {
@@ -39,7 +40,12 @@ export interface CheckResult {
 
 const SEVERITY_RANK: Record<SeverityLabel, number> = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
 
-const groupKey = (ecosystem: string, component: string) => `${ecosystem}\u0000${component}`;
+// Advisories and dependencies meet on the base ecosystem (a Debian:12
+// dependency reads the Debian group); the matcher checks the release.
+const groupKey = (ecosystem: string, component: string) => {
+  const e = lookupEcosystem(ecosystem);
+  return `${e}\u0000${lookupName(e, component)}`;
+};
 
 export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped: object[]): Promise<CheckResult> {
   const skipped: object[] = [...parseSkipped];
@@ -86,23 +92,14 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
 
   const affected: AffectedItem[] = [];
   for (const dep of checkedDeps) {
-    const candidates = byKey.get(groupKey(dep.ecosystem, lookupName(dep.ecosystem, dep.name))) ?? [];
+    const candidates = byKey.get(groupKey(dep.ecosystem, dep.name)) ?? [];
     const skippedIds = new Map<string, string[]>();
     let hit = false;
     for (const a of candidates) {
       const r = matchAdvisory(dep, a);
       if (r.affected) {
         hit = true;
-        affected.push({
-          dependency: dep,
-          advisory_id: a.id,
-          cve_ids: a.cve_ids,
-          severity: a.severity,
-          exploited: a.exploited,
-          fixed_in: r.fixed_in ?? null,
-          action: matchAction(a, r.fixed_in),
-          url: a.sources[0].url,
-        });
+        affected.push(affectedItem(dep, a, r));
       } else if (r.skipped) {
         const ids = skippedIds.get(r.skipped) ?? [];
         ids.push(a.id);
@@ -130,8 +127,22 @@ export async function runCheck(db: D1Database, deps: Dependency[], parseSkipped:
   return { checked: checkedDeps.length, affected, skipped, feed_cursor, coverage };
 }
 
+/** One affected item: a dependency inside an advisory's ranges. The dependency match pass (TCS-37) builds the same item. */
+export function affectedItem(dep: Dependency, a: Advisory, r: MatchResult): AffectedItem {
+  return {
+    dependency: dep,
+    advisory_id: a.id,
+    cve_ids: a.cve_ids,
+    severity: a.severity,
+    exploited: a.exploited,
+    fixed_in: r.fixed_in ?? null,
+    action: matchAction(a, r.fixed_in),
+    url: a.sources[0].url,
+  };
+}
+
 function addCandidate(byKey: Map<string, Advisory[]>, a: Advisory): void {
-  const k = groupKey(a.ecosystem, lookupName(a.ecosystem, a.component));
+  const k = groupKey(a.ecosystem, a.component);
   const list = byKey.get(k);
   if (list) list.push(a);
   else byKey.set(k, [a]);

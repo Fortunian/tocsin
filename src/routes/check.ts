@@ -7,9 +7,12 @@ import {
   ResultBuilder,
   SUPPORTED_FILENAMES,
   detect,
+  parseOsPackages,
   parseRuntimes,
   type Dependency,
+  type ParseResult,
 } from "../check/parsers";
+import { OS_NAMES, osEcosystem, type OsName } from "../check/parsers/os-packages";
 import { RUNTIMES } from "../check/parsers/runtimes";
 import type { Env } from "../env";
 import { jsonUtf8 } from "../lib/http";
@@ -33,7 +36,7 @@ class BadRequest extends Error {
   }
 }
 
-interface Input {
+export interface CheckInput {
   dependencies: Dependency[];
   skipped: object[];
 }
@@ -45,6 +48,9 @@ check.use("*", checkRateLimit);
 check.get("/", async (c) => {
   const params: Record<string, string> = {};
   for (const [k, v] of new URL(c.req.url).searchParams) if (!(k in params)) params[k] = v;
+  // A query string has no room for a package list (TCS-38).
+  const os = OS_NAMES.find((k) => k in params);
+  if (os !== undefined) return answer(c, { error: `${os}= needs os_packages; send it with POST /v1/check`, field: "os_packages" }, 400);
   const parsed = parseRuntimes(params);
   if (parsed.dependencies.length === 0) {
     return answer(c, { error: "no runtime version in the query, for example ?node=24.22.0", supported_runtimes: RUNTIMES, skipped: parsed.skipped }, 400);
@@ -59,21 +65,32 @@ check.post(
     return bodyLimit({ maxSize, onError: (c) => answer(c, { error: `body over ${maxSize} bytes` }, 413) })(c, next);
   },
   async (c) => {
-    const type = (c.req.header("Content-Type") ?? "").toLowerCase();
-    let input: Input;
-    try {
-      if (type.startsWith("multipart/form-data")) input = await fromMultipart(c);
-      else if (type.startsWith("application/json")) input = await fromJson(c);
-      else return answer(c, { error: "unsupported content type", accepted: ACCEPTED }, 415);
-    } catch (err) {
-      if (err instanceof BadRequest) return answer(c, err.body, 400);
-      throw err;
-    }
+    const input = await readCheckBody(c);
+    if (input instanceof Response) return input;
     return answer(c, await runCheck(c.env.DB, input.dependencies, input.skipped));
   },
 );
 
-async function fromMultipart(c: Ctx): Promise<Input> {
+/**
+ * The dependencies of a POST /v1/check body: multipart lockfiles or JSON
+ * { dependencies, runtimes, os_packages }. A bad body is the 415 or 400
+ * answer. POST /v1/watchlists/:id/lockfile reads the same bodies (TCS-37).
+ */
+export async function readCheckBody<E extends { Bindings: Env }>(ctx: Context<E>): Promise<CheckInput | Response> {
+  // The body readers use the request and the env only; any route env with these bindings fits.
+  const c = ctx as unknown as Ctx;
+  const type = (c.req.header("Content-Type") ?? "").toLowerCase();
+  try {
+    if (type.startsWith("multipart/form-data")) return await fromMultipart(c);
+    if (type.startsWith("application/json")) return await fromJson(c);
+    return answer(c, { error: "unsupported content type", accepted: ACCEPTED }, 415);
+  } catch (err) {
+    if (err instanceof BadRequest) return answer(c, err.body, 400);
+    throw err;
+  }
+}
+
+async function fromMultipart(c: Ctx): Promise<CheckInput> {
   let form: FormData;
   try {
     form = await c.req.raw.formData();
@@ -82,8 +99,18 @@ async function fromMultipart(c: Ctx): Promise<Input> {
   }
   const dependencies: Dependency[] = [];
   const skipped: object[] = [];
+  // The OS fields (TCS-38) are not lockfiles: alpine / debian (the release) and os_packages (the list).
+  const osFields: Record<string, unknown> = {};
+  for (const key of [...OS_NAMES, "os_packages"]) {
+    const value = form.get(key);
+    if (value !== null) osFields[key] = typeof value === "string" ? value : await value.text();
+  }
+  const os = readOs(osFields, osFields.os_packages);
+  if (os) dependencies.push(...os.dependencies);
+  for (const s of os?.skipped ?? []) skipped.push({ file: "os_packages", ...s });
   let files = 0;
   for (const [key, value] of form.entries()) {
+    if (key in osFields) continue;
     files++;
     const text = typeof value === "string" ? value : await value.text();
     let found;
@@ -99,13 +126,13 @@ async function fromMultipart(c: Ctx): Promise<Input> {
     dependencies.push(...found.result.dependencies);
     for (const s of found.result.skipped) skipped.push({ file: key, ...s });
   }
-  if (files === 0) {
+  if (files === 0 && !os) {
     throw new BadRequest({ error: "no lockfile in the form; the field name is the file name", supported_filenames: SUPPORTED_FILENAMES });
   }
   return { dependencies: dedupe(dependencies), skipped };
 }
 
-async function fromJson(c: Ctx): Promise<Input> {
+async function fromJson(c: Ctx): Promise<CheckInput> {
   let body: unknown;
   try {
     body = JSON.parse(await c.req.text());
@@ -115,16 +142,26 @@ async function fromJson(c: Ctx): Promise<Input> {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     throw new BadRequest({ error: "body must be a JSON object { dependencies, runtimes }" });
   }
-  const { dependencies, runtimes } = body as { dependencies?: unknown; runtimes?: unknown };
+  const { dependencies, runtimes, os_packages } = body as { dependencies?: unknown; runtimes?: unknown; os_packages?: unknown };
   if (dependencies !== undefined && !Array.isArray(dependencies)) {
     throw new BadRequest({ error: "dependencies must be an array of { ecosystem, name, version }" });
   }
   if (runtimes !== undefined && (typeof runtimes !== "object" || runtimes === null || Array.isArray(runtimes))) {
     throw new BadRequest({ error: "runtimes must be an object, for example { \"node\": \"24.22.0\" }" });
   }
-  if (dependencies === undefined && runtimes === undefined) {
+  if (dependencies === undefined && runtimes === undefined && os_packages === undefined) {
     throw new BadRequest({ error: "send dependencies, runtimes or both" });
   }
+  // runtimes.alpine / runtimes.debian name the release of os_packages (TCS-38); they are not runtimes.
+  const rtInput: Record<string, unknown> = { ...((runtimes as Record<string, unknown> | undefined) ?? {}) };
+  const osRelease: Record<string, unknown> = {};
+  for (const k of OS_NAMES) {
+    if (k in rtInput) {
+      osRelease[k] = rtInput[k];
+      delete rtInput[k];
+    }
+  }
+  const os = readOs(osRelease, os_packages);
 
   const out = new ResultBuilder();
   const skipped: object[] = [];
@@ -136,10 +173,38 @@ async function fromJson(c: Ctx): Promise<Input> {
     }
     out.add(d.ecosystem, d.name, d.version);
   }
-  const rt = runtimes === undefined ? { dependencies: [], skipped: [] } : parseRuntimes(runtimes as Record<string, unknown>);
+  const rt = runtimes === undefined ? { dependencies: [], skipped: [] } : parseRuntimes(rtInput);
   for (const dep of rt.dependencies) out.add(dep.ecosystem, dep.name, dep.version);
   skipped.push(...rt.skipped);
+  for (const dep of os?.dependencies ?? []) out.add(dep.ecosystem, dep.name, dep.version);
+  for (const s of os?.skipped ?? []) skipped.push({ file: "os_packages", ...s });
   return { dependencies: out.build().dependencies, skipped };
+}
+
+// An OS package list (TCS-38): exactly one of alpine / debian (the release)
+// plus os_packages (apk list --installed, dpkg -l or dpkg-query -W text).
+// No OS key and no list: null. Any other shape is a 400 that names the field.
+function readOs(release: Record<string, unknown>, packages: unknown): ParseResult | null {
+  const present = OS_NAMES.filter((k) => release[k] !== undefined);
+  if (present.length === 0) {
+    if (packages === undefined) return null;
+    throw new BadRequest({ error: "os_packages needs its release: alpine or debian", field: "os_packages" });
+  }
+  if (present.length > 1) throw new BadRequest({ error: "send alpine or debian, not both", field: "alpine" });
+  const os: OsName = present[0];
+  const rel = release[os];
+  if (typeof rel !== "string") throw new BadRequest({ error: `${os} must be the release as a string, for example "${os === "alpine" ? "3.18" : "12"}"`, field: os });
+  if (packages === undefined) throw new BadRequest({ error: `${os} needs os_packages, the installed package list`, field: "os_packages" });
+  if (typeof packages !== "string" || packages.trim() === "") {
+    throw new BadRequest({ error: "os_packages must be the text of apk list --installed, dpkg -l or dpkg-query -W", field: "os_packages" });
+  }
+  if (osEcosystem(os, rel) === null) throw new BadRequest({ error: `${os}: unknown release ${JSON.stringify(rel)}`, field: os });
+  try {
+    return parseOsPackages(os, rel, packages);
+  } catch (err) {
+    if (err instanceof LockfileParseError) throw new BadRequest({ error: err.message, field: "os_packages" });
+    throw err;
+  }
 }
 
 function isNonEmpty(v: unknown): v is string {

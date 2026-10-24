@@ -1,8 +1,10 @@
 import type { Env } from "../env";
 import { defaultRegistry, runIngesters } from "../ingest/registry";
 import type { Ingester } from "../ingest/types";
+import { enqueueDependencyMatches } from "../queue/dependency-match";
 import { enqueueDeliveries, sweepDeliveries } from "../queue/enqueue";
 import { runDeliveryRetention } from "./deliveries-retention";
+import { reencryptWebhookSecrets } from "./reencrypt-secrets";
 import { runKeyRetention } from "./retention";
 import { runSendCounterRetention } from "./send-counters-retention";
 
@@ -43,9 +45,22 @@ export async function runCron(
   } catch (err) {
     console.error(JSON.stringify({ lane: "enqueue", err: errText(err) }));
   }
+  // Lists with a stored dependency set (TCS-37).
+  try {
+    await enqueueDependencyMatches(env, new Date());
+  } catch (err) {
+    console.error(JSON.stringify({ lane: "depmatch", err: errText(err) }));
+  }
   try {
     await sweepDeliveries(env, new Date());
   } catch (err) {
     console.error(JSON.stringify({ lane: "sweep", err: errText(err) }));
+  }
+  // Moves plaintext webhook secrets under WEBHOOK_KEK (TCS-82). After the
+  // move it reads 0 rows from an empty partial index.
+  try {
+    await reencryptWebhookSecrets(env);
+  } catch (err) {
+    console.error(JSON.stringify({ lane: "reencrypt", err: errText(err) }));
   }
 }
