@@ -8,7 +8,7 @@ Hosted, free, no account: https://tocsin.sh
 
 ## What you get
 
-- **One feed.** Every advisory from OSV (npm, PyPI, Go, Packagist, crates.io, RubyGems), the Node.js and PHP runtime security releases, NVD severity, the CISA KEV exploited flag and the EPSS score, normalized to one open schema. New advisories land within 10 minutes.
+- **One feed.** Every advisory from OSV across 12 ecosystems (npm, PyPI, Go, Packagist, crates.io, RubyGems, Maven, NuGet, Hex, Pub, Alpine, Debian), the runtime security releases of Node.js, PHP, Python, Deno and Bun (Go toolchain advisories come through OSV), NVD severity, the CISA KEV exploited flag and the EPSS score, normalized to one open schema. New advisories land within 10 minutes, with full history back to each source's first record.
 - **One question.** `POST /v1/check` takes your lockfile or your runtime versions and answers "am I affected?" with the first fixed version and what to do.
 - **One command.** `npx tocsin connect` wires Claude Code, Cursor, Claude Desktop and Codex to the feed, with a skill that runs the check at session start and before a deploy.
 - **A remote MCP server** at https://mcp.tocsin.sh/mcp, so any agent can ask without a CLI.
