@@ -22,8 +22,9 @@
 #   keys-signup  POST /v1/keys for KEYS_CHECK_EMAIL answers 202 with status "sent" (it sends one real mail),
 #                and its Tocsin-Mail-Dkim header (TCS-94) says the mail was DKIM signed. `signed` passes
 #                as `ok keys-signup (dkim signed)`; `off` (no DKIM_PRIVATE_KEY on the worker) passes with
-#                an unsigned note; `incomplete` (the secret is set, a DKIM settings row is blank) or no
-#                header fails.
+#                an unsigned note; `provider` (mail.provider is a provider that signs the mail itself,
+#                Resend, TCS-97) passes as `ok keys-signup (dkim signed by the provider)`; `incomplete`
+#                (the secret is set, a DKIM settings row is blank) or no header fails.
 #
 # It prints `ok <check>` or `FAIL <check>: <reason>` per check (plus `WARN <check>: ...`
 # lines that do not fail a check), then
@@ -281,8 +282,9 @@ if [[ "$KEYS_CHECK" == "1" ]]; then
     dkim="$(tr -d '\r' <"$WORK/keys.headers" | awk -F': *' 'tolower($1) == "tocsin-mail-dkim" { v = $2 } END { print v }')"
     case "$dkim" in
       signed) ok "keys-signup (dkim signed)" ;;
+      provider) ok "keys-signup (dkim signed by the provider)" ;;
       off) ok "keys-signup (unsigned: DKIM_PRIVATE_KEY not set on the worker)" ;;
-      incomplete) fail keys-signup "POST /v1/keys: HTTP 202 but DKIM_PRIVATE_KEY is set and a DKIM settings row is blank: mail went out unsigned (docs/OPERATING.md step 4)" ;;
+      incomplete) fail keys-signup "POST /v1/keys: HTTP 202 but DKIM_PRIVATE_KEY is set and a DKIM settings row is blank: mail went out unsigned (docs/OPERATING.md, Switching back to MailChannels)" ;;
       *) fail keys-signup "POST /v1/keys: HTTP 202 with no Tocsin-Mail-Dkim header: the worker is older than TCS-94" ;;
     esac
   else

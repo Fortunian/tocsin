@@ -13,7 +13,8 @@ const SEEDS: Record<string, string> = {
   "keys.ip_sends_per_hour": "10",
   "keys.email_sends_per_hour": "3",
   "mail.daily_send_cap": "500",
-  "mail.provider": "mailchannels",
+  // Seed since migration 0031 (TCS-97); 0019 seeded mailchannels.
+  "mail.provider": "resend",
   "mail.from_address": "keys@tocsin.sh",
   "keys.confirm_base_url": "https://tocsin.sh",
 };

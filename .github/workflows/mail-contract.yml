@@ -2,7 +2,9 @@ name: mail-contract
 
 # Real-vendor contract suite of the mail seam (src/mail/send.ts). Off the PR
 # path: on main, nightly, and on a PR only when it changes the mail adapter.
-# Every call is a MailChannels dry run: no mail leaves, nothing is spent.
+# Two suites: MailChannels (every call a dry run, no mail, no spend) and Resend
+# (TCS-97: one real send per run to delivered@resend.dev). Each suite skips
+# when its key is not set, so the job runs whichever key exists.
 on:
   push:
     branches: [main]
@@ -12,6 +14,7 @@ on:
     paths:
       - "src/mail/**"
       - "tests/contract/mail.contract.tcs-64.test.ts"
+      - "tests/contract/mail-resend.contract.tcs-97.test.ts"
   workflow_dispatch:
 
 jobs:
@@ -20,6 +23,7 @@ jobs:
     concurrency: mail-contract
     env:
       MAILCHANNELS_API_KEY: ${{ secrets.MAILCHANNELS_API_KEY }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
