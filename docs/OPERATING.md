@@ -9,8 +9,25 @@ One-time operator steps for a production deploy. Do them once per account and do
 1. Set the provider secret on the main worker: `wrangler secret put MAILCHANNELS_API_KEY`. This is the name `src/env.ts` and `getMailer` read. If the secret is not set, the route logs `mail_not_configured` and answers 503.
 2. Add the MailChannels domain lockdown TXT record on the sending domain. Name: `_mailchannels.tocsin.sh`. Value: `v=mc1 auth=<your MailChannels account id>`. Get the account id from the MailChannels console. Check it with `dig TXT _mailchannels.tocsin.sh +short`. Source: https://docs.mailchannels.com/email-api/domain-lockdown
 3. Add `include:relay.mailchannels.net` to the SPF TXT record of `tocsin.sh`. If the domain has no SPF record, create `v=spf1 include:relay.mailchannels.net ~all`. Do this together with step 2: SPF without domain lockdown lets other MailChannels accounts send as the domain.
-4. Set up DKIM for `keys@tocsin.sh` as MailChannels documents it: https://docs.mailchannels.com/email-api/configuring-dkim. MailChannels offers two ways. (a) MailChannels makes and stores the key pair for the domain (https://docs.mailchannels.com/api-reference/dkim/create-dkim-key-pair); publish the DNS TXT record its answer gives. (b) The send request carries `dkim_domain`, `dkim_selector` and `dkim_private_key`.
-   - Open gap: `src/mail/send.ts` sends no `dkim_*` fields today. This repo does not confirm that a key stored with way (a) signs a request that has no `dkim_*` fields. After step 4, send one test mail (step 6) and read its `DKIM-Signature` header and `dkim=pass` in the received message. If the mail is not signed, the seam needs a change; file a ticket.
+4. Set up DKIM for `keys@tocsin.sh`. The send request carries `dkim_domain`, `dkim_selector` and `dkim_private_key` (way (b) of https://docs.mailchannels.com/email-api/configuring-dkim). `src/mail/dkim.ts` reads the key from the secret `DKIM_PRIVATE_KEY` and the domain and selector from the settings rows `mail.dkim_domain` (seed `tocsin.sh`) and `mail.dkim_selector` (seed `mcdkim`).
+   1. Make the key pair once, on your own machine:
+
+      ```
+      openssl genrsa 2048 | tee priv_key.pem | openssl rsa -outform der | openssl base64 -A > priv_key.txt
+      echo -n "v=DKIM1; k=rsa; p=" > pub_key_record.txt && openssl rsa -in priv_key.pem -pubout -outform der | openssl base64 -A >> pub_key_record.txt
+      ```
+
+   2. Set the private key on the main worker: `wrangler secret put DKIM_PRIVATE_KEY < priv_key.txt`. The seam accepts base64 DER (this file) or a PEM. Then delete `priv_key.pem` and `priv_key.txt` from disk. Never commit them.
+   3. Add the TXT record `mcdkim._domainkey.tocsin.sh` with the contents of `pub_key_record.txt` as its value. Check it with `dig TXT mcdkim._domainkey.tocsin.sh +short`.
+   4. Add the TXT record `_dmarc.tocsin.sh` with the value `v=DMARC1; p=quarantine`. Check it with `dig TXT _dmarc.tocsin.sh +short`.
+
+   If the secret or one of the two rows is not set, the mail goes out unsigned and the send does not fail. Each unsigned send writes one warning that names the missing items (never a value). Read it with:
+
+   ```
+   wrangler d1 execute DB --remote --command "SELECT last_warning, last_run_at FROM sources WHERE id = 'mail'"
+   ```
+
+   `last_run_at` is the time of the latest unsigned send. A signed send does not clear the warning.
 5. Check the settings rows the route reads. The migrations seed them; change a value in place with `wrangler d1 execute DB --remote --command "UPDATE settings SET value = '<value>' WHERE key = '<key>'"`. Read them with:
 
    ```
@@ -26,6 +43,8 @@ One-time operator steps for a production deploy. Do them once per account and do
    | `mail.provider` | mailchannels | Mail provider; any other value answers 503 |
    | `mail.from_address` | keys@tocsin.sh | From address of the mail |
    | `keys.confirm_base_url` | https://tocsin.sh | Host of the mailed link |
+   | `mail.dkim_domain` | tocsin.sh | Signing domain (d=) of the DKIM signature; blank: unsigned |
+   | `mail.dkim_selector` | mcdkim | DKIM selector (s=); blank: unsigned |
    | `keys.max_body_bytes` | 4096 | Largest request body on the key routes |
    | `keys.anon_rate_per_minute` | 5 | Requests per IP per minute on the key routes |
    | `watchlists.ip_rate_per_minute` | 300 | Requests per IP per minute on the watch list routes |
@@ -40,4 +59,4 @@ One-time operator steps for a production deploy. Do them once per account and do
    KEYS_CHECK=1 KEYS_CHECK_EMAIL=<an inbox you own> bash scripts/launch-check.sh
    ```
 
-   The line `ok keys-signup` means `POST /v1/keys` answered 202 and the provider took the mail. `FAIL keys-signup: POST /v1/keys: HTTP 503` means steps 1 to 4 are not complete, or the daily cap is hit. This check sends one real mail, so it is off by default and the scheduled launch check does not run it.
+   The line `ok keys-signup (dkim signed)` means `POST /v1/keys` answered 202, the provider took the mail, and the request carried the DKIM fields; it is the expected line once step 4 is done. Its `Tocsin-Mail-Dkim` response header tells the check what the worker did. `ok keys-signup (unsigned: DKIM_PRIVATE_KEY not set on the worker)` means the mail went out with no DKIM signature. `FAIL keys-signup: POST /v1/keys: HTTP 202 but DKIM_PRIVATE_KEY is set and a DKIM settings row is blank` means the secret is set but `mail.dkim_domain` or `mail.dkim_selector` is blank. To confirm the signature itself, read the received mail: its `DKIM-Signature` header has `d=tocsin.sh; s=mcdkim`, and its authentication results show `dkim=pass`. `FAIL keys-signup: POST /v1/keys: HTTP 503` means steps 1 to 4 are not complete, or the daily cap is hit. This check sends one real mail, so it is off by default and the scheduled launch check does not run it.

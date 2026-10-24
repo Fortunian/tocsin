@@ -19,7 +19,11 @@
 #                It prints `cov-count: <eco> <have> of <want> (<n> OSV ids, <s> skipped, needs <all|N%>)`.
 #
 # With KEYS_CHECK=1 (a one-time operator run after the mail setup, docs/OPERATING.md) it runs one more:
-#   keys-signup  POST /v1/keys for KEYS_CHECK_EMAIL answers 202 with status "sent" (it sends one real mail)
+#   keys-signup  POST /v1/keys for KEYS_CHECK_EMAIL answers 202 with status "sent" (it sends one real mail),
+#                and its Tocsin-Mail-Dkim header (TCS-94) says the mail was DKIM signed. `signed` passes
+#                as `ok keys-signup (dkim signed)`; `off` (no DKIM_PRIVATE_KEY on the worker) passes with
+#                an unsigned note; `incomplete` (the secret is set, a DKIM settings row is blank) or no
+#                header fails.
 #
 # It prints `ok <check>` or `FAIL <check>: <reason>` per check (plus `WARN <check>: ...`
 # lines that do not fail a check), then
@@ -267,14 +271,20 @@ fi
 # mail; 503 means mail is not configured (no secret) or the daily cap is hit.
 if [[ "$KEYS_CHECK" == "1" ]]; then
   body="$(jq -cn --arg e "$KEYS_CHECK_EMAIL" '{email: $e}')"
-  if ! code="$(curl -sS --max-time 20 -o "$BODY_FILE" -w '%{http_code}' -H 'Content-Type: application/json' --data "$body" "$BASE_URL/v1/keys" 2>"$WORK/curl.err")"; then
+  if ! code="$(curl -sS --max-time 20 -o "$BODY_FILE" -D "$WORK/keys.headers" -w '%{http_code}' -H 'Content-Type: application/json' --data "$body" "$BASE_URL/v1/keys" 2>"$WORK/curl.err")"; then
     fail keys-signup "POST /v1/keys: curl error: $(head -1 "$WORK/curl.err")"
   elif [[ "$code" == "503" ]]; then
     fail keys-signup "POST /v1/keys: HTTP 503 (mail not configured or daily cap hit, docs/OPERATING.md)"
   elif [[ "$code" != "202" ]]; then
     fail keys-signup "POST /v1/keys: HTTP $code"
   elif jq -e '.status == "sent"' "$BODY_FILE" >/dev/null 2>&1; then
-    ok keys-signup
+    dkim="$(tr -d '\r' <"$WORK/keys.headers" | awk -F': *' 'tolower($1) == "tocsin-mail-dkim" { v = $2 } END { print v }')"
+    case "$dkim" in
+      signed) ok "keys-signup (dkim signed)" ;;
+      off) ok "keys-signup (unsigned: DKIM_PRIVATE_KEY not set on the worker)" ;;
+      incomplete) fail keys-signup "POST /v1/keys: HTTP 202 but DKIM_PRIVATE_KEY is set and a DKIM settings row is blank: mail went out unsigned (docs/OPERATING.md step 4)" ;;
+      *) fail keys-signup "POST /v1/keys: HTTP 202 with no Tocsin-Mail-Dkim header: the worker is older than TCS-94" ;;
+    esac
   else
     fail keys-signup "POST /v1/keys: HTTP 202 but the body has no status \"sent\": $(head -c 200 "$BODY_FILE")"
   fi
