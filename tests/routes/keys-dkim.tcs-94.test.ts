@@ -1,6 +1,6 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../../src/index";
 import { runIngesters } from "../../src/ingest/registry";
 import { MAIL_WARNING_SQL } from "../../src/mail/dkim";
@@ -34,7 +34,12 @@ async function postKeys(email: string, secret?: string): Promise<Response> {
 
 const mailWarning = () => env.DB.prepare("SELECT last_warning, last_run_at, enabled FROM sources WHERE id = 'mail'").first<{ last_warning: string | null; last_run_at: string | null; enabled: number }>();
 
+const setProvider = (value: string) => env.DB.prepare("UPDATE settings SET value = ? WHERE key = 'mail.provider'").bind(value).run();
+
+// The DKIM path is the MailChannels one; migration 0031 (TCS-97) seeds mail.provider = resend.
+beforeEach(() => setProvider("mailchannels"));
 afterEach(() => vi.restoreAllMocks());
+afterAll(() => setProvider("resend"));
 
 describe("POST /v1/keys with DKIM", () => {
   it("R1: secret set and seeded rows: 202, Tocsin-Mail-Dkim signed, the outbox entry carries the three dkim fields", async () => {

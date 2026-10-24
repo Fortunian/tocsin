@@ -31,6 +31,13 @@ async function outbox(lw: LocalWorker, email: string): Promise<Record<string, un
   return JSON.parse((await kv.get(`mail:fake:${email}`, "text")) ?? "[]") as Record<string, unknown>[];
 }
 
+// The DKIM path is the MailChannels one; migration 0031 (TCS-97) seeds mail.provider = resend.
+async function startMailChannelsWorker(text: Record<string, string>): Promise<LocalWorker> {
+  const lw = await startLocalWorker({ text });
+  await lw.db.prepare("UPDATE settings SET value = 'mailchannels' WHERE key = 'mail.provider'").run();
+  return lw;
+}
+
 const mailWarning = async (lw: LocalWorker) =>
   (await lw.db.prepare("SELECT last_warning FROM sources WHERE id = 'mail'").first<{ last_warning: string | null }>())?.last_warning;
 
@@ -46,7 +53,7 @@ afterEach(async () => {
 
 describe("launch-check keys-signup DKIM", () => {
   it("L1: secret set: ok keys-signup (dkim signed), 6 of 6, exit 0; the mail carries the dkim fields; no warning", async () => {
-    w = await startLocalWorker({ text: { MAIL_TRANSPORT: "fake", DKIM_PRIVATE_KEY: FIXTURE } });
+    w = await startMailChannelsWorker({ MAIL_TRANSPORT: "fake", DKIM_PRIVATE_KEY: FIXTURE });
     const email = `launch-${crypto.randomUUID()}@example.test`;
     const r = await runCheck(w.url, { KEYS_CHECK: "1", KEYS_CHECK_EMAIL: email });
     expect(r.out).toContain("ok keys-signup (dkim signed)");
@@ -61,7 +68,7 @@ describe("launch-check keys-signup DKIM", () => {
   });
 
   it("L2: secret set and a blank selector row: FAIL keys-signup, 5 of 6, exit 1; unsigned mail; the warning names the row", async () => {
-    w = await startLocalWorker({ text: { MAIL_TRANSPORT: "fake", DKIM_PRIVATE_KEY: FIXTURE } });
+    w = await startMailChannelsWorker({ MAIL_TRANSPORT: "fake", DKIM_PRIVATE_KEY: FIXTURE });
     await w.db.prepare("UPDATE settings SET value = '' WHERE key = 'mail.dkim_selector'").run();
     const email = `launch-${crypto.randomUUID()}@example.test`;
     const r = await runCheck(w.url, { KEYS_CHECK: "1", KEYS_CHECK_EMAIL: email });
@@ -77,7 +84,7 @@ describe("launch-check keys-signup DKIM", () => {
   });
 
   it("L3: no secret: ok keys-signup (unsigned ...), exit 0; the warning names DKIM_PRIVATE_KEY", async () => {
-    w = await startLocalWorker({ text: { MAIL_TRANSPORT: "fake" } });
+    w = await startMailChannelsWorker({ MAIL_TRANSPORT: "fake" });
     const email = `launch-${crypto.randomUUID()}@example.test`;
     const r = await runCheck(w.url, { KEYS_CHECK: "1", KEYS_CHECK_EMAIL: email });
     expect(r.out).toContain("ok keys-signup (unsigned: DKIM_PRIVATE_KEY not set on the worker)");

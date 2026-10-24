@@ -6,7 +6,7 @@ import { jsonUtf8 } from "../lib/http";
 import { getSettingInt } from "../lib/settings";
 import { getSettingText } from "../lib/settings-text";
 import { noteDkimUnsigned, resolveDkim } from "../mail/dkim";
-import { getMailer } from "../mail/send";
+import { getMailer, providerSignsDkim } from "../mail/send";
 import { refundSend, reserveSend } from "../mail/send-caps";
 import { sha256Hex, toHex } from "../middleware/auth";
 import { keysRateLimit } from "../middleware/ratelimit";
@@ -32,7 +32,7 @@ export const FALLBACK_CONFIRM_TTL_SECONDS = 3600; // keys.confirm_ttl_seconds
 export const FALLBACK_IP_SENDS_PER_HOUR = 10; // keys.ip_sends_per_hour
 export const FALLBACK_EMAIL_SENDS_PER_HOUR = 3; // keys.email_sends_per_hour
 export const FALLBACK_DAILY_SEND_CAP = 500; // mail.daily_send_cap
-export const FALLBACK_MAIL_PROVIDER = "mailchannels"; // mail.provider
+export const FALLBACK_MAIL_PROVIDER = "resend"; // mail.provider
 export const FALLBACK_FROM_ADDRESS = "keys@tocsin.sh"; // mail.from_address
 export const FALLBACK_CONFIRM_BASE_URL = "https://tocsin.sh"; // keys.confirm_base_url
 // "" = not set: the mail goes out unsigned (src/mail/dkim.ts). The rows are seeded by migration 0030.
@@ -116,8 +116,9 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
   const ttl = Math.max(KV_MIN_TTL_SECONDS, ttlRaw);
 
   // The same value builds the mailer and the Tocsin-Mail-Dkim header, so the header is what was sent.
-  const dkim = resolveDkim(c.env.DKIM_PRIVATE_KEY, dkimDomain, dkimSelector);
-  const mailer = getMailer(c.env, provider, dkim.state === "signed" ? dkim.config : null);
+  // A provider that signs the mail itself (Resend) gets no DKIM fields: dkim is null and the header says "provider".
+  const dkim = providerSignsDkim(provider) ? null : resolveDkim(c.env.DKIM_PRIVATE_KEY, dkimDomain, dkimSelector);
+  const mailer = getMailer(c.env, provider, dkim?.state === "signed" ? dkim.config : null);
   if (!mailer) {
     logError({ alert: "mail_not_configured", provider });
     return jsonUtf8(c, { error: "key sign-up is not available right now" }, 503, NO_STORE);
@@ -158,8 +159,8 @@ async function sendConfirmLink(c: Ctx, purpose: Purpose): Promise<Response> {
   }
 
   // Only a mail that went out writes the unsigned warning (a 502 above writes none).
-  if (dkim.state !== "signed") await noteDkimUnsigned(db, dkim.missing, new Date().toISOString());
-  return jsonUtf8(c, { status: "sent", expires_in_seconds: ttl }, 202, { ...NO_STORE, "Tocsin-Mail-Dkim": dkim.state });
+  if (dkim && dkim.state !== "signed") await noteDkimUnsigned(db, dkim.missing, new Date().toISOString());
+  return jsonUtf8(c, { status: "sent", expires_in_seconds: ttl }, 202, { ...NO_STORE, "Tocsin-Mail-Dkim": dkim ? dkim.state : "provider" });
 }
 
 const keys = new Hono<{ Bindings: Env }>();
