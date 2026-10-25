@@ -20,7 +20,8 @@ export default defineConfig(async () => {
               wrangler: { configPath: "./wrangler.toml" },
               // MAIL_TRANSPORT=fake: the mail seam answers the KV fake, 0 network calls.
               // WEBHOOK_KEK: a test-only fixture key (32 bytes as base64), never a production key.
-              miniflare: { bindings: { TEST_MIGRATIONS: migrations, MAIL_TRANSPORT: "fake", WEBHOOK_KEK: "fixturefixturefixturefixturefixturefixture0=" } },
+              // GITHUB_OIDC_TRANSPORT=fake: the OIDC seam never fetches GitHub; tests seed the JWKS in KV.
+              miniflare: { bindings: { TEST_MIGRATIONS: migrations, MAIL_TRANSPORT: "fake", WEBHOOK_KEK: "fixturefixturefixturefixturefixturefixture0=", GITHUB_OIDC_TRANSPORT: "fake" } },
             }),
           ],
           test: {

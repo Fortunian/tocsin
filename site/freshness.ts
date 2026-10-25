@@ -1,3 +1,4 @@
+import { GREEN, flatBadge } from "./badge";
 import { escapeHtml } from "./layout";
 
 // The home page freshness line and the README badge (TCS-35). Built from
@@ -51,29 +52,11 @@ export function renderFreshness(f: Freshness | null, nowMs: number): string {
   return `<p class="fresh" style="color:${AMBER}">Updated ${updated} · <a href="/status" style="color:inherit">${count}</a></p>`;
 }
 
-// Approximate Verdana 11px advance per character, the shields.io convention.
-function textWidth(s: string): number {
-  return Math.round(s.length * 6.5) + 12;
-}
-
 // A flat two-part badge: "tocsin" | "6/6 sources ok" (green) or "degraded" (amber).
 export function renderBadge(f: Freshness): string {
   const label = "tocsin";
   const ratio = `${f.ok}/${f.total} sources ok`;
   const value = healthy(f) ? ratio : "degraded";
   const title = healthy(f) ? `${label} · ${ratio}` : `${label} · degraded (${ratio})`;
-  const lw = textWidth(label);
-  const vw = textWidth(value);
-  const w = lw + vw;
-  const color = healthy(f) ? "#2e9e44" : AMBER;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="20" role="img" aria-label="${escapeHtml(title)}">
-<title>${escapeHtml(title)}</title>
-<rect width="${lw}" height="20" fill="#555"/>
-<rect x="${lw}" width="${vw}" height="20" fill="${color}"/>
-<g fill="#fff" text-anchor="middle" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11">
-<text x="${lw / 2}" y="14">${label}</text>
-<text x="${lw + vw / 2}" y="14">${escapeHtml(value)}</text>
-</g>
-</svg>
-`;
+  return flatBadge(label, value, healthy(f) ? GREEN : AMBER, title);
 }

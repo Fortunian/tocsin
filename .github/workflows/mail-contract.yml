@@ -4,7 +4,8 @@ name: mail-contract
 # path: on main, nightly, and on a PR only when it changes the mail adapter.
 # Two suites: MailChannels (every call a dry run, no mail, no spend) and Resend
 # (TCS-97: one real send per run to delivered@resend.dev). Each suite skips
-# when its key is not set, so the job runs whichever key exists.
+# when its key is not set, so the job runs whichever key exists. The GitHub
+# OIDC suite (TCS-101) needs no key: it reads GitHub's public key set.
 on:
   push:
     branches: [main]
@@ -15,6 +16,8 @@ on:
       - "src/mail/**"
       - "tests/contract/mail.contract.tcs-64.test.ts"
       - "tests/contract/mail-resend.contract.tcs-97.test.ts"
+      - "src/lib/github-oidc.ts"
+      - "tests/contract/github-oidc.contract.tcs-101.test.ts"
   workflow_dispatch:
 
 jobs:

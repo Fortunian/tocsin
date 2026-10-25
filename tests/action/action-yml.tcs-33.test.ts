@@ -25,6 +25,7 @@ const INPUTS: Record<string, [defaultValue: string, env: string]> = {
   "working-directory": [".", "TOCSIN_WORKING_DIRECTORY"],
   "max-body-bytes": ["2097152", "TOCSIN_MAX_BODY_BYTES"],
   "github-token": ["${{ github.token }}", "TOCSIN_GITHUB_TOKEN"],
+  report: ["true", "TOCSIN_REPORT"],
 };
 
 describe("action/action.yml", () => {
