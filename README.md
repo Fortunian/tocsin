@@ -58,7 +58,7 @@ The plugin lives in `plugins/tocsin/`, and this repo is its marketplace (`.claud
 
 ## In CI
 
-The GitHub Action runs the same check on every pull request. It fails the job when a lockfile dependency has a known advisory, writes a job summary, and posts one PR comment (updated on each push) with the fixed version, the action and the upgrade command. Add these 6 lines as `.github/workflows/tocsin.yml`:
+The GitHub Action runs the same check on every pull request. It is listed on the GitHub Marketplace as [Tocsin check](https://github.com/marketplace/actions/tocsin-check) (`Fortunian/tocsin-action@v1`, a wrapper of the action in this repo). It fails the job when a lockfile dependency has a known advisory, writes a job summary, and posts one PR comment (updated on each push) with the fixed version, the action and the upgrade command. Add these 6 lines as `.github/workflows/tocsin.yml`:
 
 ```yaml
 on: pull_request

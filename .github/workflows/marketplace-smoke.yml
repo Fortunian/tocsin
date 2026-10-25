@@ -1,0 +1,18 @@
+# Proves the Marketplace wrapper (Fortunian/tocsin-action@v1) resolves and runs.
+# Manual only: it is not a merge check. It never fails on findings (fail-on: never).
+name: marketplace-smoke
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wrapper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: tocsin
+        uses: Fortunian/tocsin-action@v1
+        with:
+          fail-on: never
+          comment: "false"
+      - run: echo "affected=${{ steps.tocsin.outputs.affected }}"
