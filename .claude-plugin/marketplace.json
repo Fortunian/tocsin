@@ -1,0 +1,16 @@
+{
+  "name": "tocsin",
+  "owner": {
+    "name": "Fortunian"
+  },
+  "metadata": {
+    "description": "Tocsin: security advisories, built for agents."
+  },
+  "plugins": [
+    {
+      "name": "tocsin",
+      "source": "./plugins/tocsin",
+      "description": "The Tocsin skill, the Tocsin MCP server and a SessionStart hook that checks the project for known advisories when a session starts."
+    }
+  ]
+}

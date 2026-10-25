@@ -1,10 +1,11 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
-// Six projects. `api` is the main worker (src/index.ts, D1).
+// Seven projects. `api` is the main worker (src/index.ts, D1).
 // `mcp` is the MCP worker (workers/mcp), which has no D1 binding.
 // `cli` is the npm package in packages/cli; it runs in plain Node.
 // `action` is the GitHub Action in action/; it runs in plain Node too.
+// `plugin` checks the Claude Code plugin (plugins/tocsin) and its marketplace.
 // `launch` runs scripts/launch-check.sh in Node against the worker in Miniflare.
 // `contract` calls real vendors (mail). It is not in `npm test` (an explicit
 // project list); `npm run test:contract` runs it with TOCSIN_CONTRACT=1.
@@ -25,7 +26,7 @@ export default defineConfig(async () => {
           test: {
             name: "api",
             include: ["tests/**/*.test.ts"],
-            exclude: ["tests/mcp/**", "tests/cli/**", "tests/action/**", "tests/launch/**", "tests/docs/**", "tests/contract/**"],
+            exclude: ["tests/mcp/**", "tests/cli/**", "tests/action/**", "tests/launch/**", "tests/docs/**", "tests/contract/**", "tests/plugin/**"],
             setupFiles: ["./tests/apply-migrations.ts"],
           },
         },
@@ -54,6 +55,13 @@ export default defineConfig(async () => {
             name: "docs",
             environment: "node",
             include: ["tests/docs/**/*.test.ts"],
+          },
+        },
+        {
+          test: {
+            name: "plugin",
+            environment: "node",
+            include: ["tests/plugin/**/*.test.ts"],
           },
         },
         {

@@ -78,3 +78,16 @@ MailChannels stays as the other adapter. It needs a MailChannels account. To use
    Set the private key: `wrangler secret put DKIM_PRIVATE_KEY < priv_key.txt` (base64 DER or a PEM), then delete both key files. Never commit them. Add the TXT record `mcdkim._domainkey.tocsin.sh` with the contents of `pub_key_record.txt`.
 
    With MailChannels, if the secret or one of the two rows is not set, the mail goes out unsigned and the send does not fail. Each unsigned send writes one warning that names the missing items (never a value). Read it with `wrangler d1 execute DB --remote --command "SELECT last_warning, last_run_at FROM sources WHERE id = 'mail'"`. The launch check then prints `ok keys-signup (dkim signed)` when signed, `ok keys-signup (unsigned: DKIM_PRIVATE_KEY not set on the worker)` with no secret, and `FAIL keys-signup: POST /v1/keys: HTTP 202 but DKIM_PRIVATE_KEY is set and a DKIM settings row is blank` when a row is blank.
+
+## Claude Code plugin directory
+
+The plugin is in `plugins/tocsin/`, and the repo is its marketplace (`.claude-plugin/marketplace.json`). Users install it with `claude plugin install tocsin --marketplace Fortunian/tocsin`. A listing in the Claude plugin directory is a separate step. It is a human step: no workflow or script in this repo submits the plugin.
+
+### Steps
+
+1. Run `bash scripts/validate-plugin.sh` on a machine that has the `claude` CLI. Both strict validations must show `Validation passed` and the script must exit 0. CI skips this check because GitHub runners have no `claude` CLI.
+2. Make sure `plugins/tocsin/.claude-plugin/plugin.json` has the same `version` as `packages/cli/package.json`. `tests/plugin/plugin-manifest.tcs-100.test.ts` fails when they differ.
+3. Sign in at https://claude.ai/directory/manage with an account on a paid plan. The ticket that added the plugin (TCS-100) states that a directory submission needs a paid plan.
+4. Read the pre-submission checklist linked on the submission page, and fix each item it names before you submit.
+5. Submit the repository `Fortunian/tocsin` with the plugin path `plugins/tocsin`.
+6. Record the submission date and the review result in the ticket.

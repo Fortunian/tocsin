@@ -1,0 +1,13 @@
+{
+  "name": "tocsin",
+  "displayName": "Tocsin",
+  "version": "0.1.0",
+  "description": "Security advisories, built for agents. The Tocsin skill, the Tocsin MCP server and a SessionStart hook that checks the project for known advisories when a session starts.",
+  "author": {
+    "name": "Fortunian",
+    "url": "https://tocsin.sh"
+  },
+  "homepage": "https://tocsin.sh",
+  "repository": "https://github.com/Fortunian/tocsin",
+  "license": "Apache-2.0"
+}
