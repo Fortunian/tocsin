@@ -1,9 +1,10 @@
 import { createExecutionContext, createScheduledController, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ACTION_REPORT_RETENTION_AUDIT_KEY, runActionReportRetention } from "../../src/cron/action-reports-retention";
 import { DELIVERY_RETENTION_CRON, runCron } from "../../src/cron/run";
 import { setKnob, uid } from "../queue/helpers.tcs-11";
+import { AUDIENCE, claimsFor, makeKey, seedJwks, sign } from "../routes/oidc-helpers.tcs-101";
 
 // TCS-101: the daily job deletes action_reports rows older than
 // badge.retention_days and always keeps the latest row per owner+repo+ref.
@@ -92,4 +93,27 @@ describe("runActionReportRetention", () => {
     await waitOnExecutionContext(ctx);
     expect(await gone(b)).toBe(true);
   });
+
+  it("R6: a schedule-style report (default_branch null) after a default report; retention leaves the badge on the newest count", async () => {
+    const now = new Date("2065-03-10T04:41:00.000Z");
+    const key = await makeKey("kid-fixture-r6");
+    await seedJwks([key]);
+    const repo = "acme-r6/widget";
+    const post = async (runId: string, affected: number, defaultBranch: string | null) =>
+      exports.default.fetch(`https://${AUDIENCE}/v1/action/report`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${await sign(key, claimsFor(repo, { run_id: runId }))}`, "Content-Type": "application/json", "CF-Connecting-IP": "198.51.100.106" },
+        body: JSON.stringify({ repository: repo, affected, min_severity: "low", default_branch: defaultBranch }),
+      });
+    expect((await post("r6-1", 0, "main")).status).toBe(200);
+    expect((await post("r6-2", 5, null)).status).toBe(200);
+    await env.DB.prepare("UPDATE action_reports SET reported_at = ? WHERE owner = 'acme-r6' AND run_id = 'r6-1'").bind(new Date(now.getTime() - 200 * DAY).toISOString()).run();
+    await env.DB.prepare("UPDATE action_reports SET reported_at = ? WHERE owner = 'acme-r6' AND run_id = 'r6-2'").bind(new Date(now.getTime() - DAY).toISOString()).run();
+    expect(await runActionReportRetention(env, now)).toMatchObject({ deleted: 1 });
+    // One read only: the edge cache key ignores extra query params.
+    const svg = await (await exports.default.fetch(`https://${AUDIENCE}/badge/acme-r6/widget.svg`, { headers: { "CF-Connecting-IP": "198.51.100.106" } })).text();
+    expect(svg).toContain(">5 affected<");
+    expect(svg).not.toContain(">unknown<");
+  });
 });
+

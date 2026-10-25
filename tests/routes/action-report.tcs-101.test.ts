@@ -167,4 +167,20 @@ describe("POST /v1/action/report", () => {
     const r = await rows("acme-body");
     expect(r.map((x) => [x.ref, x.run_id, x.is_default])).toEqual([["refs/heads/dev", "55", 0]]);
   });
+
+  it("A10: a run with default_branch null keeps the ref's is_default; a first run with null is not default", async () => {
+    const repo = "acme-nulldef/widget";
+    await post(await tokenFor(repo, { run_id: "1" }), body(repo, { affected: 0 }));
+    await post(await tokenFor(repo, { run_id: "2" }), body(repo, { affected: 5, default_branch: null }));
+    await post(await tokenFor(repo, { run_id: "3", ref: "refs/heads/feature" }), body(repo, { default_branch: null }));
+    await post(await tokenFor(repo, { run_id: "4", ref: "refs/heads/feature" }), body(repo, { default_branch: null }));
+    const r = await rows("acme-nulldef");
+    expect(r.map((x) => [x.run_id, x.ref, x.is_latest, x.is_default, x.affected])).toEqual([
+      ["1", "refs/heads/main", 0, 1, 0],
+      ["2", "refs/heads/main", 1, 1, 5],
+      ["3", "refs/heads/feature", 0, 0, 2],
+      ["4", "refs/heads/feature", 1, 0, 2],
+    ]);
+  });
 });
+

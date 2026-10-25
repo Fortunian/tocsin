@@ -110,7 +110,7 @@ jobs:
     steps: [{ uses: actions/checkout@v4 }, { uses: Fortunian/tocsin/action@v1 }]
 ```
 
-The Action posts `{ "repository", "affected", "min_severity", "default_branch" }` to `POST /v1/action/report` with the run's GitHub OIDC token (audience: the API host, `tocsin.sh`). Tocsin checks the token against GitHub's keys and takes the repository, ref and run id from the token, so a repository can only report for itself. A second report for the same run id changes nothing. Only public repositories get a badge: a private repository sends no report, and the API refuses one with 403. A failed report is a warning in the job log and never fails the job.
+The Action posts `{ "repository", "affected", "min_severity", "default_branch" }` to `POST /v1/action/report` with the run's GitHub OIDC token (audience: the API host, `tocsin.sh`). Tocsin checks the token against GitHub's keys and takes the repository, ref and run id from the token, so a repository can only report for itself. A second report for the same run id changes nothing. On a `schedule` run the Action sends the run's branch as `default_branch`. A report with `default_branch: null` keeps the default-branch flag of the last report for that ref. Only public repositories get a badge: a private repository sends no report, and the API refuses one with 403. A failed report is a warning in the job log and never fails the job.
 
 ## Advisory schema
 

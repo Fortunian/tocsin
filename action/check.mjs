@@ -476,10 +476,13 @@ export async function upsertComment(io, inputs, markdown, clean) {
 
 /** @param {Record<string, string | undefined>} env @returns {Promise<{ private: boolean; defaultBranch: string | null }>} */
 async function eventRepository(env) {
-  if (!env.GITHUB_EVENT_PATH) return { private: false, defaultBranch: null };
+  // GitHub runs `schedule` workflows only on the default branch, and their
+  // event payload can lack `repository`, so GITHUB_REF names the default branch.
+  const scheduled = env.GITHUB_EVENT_NAME === "schedule" && env.GITHUB_REF?.startsWith("refs/heads/") ? env.GITHUB_REF.slice("refs/heads/".length) : null;
+  if (!env.GITHUB_EVENT_PATH) return { private: false, defaultBranch: scheduled };
   const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, "utf8"));
   const r = event?.repository;
-  return { private: r?.private === true, defaultBranch: typeof r?.default_branch === "string" && r.default_branch ? r.default_branch : null };
+  return { private: r?.private === true, defaultBranch: typeof r?.default_branch === "string" && r.default_branch ? r.default_branch : scheduled };
 }
 
 /**

@@ -34,6 +34,8 @@ afterEach(async () => {
 
 interface Setup {
   answer?: unknown;
+  event?: string;
+  payload?: unknown;
   idToken?: boolean;
   inputs?: Record<string, string>;
   repository?: Record<string, unknown>;
@@ -41,10 +43,10 @@ interface Setup {
 }
 
 async function setup(o: Setup = {}): Promise<{ w: World; fetch: (url: string, init?: RequestInit) => Promise<Response> }> {
-  w = await world({ event: "push", inputs: o.inputs });
+  w = await world({ event: o.event ?? "push", inputs: o.inputs });
   const ww = w;
   await copyFile(FIXTURE, join(ww.dir, "package-lock.json"));
-  await writeFile(ww.env.GITHUB_EVENT_PATH, JSON.stringify({ repository: { full_name: "acme/widget", private: false, default_branch: "main", ...o.repository } }));
+  await writeFile(ww.env.GITHUB_EVENT_PATH, JSON.stringify(o.payload ?? { repository: { full_name: "acme/widget", private: false, default_branch: "main", ...o.repository } }));
   ww.check = () => json(o.answer ?? CLEAN);
   if (o.idToken !== false) {
     ww.env.ACTIONS_ID_TOKEN_REQUEST_URL = TOKEN_URL;
@@ -156,5 +158,19 @@ describe("the Action's badge report", () => {
     const s = await setup({ inputs: { TOCSIN_REPORT: "maybe" } });
     expect(await exec(s)).toBe(1);
     expect(s.w.stdout[0]).toMatch(/^::error title=tocsin::invalid input: report: expected true or false/);
+  });
+
+  it("T11: a schedule run whose payload has no repository sends GITHUB_REF's branch as the default branch", async () => {
+    const s = await setup({ event: "schedule", payload: { schedule: "17 5 * * *" } });
+    s.w.env.GITHUB_REF = "refs/heads/trunk";
+    expect(await exec(s)).toBe(0);
+    expect(JSON.parse(String(reportCalls(s.w)[0].body))).toMatchObject({ default_branch: "trunk" });
+  });
+
+  it("T12: a push run whose payload has no repository sends default_branch null, not GITHUB_REF", async () => {
+    const s = await setup({ payload: {} });
+    s.w.env.GITHUB_REF = "refs/heads/feature";
+    expect(await exec(s)).toBe(0);
+    expect(JSON.parse(String(reportCalls(s.w)[0].body))).toMatchObject({ default_branch: null });
   });
 });

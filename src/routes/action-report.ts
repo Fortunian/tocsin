@@ -19,8 +19,12 @@ const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export const DEMOTE_SQL =
   "UPDATE action_reports SET is_latest = 0 WHERE owner = ?1 AND repo = ?2 AND ref = ?3 AND is_latest = 1 AND NOT EXISTS (SELECT 1 FROM action_reports WHERE owner = ?1 AND repo = ?2 AND run_id = ?4)";
 // ?1 owner, ?2 repo, ?3 ref, ?4 is_default, ?5 affected, ?6 min_severity, ?7 run_id, ?8 reported_at.
+// ?4 NULL (the Action did not know the default branch, for example on a
+// `schedule` run) keeps the is_default of the ref's newest row, so a run that
+// demotes the default row also takes its place on the default badge. The
+// subquery is one seek on idx_action_reports_ref.
 export const INSERT_SQL =
-  "INSERT INTO action_reports (owner, repo, ref, is_default, is_latest, affected, min_severity, run_id, reported_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8) ON CONFLICT (owner, repo, run_id) DO NOTHING";
+  "INSERT INTO action_reports (owner, repo, ref, is_default, is_latest, affected, min_severity, run_id, reported_at) VALUES (?1, ?2, ?3, COALESCE(?4, (SELECT is_default FROM action_reports WHERE owner = ?1 AND repo = ?2 AND ref = ?3 ORDER BY id DESC LIMIT 1), 0), 1, ?5, ?6, ?7, ?8) ON CONFLICT (owner, repo, run_id) DO NOTHING";
 
 interface ReportBody {
   repository: string;
@@ -70,7 +74,8 @@ actionReport.post("/", async (c) => {
   if (claims.repository_visibility !== "public") return jsonUtf8(c, { error: "badge reports are for public repositories" }, 403);
 
   const [owner, repo] = repository.split("/");
-  const isDefault = body.default_branch !== null && claims.ref === `refs/heads/${body.default_branch}` ? 1 : 0;
+  // null: the Action did not send the default branch; INSERT_SQL keeps the ref's last known value.
+  const isDefault = body.default_branch === null ? null : claims.ref === `refs/heads/${body.default_branch}` ? 1 : 0;
   // One batch is one transaction: a ref never has 0 or 2 latest rows after it commits.
   const [, inserted] = await c.env.DB.batch([
     c.env.DB.prepare(DEMOTE_SQL).bind(owner, repo, claims.ref, claims.run_id),
