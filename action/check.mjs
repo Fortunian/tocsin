@@ -37,7 +37,7 @@ const DEFAULT_BOT = "github-actions[bot]";
  * @typedef {{ dependency?: Dependency; advisory_id?: string; severity?: { label?: string }; exploited?: boolean; fixed_in?: string | null; action?: string; url?: string }} Affected
  * @typedef {{ dependency?: Dependency; file?: string; raw?: string; reason?: string; advisory_ids?: string[] }} Skipped
  * @typedef {{ checked: number; affected: Affected[]; skipped: Skipped[]; feed_cursor: number }} CheckResult
- * @typedef {{ baseUrl: string; apiKey: string; minSeverity: string; failOn: string; failOnError: boolean; comment: boolean; dir: string; token: string; maxBodyBytes: number }} Inputs
+ * @typedef {{ baseUrl: string; apiKey: string; minSeverity: string; failOn: string; failOnError: boolean; comment: boolean; dir: string; token: string; maxBodyBytes: number; report: boolean }} Inputs
  */
 
 const UPGRADE = /** @type {Record<string, (name: string, v: string) => string>} */ ({
@@ -114,6 +114,7 @@ export function readInputs(env) {
     dir: resolve(env.GITHUB_WORKSPACE || process.cwd(), env.TOCSIN_WORKING_DIRECTORY || "."),
     token: env.TOCSIN_GITHUB_TOKEN || "",
     maxBodyBytes: positiveInt("max-body-bytes", env.TOCSIN_MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES),
+    report: named("report", env.TOCSIN_REPORT, true),
   };
 }
 
@@ -464,6 +465,60 @@ export async function upsertComment(io, inputs, markdown, clean) {
   }
 }
 
+// ---- the badge report (TCS-101) ---------------------------------------------
+//
+// After a check result, POST the count to /v1/action/report for the per-repo
+// README badge. The auth is the run's GitHub OIDC token, so the step needs
+// `permissions: id-token: write`. Without it (the default, and on fork PRs)
+// GitHub sets no ACTIONS_ID_TOKEN_* variable and nothing is sent or printed.
+// A private repository sends nothing. Any failure is one warning; the exit
+// code never changes. The OIDC token is never printed.
+
+/** @param {Record<string, string | undefined>} env @returns {Promise<{ private: boolean; defaultBranch: string | null }>} */
+async function eventRepository(env) {
+  // GitHub runs `schedule` workflows only on the default branch, and their
+  // event payload can lack `repository`, so GITHUB_REF names the default branch.
+  const scheduled = env.GITHUB_EVENT_NAME === "schedule" && env.GITHUB_REF?.startsWith("refs/heads/") ? env.GITHUB_REF.slice("refs/heads/".length) : null;
+  if (!env.GITHUB_EVENT_PATH) return { private: false, defaultBranch: scheduled };
+  const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, "utf8"));
+  const r = event?.repository;
+  return { private: r?.private === true, defaultBranch: typeof r?.default_branch === "string" && r.default_branch ? r.default_branch : scheduled };
+}
+
+/**
+ * Posts the badge report. Never throws; a failure is a warning.
+ * @param {Io} io @param {Inputs} inputs @param {number} affected
+ */
+export async function postReport(io, inputs, affected) {
+  if (!inputs.report) return;
+  const tokenUrl = io.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+  const requestToken = io.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+  if (!tokenUrl || !requestToken) return;
+  try {
+    const repo = await eventRepository(io.env);
+    if (repo.private) return;
+    const url = new URL(tokenUrl);
+    url.searchParams.set("audience", new URL(inputs.baseUrl).host);
+    const tok = await io.fetch(url.toString(), { headers: { Authorization: `Bearer ${requestToken}`, Accept: "application/json", "User-Agent": `tocsin-action/${VERSION}` } });
+    if (!tok.ok) throw new Error(`OIDC token request: ${tok.status}`);
+    const value = (await tok.json().catch(() => null))?.value;
+    if (typeof value !== "string" || !value) throw new Error("OIDC token request: no token in the answer");
+    const res = await io.fetch(`${inputs.baseUrl}/v1/action/report`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${value}`, "Content-Type": "application/json", Accept: "application/json", "User-Agent": `tocsin-action/${VERSION}` },
+      body: JSON.stringify({ repository: io.env.GITHUB_REPOSITORY, affected, min_severity: inputs.minSeverity, default_branch: repo.defaultBranch }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const err = typeof body?.error === "string" ? body.error : "";
+      // The API's error text is shown only when it does not echo the token.
+      throw new Error(`${res.status}${err && !err.includes(value) ? ` ${err.slice(0, 200)}` : ""}`);
+    }
+  } catch (e) {
+    annotate(io, "warning", `could not send the badge report: ${message(e)}`);
+  }
+}
+
 // ---- run ------------------------------------------------------------------
 
 /** @param {unknown} e */
@@ -524,6 +579,7 @@ async function finish(io, inputs, data) {
     }
   }
   if (shown.length > 0) io.out(`${shown.length} of ${data.checked} dependencies affected.`);
+  await postReport(io, inputs, shown.length);
   return failing(shown, inputs.failOn) ? 1 : 0;
 }
 

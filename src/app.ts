@@ -3,7 +3,9 @@ import { cors } from "hono/cors";
 import type { Env } from "./env";
 import { jsonUtf8 } from "./lib/http";
 import { authIpRateLimit } from "./middleware/ratelimit";
+import actionReport from "./routes/action-report";
 import advisory from "./routes/advisory";
+import badgeRepo from "./routes/badge-repo";
 import check from "./routes/check";
 import discovery from "./routes/discovery";
 import events from "./routes/events";
@@ -32,6 +34,8 @@ app.route("/v1/check", check);
 app.route("/v1/status", status);
 // Bearer-gated write path of the OSV backfill (TCS-32). Not for browsers: CORS stays GET/HEAD/OPTIONS.
 app.route("/v1/internal/import", internalImport);
+// GitHub OIDC-gated write path of the per-repo badge (TCS-101). Not for browsers either.
+app.route("/v1/action/report", actionReport);
 // Per-IP gate before any key work (TCS-66). "/x/*" also matches "/x".
 app.use("/v1/keys/*", authIpRateLimit);
 app.use("/v1/watchlists/*", authIpRateLimit);
@@ -39,6 +43,7 @@ app.route("/v1/keys", keys);
 app.route("/v1/watchlists", watchlists);
 app.route("/", discovery);
 app.route("/", site);
+app.route("/", badgeRepo);
 app.route("/", advisory);
 app.route("/", sitemap);
 

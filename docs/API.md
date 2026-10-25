@@ -26,6 +26,8 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `POST /v1/watchlists/{id}/resume` | Starts webhook delivery again on a paused watch list. Needs an API key. |
 | `GET /v1/watchlists/{id}/events` | New events on one watch list, from its stored cursor. Needs an API key. |
 | `GET /v1/watchlists/{id}/deliveries` | The 100 newest webhook deliveries of one watch list, with status. Needs an API key. |
+| `GET /badge/{owner}/{repo}.svg` | The README badge of one public repository, from the last result its GitHub Action reported. See [README badge](#readme-badge). |
+| `POST /v1/action/report` | The GitHub Action reports its result for the badge. Auth is the workflow run's GitHub OIDC token, not an API key. |
 | `GET /v1/status` | Each enabled source with `last_run_at`, `last_ok_at` and `last_error`, plus the newest feed `cursor`. |
 | `GET /.well-known/tocsin.json` | The discovery document: every endpoint URL and the MCP URL. |
 | `GET /llms.txt` | A plain-text guide for agents. |
@@ -85,6 +87,30 @@ A Node.js version on a release line past its end of life (from the [nodejs/Relea
 ```
 
 `cursor` is the newest feed cursor, or 0 when the feed is empty. `coverage_since` is the oldest `published_at` a source holds, null until its history is read in full. `coverage` has one item per enabled OSV ecosystem and per runtime; `imported` is the record count of the latest backfill run of an OSV ecosystem, null for a runtime. The same data is on the page [/status](/status).
+
+### README badge
+
+`GET /badge/<owner>/<repo>.svg` draws a badge from the last result the GitHub Action reported for that repository: `tocsin | clean` (green), `tocsin | N affected` (red, N at or above the run's `min-severity`) or `tocsin | unknown` (grey, no report yet). It reads the default branch. `?ref=feature-x` or `?ref=refs/heads/feature-x` reads one branch, and a ref with no report is `unknown`. The SVG is cached at the edge for 5 minutes (`Cache-Control: public, max-age=300`). Add it to your README:
+
+```markdown
+[![tocsin](https://tocsin.sh/badge/<owner>/<repo>.svg)](https://tocsin.sh)
+```
+
+The Action sends the report when the job has `id-token: write` (input `report`, default `true`). Run it on `push` to the default branch, so the badge shows that branch:
+
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions: { contents: read, pull-requests: write, id-token: write }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps: [{ uses: actions/checkout@v4 }, { uses: Fortunian/tocsin/action@v1 }]
+```
+
+The Action posts `{ "repository", "affected", "min_severity", "default_branch" }` to `POST /v1/action/report` with the run's GitHub OIDC token (audience: the API host, `tocsin.sh`). Tocsin checks the token against GitHub's keys and takes the repository, ref and run id from the token, so a repository can only report for itself. A second report for the same run id changes nothing. On a `schedule` run the Action sends the run's branch as `default_branch`. A report with `default_branch: null` keeps the default-branch flag of the last report for that ref. Only public repositories get a badge: a private repository sends no report, and the API refuses one with 403. A failed report is a warning in the job log and never fails the job.
 
 ## Advisory schema
 

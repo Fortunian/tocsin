@@ -32,7 +32,7 @@ One key per source: the ETag of the first advisories page, sent as `If-None-Matc
 
 ## settings
 
-A small key/value table of run-time limits and knobs (48 rows today; among them `feed.anon_rate_per_minute`, `site.latest_rows`, `site.latest_cache_seconds`, `import.max_batch`, `import.max_body_bytes`, `import.max_docs`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`, `webhooks.backoff_seconds`, `webhooks.timeout_ms`, `webhooks.lease_seconds`, `webhooks.sweep_grace_seconds`, `webhooks.sweep_batch`, `webhooks.enqueue_max_lists`, `webhooks.enqueue_per_list`, `webhooks.max_event_age_days`, `webhooks.max_url_length`, `webhooks.deliveries_list_limit`, `retention.deliveries_days`, `retention.deliveries_batch`, `retention.deliveries_dry_run`, `webhooks.pause_after_failures`, `webhooks.dns_cache_seconds`, `webhooks.enqueue_scan_rows`, `webhooks.lag_alert_rows`, `webhooks.reencrypt_batch`, `webhooks.dependency_scan_rows`, `webhooks.dependency_insert_chunk`, `retention.send_counters_days`, `retention.send_counters_batch`, `retention.send_counters_dry_run`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (57 rows today; among them `feed.anon_rate_per_minute`, `site.latest_rows`, `site.latest_cache_seconds`, `import.max_batch`, `import.max_body_bytes`, `import.max_docs`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`, `webhooks.backoff_seconds`, `webhooks.timeout_ms`, `webhooks.lease_seconds`, `webhooks.sweep_grace_seconds`, `webhooks.sweep_batch`, `webhooks.enqueue_max_lists`, `webhooks.enqueue_per_list`, `webhooks.max_event_age_days`, `webhooks.max_url_length`, `webhooks.deliveries_list_limit`, `retention.deliveries_days`, `retention.deliveries_batch`, `retention.deliveries_dry_run`, `webhooks.pause_after_failures`, `webhooks.dns_cache_seconds`, `webhooks.enqueue_scan_rows`, `webhooks.lag_alert_rows`, `webhooks.reencrypt_batch`, `webhooks.dependency_scan_rows`, `webhooks.dependency_insert_chunk`, `retention.send_counters_days`, `retention.send_counters_batch`, `retention.send_counters_dry_run`, `badge.retention_days`, `badge.retention_batch`, `badge.retention_dry_run`, `badge.cache_seconds`, `action.oidc_jwks_cache_seconds`, `action.oidc_jwks_refetch_seconds`, `action.oidc_clock_skew_seconds`). Rows change in place by key; the table does not grow with traffic. No delete job.
 
 ## api_keys
 
@@ -61,6 +61,18 @@ The mail send caps of `POST /v1/keys` and `POST /v1/keys/rotate` (TCS-83). One r
 ## KV `retention:send_counters:last` (CURSORS namespace)
 
 One key: the audit record of the last `send_counters` retention run, `{ran_at, cutoff, dry_run, deleted, has_more}`. It is written after the delete commits, never after a failed run, and each run overwrites it. Each run also writes the same record as one log line. No delete job.
+
+## action_reports
+
+One row per GitHub Action run that reported its check result for the README badge (TCS-101, `POST /v1/action/report`). The unique index `(owner, repo, run_id)` is the idempotency gate: a second report of the same run adds no row. `is_latest` is 1 on the newest row of each `(owner, repo, ref)`; the badge reads it. The table grows with every reporting run, including pull request refs. A daily cron (`41 4 * * *`, `src/cron/action-reports-retention.ts`) deletes rows that are not the latest of their ref and were reported more than `badge.retention_days` ago (default 90). The latest row of each ref is never deleted, so a badge never goes back to `unknown` because of age. One run deletes at most `badge.retention_batch` rows (default 5000); the rest wait for the next run. When `badge.retention_dry_run` is not `0`, the run counts what it would delete and deletes nothing. A row is a CI status snapshot that the next run regenerates, not money or advisory history, so it is deleted, not archived.
+
+## KV `retention:action_reports:last` (CURSORS namespace)
+
+One key: the audit record of the last `action_reports` retention run, `{ran_at, cutoff, dry_run, deleted, has_more}`. It is written after the delete commits, never after a failed run, and each run overwrites it. Each run also writes the same record as one log line. No delete job.
+
+## KV `oidc:github:jwks` (CURSORS namespace)
+
+One key: `{fetched_at, keys}`, the GitHub Actions OIDC key set that `POST /v1/action/report` verifies tokens with (`src/lib/github-oidc.ts`). It has a KV TTL of `action.oidc_jwks_cache_seconds` (default 3600). An unknown key id fetches the set again at most once per `action.oidc_jwks_refetch_seconds` (default 300). Each fetch overwrites it in place. Losing it costs one fetch. No delete job.
 
 ## KV `webhooks:dns:<host>` (CURSORS namespace)
 

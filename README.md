@@ -69,11 +69,19 @@ jobs:
     steps: [{ uses: actions/checkout@v4 }, { uses: Fortunian/tocsin/action@v1 }]
 ```
 
-Inputs (all optional): `min-severity` (default `low`), `fail-on` (`affected`, `exploited` or `never`; default `affected`), `fail-on-error` (default `false`: a network or API error is a warning, never a pass), `comment` (default `true`), `working-directory` (default `.`), `base-url` (default `https://tocsin.sh`), `max-body-bytes` (default `2097152`, the 2 MB body limit of the hosted API), `api-key` and `github-token`. The output `affected` holds the count. The Action finds the same lockfiles as `tocsin check` and needs no npm install. It needs Node 20 or later on the runner (GitHub-hosted runners have it).
+Inputs (all optional): `min-severity` (default `low`), `fail-on` (`affected`, `exploited` or `never`; default `affected`), `fail-on-error` (default `false`: a network or API error is a warning, never a pass), `comment` (default `true`), `working-directory` (default `.`), `base-url` (default `https://tocsin.sh`), `max-body-bytes` (default `2097152`, the 2 MB body limit of the hosted API), `report` (default `true`: send the result for the README badge when the job has `id-token: write`), `api-key` and `github-token`. The output `affected` holds the count. The Action finds the same lockfiles as `tocsin check` and needs no npm install. It needs Node 20 or later on the runner (GitHub-hosted runners have it).
 
 The Action sends at most 2 MB of lockfiles in one check. It skips a file that does not fit, writes a warning that names the file, and lists the file as not checked. The PR comment comes from the token's own account, and the Action updates only its own comment.
 
-Badge for your README (the standard Actions badge):
+Badge for your README. It shows `tocsin | clean` or `tocsin | N affected` from the last run on the default branch, and links to tocsin.sh:
+
+```markdown
+[![tocsin](https://tocsin.sh/badge/<owner>/<repo>.svg)](https://tocsin.sh)
+```
+
+The badge needs `id-token: write` in the workflow's permissions and a run `on: push` to the default branch. With that, the Action sends its result (input `report`, default `true`). Without it the badge shows `unknown`. Public repositories only. See [action/README.md](action/README.md#readme-badge).
+
+The standard Actions badge works too:
 
 ```markdown
 [![tocsin](https://github.com/<owner>/<repo>/actions/workflows/tocsin.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/tocsin.yml)

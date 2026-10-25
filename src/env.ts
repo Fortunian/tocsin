@@ -25,4 +25,7 @@ export interface Env {
   WEBHOOK_KEK?: string;
   // "fake" selects the test mailer (src/mail/fake.ts). Set only in vitest.config.ts, never in wrangler.toml.
   MAIL_TRANSPORT?: string;
+  // "fake" makes the GitHub OIDC seam (src/lib/github-oidc.ts) refuse the network:
+  // tests seed the JWKS in KV. Set only in vitest.config.ts, never in wrangler.toml.
+  GITHUB_OIDC_TRANSPORT?: string;
 }

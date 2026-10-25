@@ -42,6 +42,10 @@ inputs:
     description: The token that posts the PR comment. It needs pull-requests write.
     required: false
     default: ${{ github.token }}
+  report:
+    description: Send the result to Tocsin for the README badge. It needs permissions id-token write; without it nothing is sent.
+    required: false
+    default: "true"
 
 outputs:
   affected:
@@ -64,3 +68,4 @@ runs:
         TOCSIN_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         TOCSIN_MAX_BODY_BYTES: ${{ inputs.max-body-bytes }}
         TOCSIN_GITHUB_TOKEN: ${{ inputs.github-token }}
+        TOCSIN_REPORT: ${{ inputs.report }}
