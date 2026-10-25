@@ -53,6 +53,9 @@ export const HOOK_COMMAND = "npx -y tocsin check --summary";
 const HOOK_ENTRY = { matcher: "startup", hooks: [{ type: "command", command: HOOK_COMMAND }] };
 const hookBlock = () => JSON.stringify({ hooks: { SessionStart: [HOOK_ENTRY] } }, null, 2);
 
+/** The Claude Code plugin (plugins/tocsin): skill, MCP server and SessionStart check in one install. Connect prints it after a Claude Code wire. */
+export const PLUGIN_INSTALL_COMMAND = "claude plugin install tocsin --marketplace Fortunian/tocsin";
+
 /** The block `connect --print-agents-md` prints for a repo's AGENTS.md. */
 export const AGENTS_MD_BLOCK = [
   "## Security advisories (Tocsin)",
@@ -253,6 +256,7 @@ export async function runConnect(io: Io, values: Record<string, unknown>): Promi
   const dryRun = values["dry-run"] === true;
   let failed = 0;
   let already = 0;
+  let claudeCodeWired = false;
   for (const t of chosen) {
     if (t.path === null) {
       failed++;
@@ -283,12 +287,14 @@ export async function runConnect(io: Io, values: Record<string, unknown>): Promi
       try {
         await atomicWrite(t.path, plan.next);
         io.out(`${t.name}: ${t.kind === "skill-copy" ? "installed" : "connected"} (${t.path})`);
+        if (t.flag === "claude-code" && t.kind === "json") claudeCodeWired = true;
       } catch (e) {
         plan = { outcome: "failed", reason: `could not write (${(e as Error).message})` };
       }
     }
     if (plan.outcome === "already") {
       already++;
+      if (t.flag === "claude-code" && t.kind === "json") claudeCodeWired = true;
       io.out(`${t.name}: ${t.kind === "skill-copy" ? "already installed" : "already connected"} (${t.path})`);
     }
     if (plan.outcome === "different" && t.kind === "skill-copy") {
@@ -311,6 +317,7 @@ export async function runConnect(io: Io, values: Record<string, unknown>): Promi
     }
   }
 
+  if (claudeCodeWired) io.out(`Claude Code plugin (skill, MCP server and session-start check in one): ${PLUGIN_INSTALL_COMMAND}`);
   if (already === chosen.length) io.out("already connected, nothing changed");
   return failed > 0 ? 1 : 0;
 }

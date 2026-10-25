@@ -46,6 +46,16 @@ Docs: https://tocsin.sh/docs
 
 In Claude Code, `npx tocsin connect --claude-code --hook` adds a `SessionStart` hook that runs the check and prints one line when a session starts.
 
+## Claude Code plugin
+
+The Tocsin plugin for Claude Code installs the skill, the MCP server and the same `SessionStart` hook in one step:
+
+```
+claude plugin install tocsin --marketplace Fortunian/tocsin
+```
+
+The plugin lives in `plugins/tocsin/`, and this repo is its marketplace (`.claude-plugin/marketplace.json`). `npx tocsin connect` prints this command after it wires Claude Code.
+
 ## In CI
 
 The GitHub Action runs the same check on every pull request. It fails the job when a lockfile dependency has a known advisory, writes a job summary, and posts one PR comment (updated on each push) with the fixed version, the action and the upgrade command. Add these 6 lines as `.github/workflows/tocsin.yml`:

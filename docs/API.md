@@ -256,6 +256,14 @@ To add the server by hand in Claude Code:
 claude mcp add --transport http tocsin https://mcp.tocsin.sh/mcp
 ```
 
+### Claude Code plugin
+
+```
+claude plugin install tocsin --marketplace Fortunian/tocsin
+```
+
+The plugin installs three parts in one step: the Tocsin skill, the `tocsin` MCP server (`https://mcp.tocsin.sh/mcp`, no API key) and a `SessionStart` hook that runs `npx -y tocsin check --summary`. The hook prints one line and never blocks the session. The marketplace is the GitHub repo `Fortunian/tocsin`. After `npx tocsin connect` wires Claude Code, it prints this command.
+
 ### Codex
 
 ```

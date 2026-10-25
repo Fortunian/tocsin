@@ -19,6 +19,8 @@ jobs:
       - run: npm run gen:schema -- --check
       - run: npm run gen:docs -- --check
       - run: npm run gen:skills -- --check
+      # Skips with a reason when the runner has no claude CLI (GitHub runners have none).
+      - run: bash scripts/validate-plugin.sh
       - run: npm test
 
   # Runs only after an operator creates the Cloudflare resources and sets the

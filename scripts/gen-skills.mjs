@@ -1,24 +1,25 @@
 // Turns skills/tocsin/SKILL.md, the one source of the skill text, into the
-// copies other agent tools read. The CLI package ships all three.
-//   skills/codex/tocsin/SKILL.md   Codex skill: the same file, byte for byte
-//   skills/cursor/tocsin.mdc       Cursor rule: description + alwaysApply: false, then the body
+// copies other agent tools read. The CLI package ships the skills/ files.
+//   skills/codex/tocsin/SKILL.md            Codex skill: the same file, byte for byte
+//   skills/cursor/tocsin.mdc                Cursor rule: description + alwaysApply: false, then the body
+//   plugins/tocsin/skills/tocsin/SKILL.md   Claude Code plugin skill: the same file, byte for byte
 //
-//   npm run gen:skills              write both files
-//   npm run gen:skills -- --check   exit 1 if either committed file is stale
+//   npm run gen:skills              write all three files
+//   npm run gen:skills -- --check   exit 1 if any committed file is stale
 //   --root <dir>                    run on another checkout (tests)
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SRC = "skills/tocsin/SKILL.md";
-/** @type {{ codex: string; cursor: string }} */
-const OUTS = { codex: "skills/codex/tocsin/SKILL.md", cursor: "skills/cursor/tocsin.mdc" };
-const KEYS = /** @type {const} */ (["codex", "cursor"]);
+/** @type {{ codex: string; cursor: string; plugin: string }} */
+const OUTS = { codex: "skills/codex/tocsin/SKILL.md", cursor: "skills/cursor/tocsin.mdc", plugin: "plugins/tocsin/skills/tocsin/SKILL.md" };
+const KEYS = /** @type {const} */ (["codex", "cursor", "plugin"]);
 
 /**
  * The generated files for one SKILL.md text. Throws when the frontmatter has no description.
  * @param {string} skill
- * @returns {{ codex: string; cursor: string }}
+ * @returns {{ codex: string; cursor: string; plugin: string }}
  */
 export function render(skill) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(skill);
@@ -28,6 +29,7 @@ export function render(skill) {
   return {
     codex: skill,
     cursor: `---\ndescription: ${description}\nalwaysApply: false\n---\n${m[2]}`,
+    plugin: skill,
   };
 }
 
