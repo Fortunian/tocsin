@@ -10,3 +10,4 @@ coverage
 packages/cli/skills
 test-results
 playwright-report
+.claude/
