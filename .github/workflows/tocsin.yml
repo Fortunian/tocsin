@@ -1,6 +1,11 @@
-# Dogfood: the repo checks its own lockfiles with its own Action on every pull request.
-on: pull_request
-permissions: { contents: read, pull-requests: write }
+# Dogfood: the repo checks its own lockfiles with its own Action on every pull
+# request and on every push to main. id-token: write lets the Action report the
+# result, which feeds https://tocsin.sh/badge/Fortunian/tocsin.svg.
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions: { contents: read, pull-requests: write, id-token: write }
 jobs:
   check:
     runs-on: ubuntu-latest
