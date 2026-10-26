@@ -1,5 +1,7 @@
 # Tocsin
 
+[![tocsin](https://tocsin.sh/badge/Fortunian/tocsin.svg)](https://tocsin.sh)
+
 **Security advisories, built for agents.**
 
 Your agent's `fetch()` was exploitable on October 21, 2026, and nothing told it. PHP shipped two remote code execution fixes the same day. Tocsin is the feed that tells your agent, in one shape, with the fixed version and a one-line action.
