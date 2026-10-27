@@ -8,11 +8,13 @@ import { runDeliveryRetention } from "./deliveries-retention";
 import { reencryptWebhookSecrets } from "./reencrypt-secrets";
 import { runKeyRetention } from "./retention";
 import { runSendCounterRetention } from "./send-counters-retention";
+import { runSocialLane } from "./social";
+import { runSocialRetention } from "./social-retention";
 
 // Monthly (03:17Z on day 1), in wrangler.toml [triggers]. Every other cron
 // runs the ingesters.
 export const RETENTION_CRON = "17 3 1 * *";
-// Daily (04:41Z), in wrangler.toml [triggers]: deliveries, send_counters and action_reports retention.
+// Daily (04:41Z), in wrangler.toml [triggers]: deliveries, send_counters, action_reports and social_posts retention.
 export const DELIVERY_RETENTION_CRON = "41 4 * * *";
 
 function errText(err: unknown): string {
@@ -33,7 +35,7 @@ export async function runCron(
   if (event.cron === DELIVERY_RETENTION_CRON) {
     // Every job runs even when one throws; the first fault still fails the cron.
     const now = new Date();
-    const results = await Promise.allSettled([runDeliveryRetention(env, now), runSendCounterRetention(env, now), runActionReportRetention(env, now)]);
+    const results = await Promise.allSettled([runDeliveryRetention(env, now), runSendCounterRetention(env, now), runActionReportRetention(env, now), runSocialRetention(env, now)]);
     const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
     if (failed) throw failed.reason;
     return;
@@ -56,6 +58,12 @@ export async function runCron(
     await sweepDeliveries(env, new Date());
   } catch (err) {
     console.error(JSON.stringify({ lane: "sweep", err: errText(err) }));
+  }
+  // Critical runtime advisories to the Tocsin X account (TCS-106), bounded by social.x.daily_cap.
+  try {
+    await runSocialLane(env, new Date());
+  } catch (err) {
+    console.error(JSON.stringify({ lane: "social", err: errText(err) }));
   }
   // Moves plaintext webhook secrets under WEBHOOK_KEK (TCS-82). After the
   // move it reads 0 rows from an empty partial index.

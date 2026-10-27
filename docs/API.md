@@ -28,7 +28,7 @@ Base URL: `https://tocsin.sh`. Every answer is JSON in UTF-8 unless this page sa
 | `GET /v1/watchlists/{id}/deliveries` | The 100 newest webhook deliveries of one watch list, with status. Needs an API key. |
 | `GET /badge/{owner}/{repo}.svg` | The README badge of one public repository, from the last result its GitHub Action reported. See [README badge](#readme-badge). |
 | `POST /v1/action/report` | The GitHub Action reports its result for the badge. Auth is the workflow run's GitHub OIDC token, not an API key. |
-| `GET /v1/status` | Each enabled source with `last_run_at`, `last_ok_at` and `last_error`, plus the newest feed `cursor`. |
+| `GET /v1/status` | Each enabled source with `last_run_at`, `last_ok_at` and `last_error`, plus the newest feed `cursor` and the state of the X posts (`social`). |
 | `GET /.well-known/tocsin.json` | The discovery document: every endpoint URL and the MCP URL. |
 | `GET /llms.txt` | A plain-text guide for agents. |
 | `GET /schema/advisory.v1.json` | The JSON Schema of one advisory. |
@@ -83,10 +83,13 @@ A Node.js version on a release line past its end of life (from the [nodejs/Relea
 
 ```
 { "sources": [{ "id": "osv", "kind": "osv", "last_run_at": "...", "last_ok_at": "...", "last_error": null, "coverage_since": null }], "cursor": 1234,
-  "coverage": [{ "ecosystem": "npm", "since": "2016-01-05T00:00:00Z", "complete": true, "imported": 200000 }] }
+  "coverage": [{ "ecosystem": "npm", "since": "2016-01-05T00:00:00Z", "complete": true, "imported": 200000 }],
+  "social": { "enabled": true, "posted_24h": 2, "last_error": null } }
 ```
 
 `cursor` is the newest feed cursor, or 0 when the feed is empty. `coverage_since` is the oldest `published_at` a source holds, null until its history is read in full. `coverage` has one item per enabled OSV ecosystem and per runtime; `imported` is the record count of the latest backfill run of an OSV ecosystem, null for a runtime. The same data is on the page [/status](/status).
+
+`social` is the state of the posts to the Tocsin X account @tocsinagent: one post per critical runtime advisory, on first sight. `enabled` says whether posting is on, `posted_24h` counts the posts of the last 24 hours, and `last_error` is the error of the last run (`not_configured` when the X credentials are not set), or null.
 
 ### README badge
 

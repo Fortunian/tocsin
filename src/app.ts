@@ -14,6 +14,7 @@ import internalImport from "./routes/internal-import";
 import keys from "./routes/keys";
 import site from "./routes/site";
 import sitemap from "./routes/sitemap";
+import socialReplay from "./routes/social-replay";
 import status from "./routes/status";
 import watchlists from "./routes/watchlists";
 import { soRedirect } from "./site/redirect";
@@ -34,6 +35,8 @@ app.route("/v1/check", check);
 app.route("/v1/status", status);
 // Bearer-gated write path of the OSV backfill (TCS-32). Not for browsers: CORS stays GET/HEAD/OPTIONS.
 app.route("/v1/internal/import", internalImport);
+// Bearer-gated hand replay of one X post (TCS-106). Not for browsers either.
+app.route("/v1/internal/social/replay", socialReplay);
 // GitHub OIDC-gated write path of the per-repo badge (TCS-101). Not for browsers either.
 app.route("/v1/action/report", actionReport);
 // Per-IP gate before any key work (TCS-66). "/x/*" also matches "/x".

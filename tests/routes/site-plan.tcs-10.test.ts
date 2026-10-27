@@ -37,9 +37,9 @@ describe("site query plans on 2,000 advisories", () => {
     expect(p).not.toMatch(/SCAN advisories(?! USING)/);
   });
 
-  it("the sources read is an 11-row table (10 ingesters plus the disabled mail row, TCS-94) and needs no index", async () => {
+  it("the sources read is a 12-row table (10 ingesters plus the disabled mail row, TCS-94, and the disabled social-x row, TCS-106) and needs no index", async () => {
     const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM sources").first<{ n: number }>();
-    expect(n?.n).toBe(11);
+    expect(n?.n).toBe(12);
     expect(STATUS_SOURCES_SQL).toContain("WHERE enabled = 1");
   });
 });
