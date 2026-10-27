@@ -28,4 +28,13 @@ export interface Env {
   // "fake" makes the GitHub OIDC seam (src/lib/github-oidc.ts) refuse the network:
   // tests seed the JWKS in KV. Set only in vitest.config.ts, never in wrangler.toml.
   GITHUB_OIDC_TRANSPORT?: string;
+  // OAuth 1.0a user context of the Tocsin X account @tocsinagent (wrangler
+  // secrets, TCS-106). Read only by src/social/x.ts. Any one unset: the social
+  // lane posts nothing and records not_configured.
+  X_CONSUMER_KEY?: string;
+  X_CONSUMER_SECRET?: string;
+  X_ACCESS_TOKEN?: string;
+  X_ACCESS_TOKEN_SECRET?: string;
+  // "fake" selects the test X client (src/social/fake.ts). Set only in vitest.config.ts, never in wrangler.toml.
+  SOCIAL_TRANSPORT?: string;
 }

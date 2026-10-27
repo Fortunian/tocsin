@@ -16,7 +16,7 @@ Kept forever. One row per `(cve, advisory_id)`: every CVE id of an advisory, wri
 
 ## sources
 
-A fixed set of rows (11 today: the 10 ingesters `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `node-eol`, `php-runtime`, `python-runtime`, `deno-runtime`, `bun-runtime`, plus `mail`). `mail` (TCS-94, enabled 0) is the warning channel of the mail seam, not an ingester: an unsigned send overwrites its `last_warning` and `last_run_at` in place. It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. `last_warning` (TCS-50) is one value, overwritten by the next run that has a warning and kept by a run with none, cut to 1,000 chars. `coverage_since` (TCS-32) is one value per row, written once when the source has read its whole history (for `osv`: when every enabled ecosystem has a done `backfill` row) and never moved after that. No delete job.
+A fixed set of rows (12 today: the 10 ingesters `osv`, `nvd`, `kev`, `epss`, `node-runtime`, `node-eol`, `php-runtime`, `python-runtime`, `deno-runtime`, `bun-runtime`, plus `mail` and `social-x`). `mail` (TCS-94, enabled 0) is the warning channel of the mail seam, not an ingester: an unsigned send overwrites its `last_warning` and `last_run_at` in place. `social-x` (TCS-106, enabled 0) is the status channel of the X post lane: each enabled run overwrites its `last_run_at` and `last_error` in place. It does not grow. `last_error` is overwritten on each run, never appended, so the row does not grow either. `last_warning` (TCS-50) is one value, overwritten by the next run that has a warning and kept by a run with none, cut to 1,000 chars. `coverage_since` (TCS-32) is one value per row, written once when the source has read its whole history (for `osv`: when every enabled ecosystem has a done `backfill` row) and never moved after that. No delete job.
 
 ## backfill
 
@@ -32,7 +32,7 @@ One key per source: the ETag of the first advisories page, sent as `If-None-Matc
 
 ## settings
 
-A small key/value table of run-time limits and knobs (57 rows today; among them `feed.anon_rate_per_minute`, `site.latest_rows`, `site.latest_cache_seconds`, `import.max_batch`, `import.max_body_bytes`, `import.max_docs`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`, `webhooks.backoff_seconds`, `webhooks.timeout_ms`, `webhooks.lease_seconds`, `webhooks.sweep_grace_seconds`, `webhooks.sweep_batch`, `webhooks.enqueue_max_lists`, `webhooks.enqueue_per_list`, `webhooks.max_event_age_days`, `webhooks.max_url_length`, `webhooks.deliveries_list_limit`, `retention.deliveries_days`, `retention.deliveries_batch`, `retention.deliveries_dry_run`, `webhooks.pause_after_failures`, `webhooks.dns_cache_seconds`, `webhooks.enqueue_scan_rows`, `webhooks.lag_alert_rows`, `webhooks.reencrypt_batch`, `webhooks.dependency_scan_rows`, `webhooks.dependency_insert_chunk`, `retention.send_counters_days`, `retention.send_counters_batch`, `retention.send_counters_dry_run`, `badge.retention_days`, `badge.retention_batch`, `badge.retention_dry_run`, `badge.cache_seconds`, `action.oidc_jwks_cache_seconds`, `action.oidc_jwks_refetch_seconds`, `action.oidc_clock_skew_seconds`). Rows change in place by key; the table does not grow with traffic. No delete job.
+A small key/value table of run-time limits and knobs (73 rows today, among them the 16 `social.*` rows of TCS-106 listed in docs/OPERATING.md; among them `feed.anon_rate_per_minute`, `site.latest_rows`, `site.latest_cache_seconds`, `import.max_batch`, `import.max_body_bytes`, `import.max_docs`, `check.anon_rate_per_minute`, `check.max_body_bytes`, `keys.anon_rate_per_minute`, `auth.last_used_resolution_seconds`, `watchlists.max_body_bytes`, `retention.api_key_unused_days`, `retention.api_keys_batch`, `retention.api_keys_dry_run`, `webhooks.backoff_seconds`, `webhooks.timeout_ms`, `webhooks.lease_seconds`, `webhooks.sweep_grace_seconds`, `webhooks.sweep_batch`, `webhooks.enqueue_max_lists`, `webhooks.enqueue_per_list`, `webhooks.max_event_age_days`, `webhooks.max_url_length`, `webhooks.deliveries_list_limit`, `retention.deliveries_days`, `retention.deliveries_batch`, `retention.deliveries_dry_run`, `webhooks.pause_after_failures`, `webhooks.dns_cache_seconds`, `webhooks.enqueue_scan_rows`, `webhooks.lag_alert_rows`, `webhooks.reencrypt_batch`, `webhooks.dependency_scan_rows`, `webhooks.dependency_insert_chunk`, `retention.send_counters_days`, `retention.send_counters_batch`, `retention.send_counters_dry_run`, `badge.retention_days`, `badge.retention_batch`, `badge.retention_dry_run`, `badge.cache_seconds`, `action.oidc_jwks_cache_seconds`, `action.oidc_jwks_refetch_seconds`, `action.oidc_clock_skew_seconds`). Rows change in place by key; the table does not grow with traffic. No delete job.
 
 ## api_keys
 
@@ -48,7 +48,7 @@ The stored dependency set of a watch list (TCS-37), written by `POST /v1/watchli
 
 ## match_cursors
 
-One row per match lane (TCS-37): `dependencies`, the last advisory cursor the dependency match pass read, and a `version` that every pass advance and every lockfile upload increments. It is overwritten in place and does not grow. No delete job.
+One row per match lane (TCS-37): `dependencies`, the last advisory cursor the dependency match pass read, and a `version` that every pass advance and every lockfile upload increments. A second row, `social:x` (TCS-106), is the watermark of the X post lane: the last advisory cursor it read and the time of that scan. It is overwritten in place and does not grow. No delete job.
 
 ## deliveries
 
@@ -143,3 +143,19 @@ The node-runtime post ledger (TCS-69). It has one row per post URL of the nodejs
 ## KV `cursor:node-runtime` and `cursor:node-runtime:parser` (CURSORS namespace)
 
 Two keys: the node-runtime cursor and the parser revision it was read with (TCS-6, TCS-30). Since TCS-69 no code reads or writes them: `node_runtime_posts` holds the per-post state and the parser revision. The old values stay in KV. They do not grow. No delete job.
+
+## social_posts
+
+One row per (advisory, channel) that the X post lane queued (TCS-106, `src/cron/social.ts`). The unique index `(advisory_id, channel)` is the dedup gate: the row is written before any X call, so an advisory is never posted twice. It grows by at most `social.x.daily_cap` sent rows a day (default 10). A daily cron (`41 4 * * *`, `src/cron/social-retention.ts`) moves `ok`, `empty` and `failed` rows whose `created_at` is older than `social.retention_days` (default 365) to `social_posts_archive`, at most `social.retention_batch` rows per run (default 5000), in one transaction; the rest wait for the next run. A row is deleted only when the archive holds its copy. `pending` and `sending` rows are never moved. When `social.retention_dry_run` is not `0`, the run counts what it would move and moves nothing. A row is post history, so it is archived, never silently deleted.
+
+## social_posts_archive
+
+The terminal `social_posts` rows the daily job moved, with `archived_at`. One row per (advisory, channel): a later archive of a replayed row overwrites the older copy. Kept forever: it is post history and small (at most `social.x.daily_cap` rows a day). No delete job. `POST /v1/internal/social/replay` reads it, so an archived `ok` post is never sent again.
+
+## KV `retention:social_posts:last` (CURSORS namespace)
+
+One key: the audit record of the last `social_posts` retention run, `{ran_at, cutoff, dry_run, archived, has_more}`. It is written after the batch commits, never after a failed run, and each run overwrites it. Each run also writes the same record as one log line. No delete job.
+
+## KV `social:fake:` keys (CURSORS namespace)
+
+Test only: the X fake (`src/social/fake.ts`) writes `social:fake:calls` with a 3,600 s TTL; tests write `social:fake:mode` and `social:fake:body`. Production never writes them (the fake is selected only by `SOCIAL_TRANSPORT=fake` in vitest.config.ts). No delete job.
