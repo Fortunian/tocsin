@@ -79,6 +79,91 @@ MailChannels stays as the other adapter. It needs a MailChannels account. To use
 
    With MailChannels, if the secret or one of the two rows is not set, the mail goes out unsigned and the send does not fail. Each unsigned send writes one warning that names the missing items (never a value). Read it with `wrangler d1 execute DB --remote --command "SELECT last_warning, last_run_at FROM sources WHERE id = 'mail'"`. The launch check then prints `ok keys-signup (dkim signed)` when signed, `ok keys-signup (unsigned: DKIM_PRIVATE_KEY not set on the worker)` with no secret, and `FAIL keys-signup: POST /v1/keys: HTTP 202 but DKIM_PRIVATE_KEY is set and a DKIM settings row is blank` when a row is blank.
 
+## X posts of critical runtime advisories
+
+The `*/10` cron posts one short message to the Tocsin X account @tocsinagent when a critical runtime advisory lands (TCS-106, `src/cron/social.ts`). It is a product account, never a person's account. The text is built from the advisory record, with a link to its page; no LLM writes it. Example: `PHP 8.2.x, 8.3.x, 8.4.x, 8.5.x: RCE via OOM corruption. Severity critical, fixed in 8.2.35, 8.3.36, 8.4.27, 8.5.12. https://tocsin.sh/advisories/<id>`.
+
+An advisory posts once, on first sight, when all of these are true: one of its sources is in `social.x.sources`; its severity is at or above `social.x.min_severity`; it was published less than `social.x.max_age_hours` ago; it is not withdrawn. A later update to the advisory never posts it again. The lane writes the `social_posts` row before it calls X, so a second tick never calls X for the same advisory. Each post with a link costs about $0.20.
+
+### Steps
+
+1. In the X developer portal, sign in as @tocsinagent and create an app with Read and Write permission. Generate the consumer key and secret, and the access token and secret of @tocsinagent (OAuth 1.0a user context).
+2. Set the four secrets on the main worker. These are the names `src/env.ts` and `getXClient` (`src/social/x.ts`) read:
+
+   ```
+   wrangler secret put X_CONSUMER_KEY
+   wrangler secret put X_CONSUMER_SECRET
+   wrangler secret put X_ACCESS_TOKEN
+   wrangler secret put X_ACCESS_TOKEN_SECRET
+   ```
+
+   If any one is not set, the lane posts nothing and `GET /v1/status` shows `social.last_error` `not_configured`.
+3. Set the same four values as GitHub Actions secrets. `.github/workflows/social-contract.yml` reads them for the contract suite (`tests/contract/social-x.contract.tcs-106.test.ts`). It runs on main, nightly, and on a PR that changes `src/social/x.ts` or `src/social/oauth1.ts`. Each run posts one `[contract test]` message to @tocsinagent and deletes it at once. Without the secrets, the suite skips.
+4. Turn the lane on. The seed is `0` (off):
+
+   ```
+   wrangler d1 execute DB --remote --command "UPDATE settings SET value = '1' WHERE key = 'social.x.enabled'"
+   ```
+
+   While the flag is off, each tick moves the lane's watermark (the `match_cursors` row `social:x`) to the newest advisory. So turning it on never posts a backlog: only advisories that land after that tick can post. To turn it off, set the value to `0`.
+5. Check the lane with `curl -s https://tocsin.sh/v1/status | jq .social`. It answers `{"enabled": true, "posted_24h": <n>, "last_error": null}`.
+
+### Settings
+
+Change a value in place with `wrangler d1 execute DB --remote --command "UPDATE settings SET value = '<value>' WHERE key = '<key>'"`. Read them with `wrangler d1 execute DB --remote --command "SELECT key, value FROM settings WHERE key LIKE 'social.%'"`.
+
+| Key | Seed | What it does |
+|---|---|---|
+| `social.x.enabled` | 0 | `1` posts; any other value posts nothing |
+| `social.x.min_severity` | critical | Lowest severity that posts: `critical`, `high`, `medium` or `low`. An unknown value acts as `critical` |
+| `social.x.sources` | node-runtime,php-runtime,python-runtime,deno-runtime,bun-runtime,osv-go-toolchain | Sources that post. `osv-go-toolchain` is OSV `Go` rows on the Go toolchain (`stdlib`, `toolchain`, `cmd/*`), never a Go module |
+| `social.x.daily_cap` | 10 | X calls per UTC day (first attempts). Over the cap, rows wait as `pending` and post the next UTC day |
+| `social.x.max_age_hours` | 72 | An advisory published longer ago never posts |
+| `social.x.scan_rows` | 200 | Advisories read per runtime per tick; the rest are read on the next tick |
+| `social.x.max_attempts` | 3 | Attempts after a 429 or 5xx answer before the row is `failed` |
+| `social.x.retry_seconds` | 600 | Wait before the next attempt after a 429 or 5xx |
+| `social.x.lease_seconds` | 300 | A `sending` row older than this ends `failed` (`unknown_outcome`) and is never sent again |
+| `social.x.timeout_ms` | 10000 | Timeout of one X call |
+| `social.x.max_chars` | 280 | Weighted length limit of one post |
+| `social.x.url_chars` | 23 | X weight of one link |
+| `social.x.min_summary_chars` | 60 | The summary is cut to no fewer chars before the fixed-version list is shortened |
+| `social.retention_days` | 365 | Age after which the daily job moves an `ok`, `empty` or `failed` row to `social_posts_archive` |
+| `social.retention_batch` | 5000 | Most rows one daily run moves |
+| `social.retention_dry_run` | 0 | Any value but 0 counts and moves nothing |
+
+### Row states and errors
+
+Read the rows with `wrangler d1 execute DB --remote --command "SELECT advisory_id, status, attempts, posted_id, error FROM social_posts ORDER BY id DESC LIMIT 20"`.
+
+| Status | Meaning |
+|---|---|
+| `pending` | Written, waiting for room under the daily cap or for its retry time |
+| `sending` | Claimed for one X call |
+| `ok` | X answered with a post id (`posted_id`) |
+| `empty` | X answered 2xx with no post id. Terminal: never sent again |
+| `failed` | Terminal: never sent again by the lane |
+
+| `error` / `social.last_error` | Meaning |
+|---|---|
+| `not_configured` | An X secret is not set (step 2). Nothing was written or sent |
+| `x answered 401: ...` or `x answered 403: ...` | X refused the credentials or the post (for example, a duplicate text). Terminal |
+| `x answered 429: ...` or `x answered 5xx: ...` | Rate limit or an X fault. The row retries until `social.x.max_attempts` |
+| `x answered 2xx with no post id` | The `empty` state |
+| `network` | No answer (timeout or connection error). Terminal: the post may have gone out, and a retry could post twice |
+| `unknown_outcome` | A `sending` row passed its lease (the worker stopped during the call). Terminal for the same reason |
+
+`error` holds at most 200 chars of X's answer, never a header or a token.
+
+### Replay one advisory by hand
+
+```
+curl -s -X POST https://tocsin.sh/v1/internal/social/replay \
+  -H "Authorization: Bearer $IMPORT_TOKEN" -H "Content-Type: application/json" \
+  -d '{"advisory_id": "tcs_..."}'
+```
+
+The bearer is the worker secret `IMPORT_TOKEN`. No header answers 401, a wrong token 403. An advisory whose row is `ok` (in `social_posts` or in the archive) answers `200 {"status": "ok", "changed": false}` and writes nothing. Otherwise the route writes the row as `pending` with fresh text, sends it once, and answers `200 {"status": "<row status>", "changed": true}`. The replay does not check the severity or source rules. These answers write nothing: 404 (no such advisory), 409 (withdrawn advisory, `social.x.enabled` is not `1`, or a post in flight), 503 (an X secret is not set), 429 (the daily cap is reached).
+
 ## Claude Code plugin directory
 
 The plugin is in `plugins/tocsin/`, and the repo is its marketplace (`.claude-plugin/marketplace.json`). Users install it with `claude plugin install tocsin --marketplace Fortunian/tocsin`. A listing in the Claude plugin directory is a separate step. It is a human step: no workflow or script in this repo submits the plugin.

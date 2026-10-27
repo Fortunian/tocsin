@@ -90,7 +90,7 @@ async function sha256(s: string): Promise<ArrayBuffer> {
 // Bearer IMPORT_TOKEN. No header: 401. No secret, or a token that does not
 // match: 403 (fail closed). Both sides are trimmed (a secret pasted with a
 // newline) and compared in constant time on their SHA-256.
-async function auth(c: Ctx, next: Next) {
+export async function auth(c: Ctx, next: Next) {
   const header = c.req.header("Authorization");
   if (header === undefined || !/^Bearer(\s|$)/i.test(header)) return answer(c, { error: "missing bearer token" }, 401);
   const secret = (c.env.IMPORT_TOKEN ?? "").trim();

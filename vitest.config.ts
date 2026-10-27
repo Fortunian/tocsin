@@ -21,7 +21,10 @@ export default defineConfig(async () => {
               // MAIL_TRANSPORT=fake: the mail seam answers the KV fake, 0 network calls.
               // WEBHOOK_KEK: a test-only fixture key (32 bytes as base64), never a production key.
               // GITHUB_OIDC_TRANSPORT=fake: the OIDC seam never fetches GitHub; tests seed the JWKS in KV.
-              miniflare: { bindings: { TEST_MIGRATIONS: migrations, MAIL_TRANSPORT: "fake", WEBHOOK_KEK: "fixturefixturefixturefixturefixturefixture0=", GITHUB_OIDC_TRANSPORT: "fake" } },
+              // SOCIAL_TRANSPORT=fake: the X seam answers the KV fake, 0 network calls (TCS-106).
+              miniflare: {
+                bindings: { TEST_MIGRATIONS: migrations, MAIL_TRANSPORT: "fake", WEBHOOK_KEK: "fixturefixturefixturefixturefixturefixture0=", GITHUB_OIDC_TRANSPORT: "fake", SOCIAL_TRANSPORT: "fake" },
+              },
             }),
           ],
           test: {
@@ -83,7 +86,7 @@ export default defineConfig(async () => {
         },
         {
           // Real-vendor contract tests, off the PR path: they skip without the
-          // vendor secret. .github/workflows/mail-contract.yml runs them.
+          // vendor secret. .github/workflows/mail-contract.yml and social-contract.yml run them.
           test: {
             name: "contract",
             environment: "node",
